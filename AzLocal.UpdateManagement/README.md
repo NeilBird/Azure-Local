@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.28 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.28)
+**Latest Version:** v0.9.29 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.29)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.28](#whats-new-in-v0928)
+- [What's New in v0.9.29](#whats-new-in-v0929)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,15 +78,15 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.28
+## What's New in v0.9.29
 
-**Update: 4 now distinguishes Resource Graph indexing lag from a genuinely missing update run, and every bundled pipeline can publish a bounded diagnostic transcript.** Recent `UpdateLastAttempt` tags with `UpdateStarted` or `UpdateRetried` outcomes are checked against the cluster's direct ARM `updateRuns` endpoint when ARG lacks a covering row. A run covers the attempt when its `timeStarted` is recent or its `lastUpdatedTime` advanced near the attempt, which handles retries that reuse the original run and start time. The `-SkipWhenIdle` heartbeat checks these tags before trusting an ARG-idle result, so ARG omission cannot bypass reconciliation. Recovered runs replace stale same-cluster/same-update ARG rows, while truly absent runs remain `AttemptWithoutRun`; ARM authorization/transport failures remain explicit. `Clusters scoped` now counts admitted inventory rows.
+**Config: 1 now compares the live Azure Local inventory with the desired state in `config/ClusterUpdateRings.csv` on its existing weekly schedule.** The report identifies live-only clusters, source-only clusters, and mismatches in `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and optional `UpdateAuthAccountId`. It publishes CSV, JSON, JUnit, and Markdown artifacts plus pipeline outputs and warnings. Drift stays visible without failing the pipeline; when the source CSV has not yet been committed, the run reports `NotConfigured` with onboarding guidance instead of failing.
 
-Every pipeline now publishes an always-on `pipeline-timings.json` report for comparing successful run performance. The new `Invoke-AzLocalPipelineTimedOperation` wrapper records ordered operation duration/status data, durable `Running` evidence for abrupt termination, and scrubbed failures without changing workload output or error behavior. Use manual `diagnostics=true` for one manually queued run or set `DEBUG_VERBOSE=true` for all triggers to add `pipeline-transcript.log`; normal artifacts contain one file and diagnostic artifacts contain two. Shared ARG/ARM boundaries record bounded scope, count, retry, explicit empty-result, and scrubbed failure details without logging query text, URI query parameters, or successful response payloads. GitHub defaults to 14-day retention and accepts `DEBUG_RETENTION_DAYS`; Azure DevOps uses project retention. Multi-cluster update-run reads also batch admitted resource IDs, keeping management-group fleets with grouped tag admission below Windows command-line limits. Copy/Update now place `Apply-ModuleDevelopmentChannel.ps1` in both GitHub and Azure DevOps repo roots for exact unlisted-candidate testing; it manages the GitHub variable directly or prints the equivalent ADO variable-group commands. The turnkey updater also accepts `-RequiredVersion` to refresh from that candidate. Public exports increase from 71 to 72; all bundled pipeline pins remain `0.9.28`. See the [development-channel testing runbook](Automation-Pipeline-Examples/docs/development-channel-testing.md) and [pipeline troubleshooting runbook](Automation-Pipeline-Examples/README.md#12-troubleshooting-pipelines).
+**Update: 4's metric table now includes fleet-relative percentages.** Each metric renders a one-decimal Percentage based on `Clusters scoped`, with `N/A` when no clusters are admitted. The managed development-channel helper avoids Windows native-argument corruption by parsing GitHub variable JSON locally, and its missing-CLI guidance includes the exact `winget install --id GitHub.cli --exact` command. Public exports increase from 72 to 73 with `Export-AzLocalClusterInventoryDriftReport`; all bundled pipeline pins are `0.9.29`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.27`](#whats-new-in-v0927) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.28`](docs/release-history.md#whats-new-in-v0928) for the previous release.
 
 ## Files
 
@@ -586,7 +586,7 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.28** stay above under [`What's New in v0.9.28`](#whats-new-in-v0928).
+The most recent release notes for **v0.9.29** stay above under [`What's New in v0.9.29`](#whats-new-in-v0929).
 
 ### What's New in v0.9.27
 

@@ -377,9 +377,14 @@ function Test-AzLocalClusterHealth {
     $totalClusters = $results.Count
     $passedCount = @($results | Where-Object { $_.Passed -eq $true }).Count
     $failedCount = $totalClusters - $passedCount
+    $unknownCount = @($results | Where-Object { $_.HealthState -in @('No Data', 'Unknown') }).Count
+    $confirmedHealthyCount = @($results | Where-Object {
+            $_.Passed -eq $true -and $_.HealthState -notin @('No Data', 'Unknown')
+        }).Count
 
     Write-Log -Message "Total Clusters:  $totalClusters" -Level Info
-    Write-Log -Message "Passed:          $passedCount (no critical failures)" -Level $(if ($passedCount -eq $totalClusters) { "Success" } else { "Info" })
+    Write-Log -Message "Healthy:         $confirmedHealthyCount (health data present; no critical failures)" -Level $(if ($confirmedHealthyCount -eq $totalClusters) { "Success" } else { "Info" })
+    Write-Log -Message "Unknown:         $unknownCount (no health data; non-blocking)" -Level $(if ($unknownCount -gt 0) { "Warning" } else { "Info" })
     Write-Log -Message "Blocked:         $failedCount (critical failures present)" -Level $(if ($failedCount -gt 0) { "Error" } else { "Info" })
 
     # Display failure details
@@ -406,13 +411,23 @@ function Test-AzLocalClusterHealth {
     }
     else {
         Write-Log -Message "" -Level Info
-        Write-Log -Message "No health check failures detected. All clusters are ready for updates." -Level Success
+        if ($unknownCount -gt 0) {
+            Write-Log -Message "No health check failures detected, but $unknownCount cluster(s) have no health data. These clusters remain non-blocking and should be reviewed." -Level Warning
+        }
+        else {
+            Write-Log -Message "No health check failures detected. All clusters have confirmed non-blocking health results." -Level Success
+        }
     }
 
     # Overall result
     Write-Log -Message "" -Level Info
     if ($overallPassed) {
-        Write-Log -Message "HEALTH VALIDATION PASSED - All clusters are ready for updates" -Level Success
+        if ($unknownCount -gt 0) {
+            Write-Log -Message "HEALTH VALIDATION PASSED WITH UNKNOWN DATA - No critical failures found; clusters without health data remain non-blocking" -Level Warning
+        }
+        else {
+            Write-Log -Message "HEALTH VALIDATION PASSED - All clusters have confirmed non-blocking health results" -Level Success
+        }
     }
     else {
         Write-Log -Message "HEALTH VALIDATION FAILED - Critical health issues must be resolved before updates can proceed" -Level Error

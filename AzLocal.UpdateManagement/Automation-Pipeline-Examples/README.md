@@ -1399,12 +1399,16 @@ Key handoffs to remember:
 
 ### 6.1 Inventory the estate
 
-Run **Inventory Clusters** with no parameters. It exports a CSV with one row per cluster and the current value of every update-management tag.
+Run **Config: 1 - Validate Auth and Inventory Clusters** with no parameters. It exports a CSV with one row per cluster and the current value of every update-management tag.
 
-- **GitHub Actions**: *Actions -> Inventory Azure Local Clusters -> Run workflow*.
-- **Azure DevOps**: *Pipelines -> Inventory Clusters -> Run pipeline*.
+- **GitHub Actions**: *Actions -> Config: 1 - Validate Auth and Inventory Clusters -> Run workflow*.
+- **Azure DevOps**: *Pipelines -> Config: 1 - Validate Auth and Inventory Clusters -> Run pipeline*.
 
 Download `cluster-inventory.csv` from the run artifacts. It contains `SubscriptionId`, `ResourceGroupName`, `ClusterName`, `ResourceId`, `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow` (renamed from `UpdateExclusions` in v0.7.90), `UpdateExcluded` (new in v0.7.90), and the sideloaded-workflow columns added in v0.7.1.
+
+**Keep the desired state in source control.** Copy the generated `ClusterUpdateRings.csv` to `config/ClusterUpdateRings.csv`, populate the operator-managed tag columns, and commit it. On every manual run and the shipped weekly Sunday 08:17 UTC run, Config: 1 compares live inventory with this file by normalized `ResourceId`. It reports live-only clusters, source-only clusters, and differences in `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and optional `UpdateAuthAccountId`.
+
+The comparison publishes `cluster-inventory-drift.csv`, `.json`, `.xml`, and `-summary.md`. Drift raises a visible warning and failed JUnit checks but does not fail the pipeline by default. Before the source CSV exists, the check reports `NotConfigured` with onboarding guidance and the run remains green.
 
 **What a successful inventory run looks like.** The `Run Cluster Inventory` step prints the discovery summary, the absolute path of the exported CSV under the run artifacts, the `UpdateRing` tag distribution across all clusters, and a "Next Steps" block that points at `Set-AzLocalClusterUpdateRingTag` for the next workflow:
 
@@ -2393,6 +2397,26 @@ Before sharing an artifact, review it for cluster names, Azure resource IDs, loc
 
 For ITSM-specific failures, the troubleshooting matrix in [`ITSM/README.md` section 9](../ITSM/README.md#9-troubleshooting) is more specific.
 
+### 12.6 Revert the module and pipeline templates
+
+If a published module version must be withdrawn, unlisting it changes what an unpinned `Find-Module` / `Install-Module` lookup returns, but it does **not** rewrite pipeline YAMLs already committed to an operations repository. From that repository's root, use the managed updater to restore both the latest listed module and its matching templates:
+
+```powershell
+# Preview the rollback and leave all changes uncommitted for review.
+.\Update-Module-And-Pipelines.ps1 -LatestListed -NoPush
+```
+
+The updater imports the exact latest listed version, performs a marker-aware YAML refresh, and prompts before removing locally installed versions above the listed target. Review `git diff` before committing. If rollback would remove `AZLOCAL-CUSTOMIZE` regions introduced by the newer templates, it stops without changing pipeline files or removing newer modules. Review the named marker bodies, then approve only those removals when expected:
+
+```powershell
+.\Update-Module-And-Pipelines.ps1 `
+  -LatestListed `
+  -AllowRollbackMarkerRemoval `
+  -NoPush
+```
+
+For a deliberate rollback to a specific Gallery version, substitute `-RequiredVersion <version>`. Remember that template selection and runtime selection are separate: clear or change any GitHub `REQUIRED_MODULE_VERSION`, Azure DevOps `moduleVersion` default/override, or manual `module_version` input that still pins the withdrawn release. The complete decision table, review procedure, and recovery guidance are in [Revert to an older module and pipeline version](../docs/troubleshooting.md#revert-to-an-older-module-and-pipeline-version).
+
 ---
 
 ## 13. File layout
@@ -2413,7 +2437,7 @@ Automation-Pipeline-Examples/
     fleet-update-status.yml           # Monitor: 3. Scheduled fleet update-status snapshot (daily 06:00 UTC).
     manage-updatering-tags.yml        # Config: 2. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
     monitor-updates.yml               # Update: 4. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (every 6h cron + event-driven from apply-updates.yml + manual; -SkipWhenIdle heartbeat; v0.7.90, v0.8.90 cadence).
-    setup-validate-and-inventory.yml  # Config: 1. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
+    setup-validate-and-inventory.yml  # Config: 1. Auth, inventory, and source-control drift (manual + weekly Sun 08:17 UTC).
     sideload-updates.yml              # Update: 2. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
 
   azure-devops/

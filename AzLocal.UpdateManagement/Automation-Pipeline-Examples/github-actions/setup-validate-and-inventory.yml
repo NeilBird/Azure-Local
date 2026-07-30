@@ -9,7 +9,7 @@
 #   Run this workflow:
 #       - BEFORE adding the operational workflows (Update: 1-4 and Monitor: 1-3). It narrows any failure 
 #         to authentication/discovery rather than seven interacting pipelines.
-#       - PERIODICALLY (recommended monthly, or after every RBAC change in the tenant) 
+#       - WEEKLY (default Sunday schedule), or after every RBAC change in the tenant,
 #         to confirm subscription scope and cluster inventory are accurate.
 #
 # VALIDATION PROBES:
@@ -31,6 +31,8 @@
 # REPORTS GENERATED:
 #   - Authentication: JUnit XML + subscriptions.json + subscriptions.csv
 #   - Inventory: ClusterUpdateRings.csv + ClusterUpdateRings.json + README_Instructions.txt
+#   - Drift: cluster-inventory-drift.csv + .json + .xml, comparing live inventory
+#     with source-controlled config/ClusterUpdateRings.csv when that file exists.
 #   - GITHUB_STEP_SUMMARY markdown: Version banner, subscription count with collapsible
 #     details table, cluster inventory summary with UpdateRing distribution, next steps.
 #   - Artifacts: Both reports available for download.
@@ -81,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.28'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.29'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -402,6 +404,30 @@ jobs:
             -SubscriptionFilter    $env:INPUT_SUBSCRIPTION_FILTER `
             -InstalledModuleVersion $env:INSTALLED_MODULE_VERSION
 
+    - name: 'Compare Live Inventory with Source Control'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        $liveInventory = @(Import-Csv -LiteralPath './artifacts/ClusterUpdateRings.csv')
+        Invoke-AzLocalPipelineTimedOperation -PipelineName 'setup-validate-and-inventory' -StepNumber 40 -StepName 'Compare live inventory with source control' -ScriptBlock {
+          Export-AzLocalClusterInventoryDriftReport `
+              -LiveInventory   $liveInventory `
+              -SourceCsvPath   './config/ClusterUpdateRings.csv' `
+              -OutputDirectory './artifacts'
+        }
+
+    - name: 'Publish Cluster Inventory Drift Results'
+      if: success()
+      uses: dorny/test-reporter@v3
+      with:
+        name: 'Config: 1 - Cluster Inventory Drift'
+        path: ./artifacts/cluster-inventory-drift.xml
+        reporter: java-junit
+        fail-on-error: false
+        list-suites: failed
+        list-tests: failed
+
     - name: 'Compute Artifact Timestamp'
       id: artifact-stamp
       shell: pwsh
@@ -417,6 +443,7 @@ jobs:
         path: |
           ./artifacts/*.csv
           ./artifacts/*.json
+          ./artifacts/*.xml
           ./artifacts/README_Instructions.txt
         retention-days: 30
 

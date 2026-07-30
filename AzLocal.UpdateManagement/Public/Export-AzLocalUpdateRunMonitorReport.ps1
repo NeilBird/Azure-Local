@@ -313,10 +313,10 @@ function Export-AzLocalUpdateRunMonitorReport {
             $hasRecentAttempt = $false
             try {
                 if ($Scope -eq 'by-update-ring' -and $UpdateRing) {
-                    $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru)
+                    $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru 6>$null)
                 }
                 else {
-                    $inventory = @(Get-AzLocalClusterInventory -PassThru)
+                    $inventory = @(Get-AzLocalClusterInventory -PassThru 6>$null)
                     $inventoryForTags = @($inventory)
                 }
                 if ($RecentAttemptWindowHours -gt 0) {
@@ -362,14 +362,14 @@ function Export-AzLocalUpdateRunMonitorReport {
     if ($Scope -eq 'by-update-ring' -and $UpdateRing) {
         Write-Host "Scope: UpdateRing = $UpdateRing"
         if ($null -eq $inventoryForTags) {
-            $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru)
+            $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru 6>$null)
         }
-        $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -Latest -PassThru -SkipSideloadedReset)
+        $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -Latest -PassThru -SkipSideloadedReset 6>$null)
     }
     else {
         Write-Host "Scope: all clusters (via inventory)"
         if ($null -eq $inventory) {
-            $inventory = @(Get-AzLocalClusterInventory -PassThru)
+            $inventory = @(Get-AzLocalClusterInventory -PassThru 6>$null)
         }
         if (-not $inventory -or @($inventory).Count -eq 0) {
             Write-Warning 'No clusters found in inventory.'
@@ -378,7 +378,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             return
         }
         $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
-        $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest -PassThru -SkipSideloadedReset)
+        $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest -PassThru -SkipSideloadedReset 6>$null)
         $inventoryForTags = @($inventory)
     }
 
@@ -930,22 +930,28 @@ function Export-AzLocalUpdateRunMonitorReport {
     $scopeLabel = if ($Scope -eq 'by-update-ring' -and $UpdateRing) { "by-update-ring (UpdateRing = $UpdateRing)" } else { 'all clusters' }
     [void]$md.Add("**Scope**: $scopeLabel - **Per-step warn/crit**: ${LongRunningStepHours}h / $($LongRunningStepHours * 2)h - **Overall warn/crit/skull**: ${LongRunningThresholdHours}h / ${CriticalElapsedDays}d / $($CriticalElapsedDays * 2)d - **Recent-failure window**: ${RecentFailureWindowHours}h - **Snapshot (UTC)**: $($nowUtc.ToString('yyyy-MM-dd HH:mm'))")
     [void]$md.Add('')
-    [void]$md.Add('| Metric | Count |')
-    [void]$md.Add('|--------|-------|')
-    [void]$md.Add("| Clusters scoped | $(@($inventoryForTags).Count) |")
-    [void]$md.Add("| Update runs in flight | $($inFlight.Count) |")
-    [void]$md.Add("| Step errored (progress.status == 'Error', state still InProgress) | $($stepErrored.Count) |")
-    if ($StalledNoProgressHours -gt 0) {
-        [void]$md.Add("| Stalled runs (InProgress, no activity > ${StalledNoProgressHours}h) | $($stalled.Count) |")
+    $clustersScoped = @($inventoryForTags).Count
+    $formatPercentage = {
+        param([int]$Count)
+        if ($clustersScoped -eq 0) { return 'N/A' }
+        [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.0}%', (($Count / $clustersScoped) * 100))
     }
-    [void]$md.Add("| Step elapsed > ${LongRunningStepHours}h (primary) | $($longRunningStep.Count) |")
-    [void]$md.Add("| Overall elapsed > ${LongRunningThresholdHours}h (backstop) | $($longRunning.Count) |")
-    [void]$md.Add("| Unresolved-failed runs (latest run is Failed) | $($unresolvedFailed.Count) |")
+    [void]$md.Add('| Metric | Count | Percentage |')
+    [void]$md.Add('|--------|-------|------------|')
+    [void]$md.Add("| Clusters scoped | $clustersScoped | $(& $formatPercentage $clustersScoped) |")
+    [void]$md.Add("| Update runs in flight | $($inFlight.Count) | $(& $formatPercentage $inFlight.Count) |")
+    [void]$md.Add("| Step errored (progress.status == 'Error', state still InProgress) | $($stepErrored.Count) | $(& $formatPercentage $stepErrored.Count) |")
+    if ($StalledNoProgressHours -gt 0) {
+        [void]$md.Add("| Stalled runs (InProgress, no activity > ${StalledNoProgressHours}h) | $($stalled.Count) | $(& $formatPercentage $stalled.Count) |")
+    }
+    [void]$md.Add("| Step elapsed > ${LongRunningStepHours}h (primary) | $($longRunningStep.Count) | $(& $formatPercentage $longRunningStep.Count) |")
+    [void]$md.Add("| Overall elapsed > ${LongRunningThresholdHours}h (backstop) | $($longRunning.Count) | $(& $formatPercentage $longRunning.Count) |")
+    [void]$md.Add("| Unresolved-failed runs (latest run is Failed) | $($unresolvedFailed.Count) | $(& $formatPercentage $unresolvedFailed.Count) |")
     if ($RecentFailureWindowHours -gt 0) {
-        [void]$md.Add("| Recently-failed runs (last ${RecentFailureWindowHours}h) | $($recentlyFailed.Count) |")
+        [void]$md.Add("| Recently-failed runs (last ${RecentFailureWindowHours}h) | $($recentlyFailed.Count) | $(& $formatPercentage $recentlyFailed.Count) |")
     }
     if ($RecentAttemptWindowHours -gt 0) {
-        [void]$md.Add("| Update attempts without observable run (last ${RecentAttemptWindowHours}h) | $($attemptGaps.Count) |")
+        [void]$md.Add("| Update attempts without observable run (last ${RecentAttemptWindowHours}h) | $($attemptGaps.Count) | $(& $formatPercentage $attemptGaps.Count) |")
     }
     [void]$md.Add('')
     if ($inFlight.Count -gt 0 -or $unresolvedFailed.Count -gt 0) {

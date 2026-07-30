@@ -114,6 +114,89 @@ Get-WinEvent -LogName Application -ProviderName ECEAgent -MaxEvents 30 |
 
 Look for repeated ARM or `UpdateService` failures. If the Arc connected-machine agent (`himds`, `GCArcService`, `ExtensionService`) is unhealthy, the push side will be blocked regardless - `azcmagent show` on each node confirms Arc connectivity.
 
+### Revert to an older module and pipeline version
+
+Use this procedure when a published release must be withdrawn or when change control requires a temporary return to a known-good version. This is a general operational rollback; it does not require the development-channel workflow.
+
+#### Understand the two version surfaces
+
+The module runtime and committed pipeline templates are related but independent:
+
+1. PowerShell Gallery listing controls what an unpinned `Find-Module` or `Install-Module` lookup discovers. Unlisting a release does not uninstall existing copies and does not prevent an exact `-RequiredVersion` lookup.
+2. Pipeline YAMLs remain at the version last committed to the operations repository until `Update-AzLocalPipelineExample` refreshes them.
+3. Runtime pins override latest-listed discovery. GitHub can pin through the manual `module_version` input or repository variable `REQUIRED_MODULE_VERSION`; Azure DevOps can pin through the `moduleVersion` parameter default or a queue-time override.
+
+Rolling back only one surface can therefore run older templates with a newer module, or newer templates with an older module. Restore both surfaces together.
+
+#### Withdrawn release: restore the latest listed version
+
+Run the managed updater from the root of the operations repository. Start with `-NoPush` so nothing is committed automatically:
+
+```powershell
+.\Update-Module-And-Pipelines.ps1 -LatestListed -NoPush
+```
+
+This command:
+
+- resolves the latest **listed** PowerShell Gallery version;
+- installs and imports that exact version even when a newer unlisted version is installed;
+- preflights and refreshes the pipeline YAMLs from the target module's bundled templates while preserving shared `AZLOCAL-CUSTOMIZE` marker bodies;
+- prompts before uninstalling locally installed versions above the listed target, preventing a fresh PowerShell session from auto-loading the withdrawn version; and
+- leaves repository changes uncommitted for `git diff` review.
+
+Do not use `-KeepNewerVersions` for ordinary incident recovery. It deliberately retains versions above the listed target and therefore leaves an auto-loading risk.
+
+#### Roll back to a specific known-good version
+
+When the desired target is not the latest listed release, select it explicitly:
+
+```powershell
+.\Update-Module-And-Pipelines.ps1 -RequiredVersion 0.9.27 -NoPush
+```
+
+`-RequiredVersion` can resolve listed or unlisted versions by exact number. Because an unpinned pipeline still installs the latest listed release at runtime, also set the platform's runtime pin to the same known-good version until change control permits moving forward.
+
+#### Handle customization markers safely
+
+An older template may not contain a customization region introduced by the newer release. The updater stops before writing files when rollback would remove such a region and reports the affected files and marker names. Review and preserve any required content manually. If the reported removals are expected, rerun with the narrow approval switch:
+
+```powershell
+.\Update-Module-And-Pipelines.ps1 `
+    -LatestListed `
+    -AllowRollbackMarkerRemoval `
+    -NoPush
+```
+
+`-AllowRollbackMarkerRemoval` does not authorize unrelated markerless overwrites. It only permits the reported destination-only customization regions to be removed.
+
+#### Correct runtime pins
+
+For GitHub Actions, remove a withdrawn estate-wide pin to return to latest-listed resolution:
+
+```powershell
+gh variable delete REQUIRED_MODULE_VERSION --repo <owner>/<repo>
+```
+
+Alternatively, set it to the exact known-good version during a deliberate version rollback. Also check manual workflow inputs, because `module_version` takes precedence over the repository variable.
+
+For Azure DevOps, clear or update the `moduleVersion` pipeline parameter default, variable-group/template binding, and any queue-time override. A stale queue-time value takes precedence for that run.
+
+If the managed development-channel helper is present and the repository is currently pinned through it, this command performs the latest-listed template/module rollback before removing the GitHub pin or printing the equivalent Azure DevOps guidance:
+
+```powershell
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable -NoPush
+```
+
+#### Review and complete the rollback
+
+1. Run `git diff -- .github/workflows config DevChannel Update-Module-And-Pipelines.ps1 README.md` for GitHub, or substitute the Azure DevOps pipeline folder.
+2. Confirm every generated-against version changed to the intended target and all required customization bodies remain present.
+3. Confirm the runtime pin is empty for latest-listed recovery or equals the explicit known-good version.
+4. Commit and push the reviewed files manually, or rerun the same updater command without `-NoPush` to use its scoped commit/push path.
+5. Queue Config: 1 first to validate authentication, subscription scope, and inventory before resuming update-changing pipelines.
+
+Unlisting is a containment action, not a complete rollback. Existing module installations and committed pipeline files remain until this procedure updates them.
+
 ### Verbose Logging
 
 Enable verbose output for debugging:

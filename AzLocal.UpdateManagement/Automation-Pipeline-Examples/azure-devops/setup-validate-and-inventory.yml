@@ -13,8 +13,8 @@
 #       - BEFORE importing the operational pipelines (Update: 1-4 and Monitor: 1-3). It narrows
 #         any failure to authentication/discovery rather than seven interacting
 #         pipelines.
-#       - PERIODICALLY (recommended monthly, or after every RBAC change in the
-#         tenant) to confirm the pipeline identity subscription scope and cluster
+#       - WEEKLY (default Sunday schedule), or after every RBAC change in the
+#         tenant, to confirm the pipeline identity subscription scope and cluster
 #         inventory have not silently drifted.
 #
 # VALIDATION PROBES:
@@ -38,7 +38,8 @@
 #   - JUnit XML published via PublishTestResults@2 (renders in the ADO Tests tab).
 #   - Markdown summary uploaded via ##vso[task.uploadsummary] (renders in the Summary tab).
 #   - Artifacts: auth-report (JUnit XML + subscriptions.json + .csv) and
-#     cluster-inventory (ClusterUpdateRings.csv + .json + README_Instructions.txt).
+#     cluster-inventory (ClusterUpdateRings.csv + .json + README_Instructions.txt
+#     plus cluster-inventory-drift.csv + .json + .xml when drift is evaluated).
 #
 # HOW TO RUN (after the file is committed and the pipeline is imported):
 #   Pipelines -> Config: 1 - Validate Auth and Inventory Clusters -> Run pipeline.
@@ -84,7 +85,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.28'
+    value: '0.9.29'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -400,6 +401,32 @@ stages:
                     -OutputDirectory        "$(Build.ArtifactStagingDirectory)" `
                     -SubscriptionFilter     "${{ parameters.subscriptionFilter }}" `
                     -InstalledModuleVersion "$(installedModuleVersion)"
+
+          - task: PowerShell@2
+            displayName: 'Compare Live Inventory with Source Control'
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                $liveInventory = @(Import-Csv -LiteralPath '$(Build.ArtifactStagingDirectory)/ClusterUpdateRings.csv')
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'setup-validate-and-inventory' -StepNumber 40 -StepName 'Compare live inventory with source control' -ScriptBlock {
+                  Export-AzLocalClusterInventoryDriftReport `
+                      -LiveInventory   $liveInventory `
+                      -SourceCsvPath   '$(Build.SourcesDirectory)/config/ClusterUpdateRings.csv' `
+                      -OutputDirectory '$(Build.ArtifactStagingDirectory)'
+                }
+
+          - task: PublishTestResults@2
+            displayName: 'Publish Cluster Inventory Drift Results'
+            condition: succeeded()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '$(Build.ArtifactStagingDirectory)/cluster-inventory-drift.xml'
+              testRunTitle: 'Config: 1 - Cluster Inventory Drift'
+              failTaskOnFailedTests: false
+              mergeTestResults: false
 
           - pwsh: |
               $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
