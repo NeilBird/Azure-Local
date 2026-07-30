@@ -5341,6 +5341,27 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
         }
     }
 
+    It 'Clears a handled native failure exit code when the workload succeeds' {
+        InModuleScope AzLocal.UpdateManagement {
+            $path = Join-Path $TestDrive 'handled-native-failure\pipeline-timings.json'
+            $global:LASTEXITCODE = 0
+
+            $result = Invoke-AzLocalPipelineTimedOperation `
+                -PipelineName 'fleet-update-status' `
+                -StepNumber 20 `
+                -StepName 'Collect fleet update status' `
+                -Path $path `
+                -ScriptBlock {
+                    $global:LASTEXITCODE = 1
+                    'report-complete'
+                }
+
+            $result | Should -Be 'report-complete'
+            $global:LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).status | Should -Be 'Succeeded'
+        }
+    }
+
     It 'Records and rethrows failures while scrubbing credential fragments' {
         InModuleScope AzLocal.UpdateManagement {
             $path = Join-Path $TestDrive 'failed\pipeline-timings.json'
@@ -5365,9 +5386,31 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
     It 'Executes normally without writing a report when disabled' {
         InModuleScope AzLocal.UpdateManagement {
             $path = Join-Path $TestDrive 'disabled\pipeline-timings.json'
-            $result = Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Disabled timing' -Path $path -Enabled:$false -ScriptBlock { 'workload-output' }
+            $global:LASTEXITCODE = 0
+            $result = Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Disabled timing' -Path $path -Enabled:$false -ScriptBlock {
+                $global:LASTEXITCODE = 1
+                'workload-output'
+            }
             $result | Should -Be 'workload-output'
+            $global:LASTEXITCODE | Should -Be 0
             Test-Path -LiteralPath $path | Should -BeFalse
+        }
+    }
+
+    It 'All bundled pipeline workloads use the shared timed-operation success boundary' {
+        $pipelineRoot = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples'
+        $pipelineFiles = @(
+            Get-ChildItem -LiteralPath (Join-Path $pipelineRoot 'github-actions') -Filter '*.yml'
+            Get-ChildItem -LiteralPath (Join-Path $pipelineRoot 'azure-devops') -Filter '*.yml'
+        )
+        $timedPipelineFiles = @($pipelineFiles | Where-Object {
+                (Get-Content -LiteralPath $_.FullName -Raw) -match 'Invoke-AzLocalPipelineTimedOperation'
+            })
+
+        $timedPipelineFiles.Count | Should -Be 20
+        foreach ($pipelineFile in $timedPipelineFiles) {
+            (Get-Content -LiteralPath $pipelineFile.FullName -Raw) |
+                Should -Match 'Invoke-AzLocalPipelineTimedOperation' -Because "$($pipelineFile.FullName) must use the shared exit-code boundary"
         }
     }
 

@@ -387,7 +387,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.29 - Weekly drift, percentages, policy-aware stale scans, and REVIEW for missing health data. Exports 72 -> 73.
+## Version 0.9.29 - Weekly drift, percentages, policy-aware stale scans, health REVIEW, and timed-pipeline exit handling. Exports 72 -> 73.
 
 ## Version 0.9.28 - ARM recovery, retry correlation, tag-aware idle detection, and large-fleet batching. All 20 pipelines add always-on timing JSON plus opt-in transcripts with bounded ARG/ARM telemetry. Exports 71 -> 72.
 

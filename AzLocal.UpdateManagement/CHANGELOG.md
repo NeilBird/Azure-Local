@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The managed development-channel helper no longer sends a shell-sensitive `--jq` expression through native Windows argument handling when disabling a GitHub candidate pin. It parses `gh variable list --json name` locally and includes the exact WinGet installation command when GitHub CLI is absent.
 - Update: 1 stale-assessment refreshes now honor explicit `allowedUpdateVersions`: disallowed newer Solution updates no longer cause redundant `checkUpdates` calls, while a newer allowed Solution YYMM that Azure has not surfaced still triggers discovery. SBE-only policy entries remain outside the Solution YYMM heuristic.
+- All timed pipeline workloads now clear a handled native-command exit code after successful completion. This prevents GitHub Actions and Azure DevOps from reporting exit code 1 when an `az` fallback was handled, reports and timing telemetry were produced successfully, and no terminating exception occurred. Genuine thrown workload failures still propagate unchanged.
 
 ## [0.9.28] - 2026-07-30
 
