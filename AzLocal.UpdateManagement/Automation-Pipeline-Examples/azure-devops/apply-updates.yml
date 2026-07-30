@@ -515,7 +515,8 @@ stages:
               BUILD_REASON: $(Build.Reason)
               DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
               DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
-              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/apply-updates.log
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-2
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -551,7 +552,9 @@ stages:
                         Write-Host "##vso[task.logissue type=warning]forceImmediateUpdate=True ignored: Build.Reason='$env:BUILD_REASON' (override is honoured only for Manual queue runs)."
                     }
                 }
-                Invoke-AzLocalReadinessGatedClusterUpdate @params
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
+                  Invoke-AzLocalReadinessGatedClusterUpdate @params
+                }
 
           # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
           # default; enable by setting the pipeline variable (or variable-group
@@ -573,7 +576,8 @@ stages:
               DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
               DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
               BUILD_REASON: $(Build.Reason)
-              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/retry-failed-updates.log
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-RetryFailedUpdates
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -589,7 +593,7 @@ stages:
                     $VerbosePreference = 'Continue'
                     $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
                     New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
-                    Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+                    Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Append
                     $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
                     Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
                 }
@@ -599,11 +603,13 @@ stages:
                     OutputDirectory  = "$(Build.ArtifactStagingDirectory)"
                 }
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
-                Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 30 -StepName 'Retry failed updates' -ScriptBlock {
+                  Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+                }
 
           - task: PublishPipelineArtifact@1
-            displayName: 'Publish verbose diagnostics'
-            condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+            displayName: 'Publish pipeline performance diagnostics'
+            condition: always()
             inputs:
               targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
               artifact: 'azlocal-apply-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

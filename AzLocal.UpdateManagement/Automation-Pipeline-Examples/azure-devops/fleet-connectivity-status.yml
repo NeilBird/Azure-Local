@@ -250,7 +250,8 @@ stages:
         DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
         DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
         BUILD_REASON: $(Build.Reason)
-        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/fleet-connectivity-status.log
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
       inputs:
         # Replace with your service connection name
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-CollectConnectivity
@@ -278,11 +279,13 @@ stages:
               InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
           }
           if ($env:INPUT_SUBSCRIPTION_FILTER) { $params['SubscriptionFilter'] = $env:INPUT_SUBSCRIPTION_FILTER }
-          Export-AzLocalFleetConnectivityStatusReport @params
+          Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-connectivity-status' -StepNumber 20 -StepName 'Collect fleet connectivity status' -ScriptBlock {
+            Export-AzLocalFleetConnectivityStatusReport @params
+          }
 
     - task: PublishPipelineArtifact@1
-      displayName: 'Publish verbose diagnostics'
-      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
         artifact: 'azlocal-fleet-connectivity-status-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

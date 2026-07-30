@@ -320,7 +320,8 @@ stages:
         DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
         DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
         BUILD_REASON: $(Build.Reason)
-        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/monitor-updates.log
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Monitor
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -355,11 +356,13 @@ stages:
           # v0.8.90: -SkipWhenIdle (cheap idle probe) - the boolean parameter
           # expands to $True / $False at compile time.
           if ($${{ parameters.skipWhenIdle }} -and -not $diagnosticsEnabled) { $params['SkipWhenIdle'] = $true }
-          Export-AzLocalUpdateRunMonitorReport @params
+          Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Snapshot in-flight update runs' -ScriptBlock {
+            Export-AzLocalUpdateRunMonitorReport @params
+          }
 
     - task: PublishPipelineArtifact@1
-      displayName: 'Publish verbose diagnostics'
-      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
         artifact: 'azlocal-monitor-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

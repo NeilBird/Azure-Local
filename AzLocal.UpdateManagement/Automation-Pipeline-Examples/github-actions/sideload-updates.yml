@@ -355,7 +355,7 @@ jobs:
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
-            Start-Transcript -Path './diagnostics/sideload-updates.log' -Force
+            Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
@@ -371,7 +371,9 @@ jobs:
         }
         if ($env:INPUT_UPDATE_RING) { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
         if ($settings.Remoting.fqdnSuffix) { $planParams['FqdnSuffix'] = [string]$settings.Remoting.fqdnSuffix }
-        $plan = @(Resolve-AzLocalSideloadPlan @planParams)
+        $plan = @(Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 10 -StepName 'Resolve sideload plan' -ScriptBlock {
+          Resolve-AzLocalSideloadPlan @planParams
+        })
         Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
 
         # 2. Advance the re-entrant state machine by one transition per cluster.
@@ -406,7 +408,9 @@ jobs:
             Write-Host 'DRY RUN MODE - no media staged, no tasks registered, no tags flipped.'
         }
         try {
-          $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+          $results = @(Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 20 -StepName 'Advance sideload state machine' -ScriptBlock {
+            Invoke-AzLocalSideloadUpdate @applyParams
+          })
         }
         finally {
           $taskPassword = $null
@@ -416,18 +420,22 @@ jobs:
 
         # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
         New-Item -ItemType Directory -Path ./reports -Force | Out-Null
-        $report = Add-AzLocalSideloadStepSummary -StateRoot ([string]$settings.Paths.stateRoot) -Plan $plan -OutputPath ./reports
+        $report = Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 30 -StepName 'Render sideload status report' -ScriptBlock {
+          Add-AzLocalSideloadStepSummary -StateRoot ([string]$settings.Paths.stateRoot) -Plan $plan -OutputPath ./reports
+        }
 
         if ($report.HasFailures) {
             Write-Host '::warning::One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'
         }
 
-    - name: Upload verbose diagnostics
-      if: always() && env.DEBUG_VERBOSE == 'true'
+    - name: Upload pipeline performance diagnostics
+      if: always()
       uses: actions/upload-artifact@v5
       with:
         name: azlocal-sideload-updates-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
-        path: ./diagnostics/*.log
+        path: |
+          ./diagnostics/pipeline-transcript.log
+          ./diagnostics/pipeline-timings.json
         if-no-files-found: warn
         retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 

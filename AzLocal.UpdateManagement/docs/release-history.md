@@ -10,7 +10,7 @@
 
 ### What's New in v0.9.28
 
-**Update: 4 now recovers Azure Resource Graph indexing gaps through direct ARM and every bundled pipeline can publish a bounded diagnostic transcript.** Recent start/retry tags prevent the idle gate from trusting ARG alone, reused run resources correlate through `lastUpdatedTime`, ARM failures remain explicit, and admitted cluster IDs are queried in command-line-safe batches for large management-group fleets. Diagnostics work on manual, scheduled, and event-driven runs with separate artifacts and configurable GitHub retention. No public function or export-count change (71); pipeline pins are updated to `0.9.28`. See [CHANGELOG.md](../CHANGELOG.md#0928---2026-07-30) for full details.
+**Update: 4 now recovers Azure Resource Graph indexing gaps through direct ARM, and all pipelines publish structured performance timing on every run.** Recent start/retry tags prevent the idle gate from trusting ARG alone, reused run resources correlate through `lastUpdatedTime`, ARM failures remain explicit, and admitted cluster IDs are queried in command-line-safe batches for large management-group fleets. Always-on `pipeline-timings.json` records ordered workload durations and durable failure/termination evidence; opt-in diagnostics add `pipeline-transcript.log` with explicit ARG/ARM empty-result and count telemetry, scrubbed failures, and configurable GitHub retention. Public exports increase from 71 to 72 with `Invoke-AzLocalPipelineTimedOperation`; pipeline pins remain `0.9.28`. See [CHANGELOG.md](../CHANGELOG.md#0928---2026-07-30) for full details.
 
 ### What's New in v0.9.27
 

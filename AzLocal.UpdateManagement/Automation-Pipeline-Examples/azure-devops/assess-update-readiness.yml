@@ -210,7 +210,8 @@ stages:
               DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
               DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
               BUILD_REASON: $(Build.Reason)
-              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/assess-update-readiness.log
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # Replace with your service connection name
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AssessReadiness
@@ -243,11 +244,13 @@ stages:
                     $params['SchedulePath'] = $env:APPLY_UPDATES_SCHEDULE_PATH
                     Write-Host "Applying update allow-list from schedule: $($env:APPLY_UPDATES_SCHEDULE_PATH)"
                 }
-                Export-AzLocalClusterUpdateReadinessReport @params
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'assess-update-readiness' -StepNumber 20 -StepName 'Assess update readiness' -ScriptBlock {
+                  Export-AzLocalClusterUpdateReadinessReport @params
+                }
 
           - task: PublishPipelineArtifact@1
-            displayName: 'Publish verbose diagnostics'
-            condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+            displayName: 'Publish pipeline performance diagnostics'
+            condition: always()
             inputs:
               targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
               artifact: 'azlocal-assess-update-readiness-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

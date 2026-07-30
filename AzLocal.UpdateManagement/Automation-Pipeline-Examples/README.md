@@ -53,7 +53,11 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 9. [Tuning throughput (`-ThrottleLimit`)](#9-tuning-throughput--throttlelimit)
 10. [Standalone HTML report (no pipeline)](#10-standalone-html-report-no-pipeline)
 11. [Security model](#11-security-model)
-12. [Troubleshooting](#12-troubleshooting)
+12. [Troubleshooting pipelines](#12-troubleshooting-pipelines)
+  - [12.1 Capture a diagnostic run](#121-capture-a-diagnostic-run)
+  - [12.2 Read the transcript](#122-read-the-transcript)
+  - [12.3 Investigate zero or unexpected results](#123-investigate-zero-or-unexpected-results)
+  - [12.4 Common failures](#124-common-failures)
 13. [File layout](#13-file-layout)
 14. [Optional: Sideload updates to disconnected / air-gapped clusters (Update: 2)](#14-optional-sideload-updates-to-disconnected--air-gapped-clusters-update-2)
 15. [Pipeline reference](#15-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
@@ -1152,12 +1156,14 @@ az pipelines variable-group variable update `
   --value true
 ```
 
-An enabled run sets PowerShell verbose output for AzLocal cmdlets and captures the principal workload in a transcript. It does not enable `az --debug`, print authentication tokens, or deliberately dump raw ARM payloads. The transcript is published even when the workload fails:
+Every run writes `pipeline-timings.json`, regardless of the diagnostics setting. An enabled diagnostic run additionally sets PowerShell verbose output for AzLocal cmdlets and writes `pipeline-transcript.log`. It does not enable `az --debug`, print authentication tokens, or dump successful ARM payloads. The artifact is published even when the workload fails:
 
 - **GitHub Actions:** download `azlocal-<pipeline>-diagnostics_<run-id>_<attempt>` from the run's **Artifacts** section. Set repository variable `DEBUG_RETENTION_DAYS` to a whole number from 1-90; when unset, retention defaults to 14 days. Repository or organization policy can impose a lower maximum.
 - **Azure DevOps:** download `azlocal-<pipeline>-diagnostics-<build-id>-<job-attempt>` from the run's **Related > Published** artifacts. `PublishPipelineArtifact@1` has no per-artifact retention input, so retention follows the project's pipeline-retention policy. `DEBUG_RETENTION_DAYS` is therefore GitHub-only; Azure DevOps administrators should configure **Project settings > Pipelines > Settings > Retention**.
 
-Apply Updates can include both `apply-updates.log` and `retry-failed-updates.log` in one artifact. Monitor In-Flight Updates disables its idle short-circuit while diagnostics are enabled so the transcript includes the full ARM/Resource Graph reconciliation pass.
+Normal runs therefore publish one file (`pipeline-timings.json`); diagnostic runs publish two (`pipeline-timings.json` and `pipeline-transcript.log`). Apply Updates appends its guarded retry output to the same transcript. Monitor In-Flight Updates disables its idle short-circuit while diagnostics are enabled so the transcript includes the full ARM/Resource Graph reconciliation pass.
+
+For the exact capture contract and a step-by-step guide to empty or unexpected query results, see [Troubleshooting pipelines](#12-troubleshooting-pipelines).
 
 > **Sharing caution:** transcripts are designed to avoid credentials, but they can contain cluster names, Azure resource IDs, module paths, and service error text. Review them before sharing outside the support boundary, then set `DEBUG_VERBOSE=false` again after scheduled-run troubleshooting.
 
@@ -2291,7 +2297,65 @@ The report includes executive summary cards, cluster information, a status table
 
 ---
 
-## 12. Troubleshooting
+## 12. Troubleshooting pipelines
+
+### 12.1 Capture a diagnostic run
+
+For a one-off manual run, set `diagnostics=true` on the GitHub Actions or Azure DevOps run form. For a scheduled, event-driven, or persistent manual investigation, set `DEBUG_VERBOSE=true` as described in [section 5.2.2](#522-diagnostics-for-any-pipeline-run), reproduce the problem, download the diagnostics artifact, then set the variable back to `false`.
+
+The artifact is published with `always()` semantics, including when the principal workload fails. GitHub artifacts default to 14 days and honor `DEBUG_RETENTION_DAYS` from 1-90; Azure DevOps artifacts follow the project pipeline-retention policy.
+
+The artifact contents are deliberate:
+
+| Run mode | Files | Availability |
+|---|---|---|
+| Normal | `pipeline-timings.json` | Every run |
+| `diagnostics=true` or `DEBUG_VERBOSE=true` | `pipeline-timings.json`, `pipeline-transcript.log` | Manual input applies only to manually queued runs; the shared variable applies to every trigger |
+
+### 12.2 Diagnose performance with `pipeline-timings.json`
+
+The timing report is generated on every run so successful runs can be compared over time without first reproducing them in diagnostic mode. Each principal workload is executed through `Invoke-AzLocalPipelineTimedOperation`, which writes the report before starting the operation and updates it in `finally`. Workload output is preserved, and a workload failure is recorded before the original error is rethrown.
+
+The top-level JSON fields are:
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | Report contract version; currently `1`. |
+| `pipelineName`, `pipelineVersion` | Stable template identity and the version it was generated against. |
+| `platform`, `runId`, `runAttempt` | `GitHubActions`, `AzureDevOps`, or `Local`, plus native run correlation values. |
+| `moduleVersion`, `powerShellVersion`, `powerShellEdition` | Runtime versions needed when comparing performance. |
+| `startedUtc`, `lastUpdatedUtc`, `wallClockDurationMs` | Report time span. Wall clock includes the gaps between recorded operations in the same report, not just their summed execution time. |
+| `status`, `operationCount`, `operations` | Aggregate state and the ordered operation records. |
+
+Each operation records `stepNumber`, `stepName`, `invocationId`, start/end UTC timestamps, `durationMs`, `status`, `errorType`, and a scrubbed `errorMessage`. Step numbers are loose ordering keys (`10`, `20`, `30`) so later releases can insert operations without renumbering the report. A completed operation is `Succeeded` or `Failed`. If the PowerShell process or runner is terminated after the initial atomic write but before `finally`, the valid last report retains `Running`, a null end/duration, and its invocation ID; compare that record with the platform timeout or cancellation event.
+
+For a long but successful run, compare reports for the same `pipelineName`, `pipelineVersion`, module version, scope, and trigger shape. Sort or chart `operations[].durationMs` by `stepNumber`; this separates a slower principal workload from platform queue time, module installation, authentication, artifact upload, or other unwrapped setup. `wallClockDurationMs` is not the full native job duration unless the first and last recorded operations span that job.
+
+The report intentionally contains no KQL, ARM response body, URI query string, token, or credential. Failure messages pass through the shared credential scrubber. Timing-write failures emit a warning but never replace the workload result. Files are written through a temporary file and atomic replacement so readers do not observe partially serialized JSON.
+
+### 12.3 Read `pipeline-transcript.log`
+
+`Start-Transcript` records output that reaches PowerShell's host and output, verbose, warning, and error streams after capture starts. Diagnostics enable AzLocal verbose output, so the shared Azure query boundaries now record:
+
+- **Azure Resource Graph:** table name, a non-reversible query fingerprint, query character count, scope mode/count, pages, rows (including an explicit `empty result`), effective page size, truncation, and retry counters.
+- **Direct ARM:** HTTP method, resource path without URI query parameters, response shape/count (including an explicit empty response), and scrubbed failure details.
+- **Fleet workloads:** their own admission, tag-filter, exclusion, batching, reconciliation, and artifact messages where applicable. Monitor In-Flight Updates also bypasses its idle shortcut so diagnostics exercise the complete ARG/ARM reconciliation path.
+
+Diagnostics deliberately do **not** enable `az --debug` or log full KQL, successful ARM response bodies, access tokens, or URI query parameters. Credential-shaped CLI error fragments are scrubbed before they are written or returned. A malformed JSON failure can include the existing bounded, scrubbed first 500 characters of the invalid response so the parse failure remains diagnosable.
+
+There is one important PowerShell boundary: a transcript records emitted data; it cannot invent output for a `catch` block that intentionally suppresses an exception. Pipeline-owning cmdlets and the shared ARG/ARM wrappers emit or propagate operational failures, but benign parsing fallbacks can remain quiet by design. Therefore the presence of a transcript is guaranteed when diagnostics are enabled; a line for every internal `catch` is not. An abrupt end with no final workload message is itself useful evidence and should be compared with the pipeline step error immediately following transcript capture.
+
+### 12.4 Investigate zero or unexpected results
+
+1. Find the `ARG query start` and matching completion line. Compare the fingerprint when comparing runs, then check `scope`, `scopeCount`, `rows`, `pages`, `truncated`, and all retry counters. A clean `rows=0` means Azure Resource Graph successfully returned no matching rows; it is different from a failed query.
+2. Confirm the configured management groups or explicit subscriptions, then inspect subscription exclusions and grouped `clusterTagFilters`. Filter keys within one group use AND semantics; groups use OR semantics. Inventory admission occurs before workload-specific results are reconciled.
+3. If the fleet is large, verify that batching messages continue through every admitted cluster group. A low page count is not proof of truncation; rely on the explicit `truncated` value and admitted inventory count.
+4. For update runs omitted by ARG, inspect the direct ARM lines. `resultCount=0` is a valid empty collection; `ARM request failed` is an authorization, API, authentication, or transport failure. Update-run reconciliation requires `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read`.
+5. Compare the generated CSV/JSON report and pipeline summary with the transcript counts. If a successful query returned rows but a later report omitted them, search forward from that fingerprint for tag admission, normalization, and reconciliation messages.
+
+Before sharing an artifact, review it for cluster names, Azure resource IDs, local paths, and service error text. The scrubber protects credential-shaped values, but operational identifiers remain intentionally visible for diagnosis.
+
+### 12.5 Common failures
 
 | Symptom | Likely cause | Fix |
 |---|---|---|

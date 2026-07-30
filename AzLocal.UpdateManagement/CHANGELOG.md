@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every bundled GitHub Actions and Azure DevOps pipeline supports bounded verbose diagnostics. A manual `diagnostics=true` input enables one manually queued run, while the shared non-secret `DEBUG_VERBOSE=true` variable enables diagnostics for every trigger, including schedules and event-driven runs. Config: 3 retains its deprecated `debug` input as a manual compatibility alias.
 - Diagnostics are published separately from normal reports as a run-attempt-specific transcript artifact. GitHub retention uses the optional `DEBUG_RETENTION_DAYS` repository variable and defaults to 14 days; Azure DevOps follows project pipeline-retention policy because `PublishPipelineArtifact@1` has no per-artifact retention setting.
 - Update: 4 emits bounded verbose telemetry for Resource Graph scope, retry/truncation state, recent-attempt reconciliation candidates, direct ARM results, recovered runs, and failures. Diagnostic monitor runs bypass the idle short-circuit so the transcript captures the full collection and reconciliation pass.
+- Shared Resource Graph and direct ARM calls emit bounded start/completion telemetry, including explicit zero-row or empty-response outcomes, scope/count metadata, retries, and scrubbed failures. Query text, URI query parameters, and successful response payloads remain excluded; malformed JSON retains its existing bounded, scrubbed excerpt. The pipeline guide adds a dedicated troubleshooting runbook for interpreting these records and documents that transcripts capture emitted streams rather than silently suppressed exceptions.
+- Every bundled pipeline now publishes `pipeline-timings.json` on every run, independent of verbose diagnostics. The new `Invoke-AzLocalPipelineTimedOperation` public helper records durable, ordered operation timings before execution and in `finally`, preserves workload output, records scrubbed failures before rethrowing, and leaves a valid `Running` record after abrupt process termination. Normal artifacts contain the timing JSON; diagnostic runs additionally contain the stable `pipeline-transcript.log`.
 
 ### Fixed
 
@@ -19,10 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update: 4's `-SkipWhenIdle` heartbeat no longer trusts an ARG-idle result by itself. It checks admitted inventory for recent `UpdateStarted`/`UpdateRetried` tags and runs the full ARM reconciliation sweep when one exists; only fleets with neither an ARG in-flight row nor a recent attempt skip the update-run sweep. ARM authorization or transport failures are reported separately instead of being treated as a valid empty run collection.
 - The Update: 4 `Clusters scoped` count now reports the admitted cluster inventory count instead of deriving the value from update-run rows.
 - Multi-cluster update-run reads now batch admitted cluster resource IDs in groups of 40. Large management-group fleets no longer risk exceeding the Windows `az.cmd` command-line limit when global tag groups admit many clusters.
+- CLI-output scrubbing now masks unquoted credential fragments such as `access_token=<value>` in addition to JSON, bearer, JWT, header, and CLI-argument forms before failures reach transcripts or callers.
 
 ### Changed
 
-- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.28`.
+- Public exports increase from 71 to 72 with `Invoke-AzLocalPipelineTimedOperation`. Bundled GitHub Actions and Azure DevOps pipeline pins remain `0.9.28`.
 
 ## [0.9.27] - 2026-07-28
 

@@ -539,7 +539,7 @@ jobs:
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
-            Start-Transcript -Path './diagnostics/apply-updates.log' -Force
+            Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
@@ -552,7 +552,9 @@ jobs:
         }
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
         if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
-        Invoke-AzLocalReadinessGatedClusterUpdate @params
+        Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
+          Invoke-AzLocalReadinessGatedClusterUpdate @params
+        }
 
     # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
     # default; enable by setting the repository Variable
@@ -580,7 +582,7 @@ jobs:
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
-            Start-Transcript -Path './diagnostics/retry-failed-updates.log' -Force
+            Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Append
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
@@ -590,14 +592,18 @@ jobs:
             OutputDirectory  = './artifacts'
         }
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
-        Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+        Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 30 -StepName 'Retry failed updates' -ScriptBlock {
+          Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+        }
 
-    - name: Upload verbose diagnostics
-      if: always() && env.DEBUG_VERBOSE == 'true'
+    - name: Upload pipeline performance diagnostics
+      if: always()
       uses: actions/upload-artifact@v5
       with:
         name: azlocal-apply-updates-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
-        path: ./diagnostics/*.log
+        path: |
+          ./diagnostics/pipeline-transcript.log
+          ./diagnostics/pipeline-timings.json
         if-no-files-found: warn
         retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 

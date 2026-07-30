@@ -251,7 +251,7 @@ jobs:
               $VerbosePreference = 'Continue'
               $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
               New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
-              Start-Transcript -Path './diagnostics/assess-update-readiness.log' -Force
+              Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
               $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
               Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
           }
@@ -265,14 +265,18 @@ jobs:
               $params['SchedulePath'] = $env:APPLY_UPDATES_SCHEDULE_PATH
               Write-Host "Applying update allow-list from schedule: $($env:APPLY_UPDATES_SCHEDULE_PATH)"
           }
-          Export-AzLocalClusterUpdateReadinessReport @params
+            Invoke-AzLocalPipelineTimedOperation -PipelineName 'assess-update-readiness' -StepNumber 20 -StepName 'Assess update readiness' -ScriptBlock {
+              Export-AzLocalClusterUpdateReadinessReport @params
+            }
 
-      - name: Upload verbose diagnostics
-        if: always() && env.DEBUG_VERBOSE == 'true'
+      - name: Upload pipeline performance diagnostics
+        if: always()
         uses: actions/upload-artifact@v5
         with:
           name: azlocal-assess-update-readiness-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
-          path: ./diagnostics/*.log
+          path: |
+            ./diagnostics/pipeline-transcript.log
+            ./diagnostics/pipeline-timings.json
           if-no-files-found: warn
           retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 

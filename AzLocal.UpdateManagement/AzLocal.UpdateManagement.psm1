@@ -381,6 +381,8 @@ Export-ModuleMember -Function @(
     # Pipeline preflight guards (v0.9.12) - fail early with a run-summary-visible message on the two most common silent-failure modes: zero accessible subscriptions and no diagnostic reports produced
     'Assert-AzLocalAzureSubscriptionAccess',
     'Assert-AzLocalPipelineReport',
+    # First-class cross-task pipeline timing report (v0.9.28)
+    'Invoke-AzLocalPipelineTimedOperation',
     # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
     'Export-AzLocalAuthValidationReport',
     # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)

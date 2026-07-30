@@ -240,7 +240,8 @@
         'Public/Add-AzLocalFailedUpdateRetryHintSummary.ps1',
         'Public/Add-AzLocalApplyUpdatesStepSummary.ps1',
         'Public/Add-AzLocalNoReadyClustersStepSummary.ps1',
-        'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1'
+        'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1',
+        'Public/Invoke-AzLocalPipelineTimedOperation.ps1'
     )
 
     FunctionsToExport = @(
@@ -311,6 +312,8 @@
         # Pipeline preflight guards (v0.9.12) - fail early with a run-summary-visible message on the two most common silent-failure modes: zero accessible subscriptions and no diagnostic reports produced
         'Assert-AzLocalAzureSubscriptionAccess',
         'Assert-AzLocalPipelineReport',
+        # First-class cross-task pipeline timing journal (v0.9.28)
+        'Invoke-AzLocalPipelineTimedOperation',
         # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
         'Export-AzLocalAuthValidationReport',
         # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
@@ -379,7 +382,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.28 - Update: 4 recovers ARG-missing update runs through direct ARM, correlates reused retries by lastUpdatedTime, hardens SkipWhenIdle with recent-attempt tags, and batches admitted cluster IDs for large management-group fleets. All 20 pipelines add bounded diagnostic transcript artifacts. No export change (71).
+## Version 0.9.28 - ARM recovery, retry correlation, tag-aware idle detection, and large-fleet batching. All 20 pipelines add always-on timing JSON plus opt-in transcripts with bounded ARG/ARM telemetry. Exports 71 -> 72.
 
 ## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).
 

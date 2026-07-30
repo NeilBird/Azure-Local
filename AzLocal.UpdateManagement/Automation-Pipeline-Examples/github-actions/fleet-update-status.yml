@@ -270,7 +270,7 @@ jobs:
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
-            Start-Transcript -Path './diagnostics/fleet-update-status.log' -Force
+            Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
@@ -280,15 +280,19 @@ jobs:
             InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
         }
         if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
-        Export-AzLocalFleetUpdateStatusReport @params
+        Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 20 -StepName 'Collect fleet update status' -ScriptBlock {
+          Export-AzLocalFleetUpdateStatusReport @params
+        }
         if ($env:DEBUG_VERBOSE -eq 'true') { Stop-Transcript }
 
-    - name: Upload verbose diagnostics
-      if: always() && env.DEBUG_VERBOSE == 'true'
+    - name: Upload pipeline performance diagnostics
+      if: always()
       uses: actions/upload-artifact@v5
       with:
         name: azlocal-fleet-update-status-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
-        path: ./diagnostics/*.log
+        path: |
+          ./diagnostics/pipeline-transcript.log
+          ./diagnostics/pipeline-timings.json
         if-no-files-found: warn
         retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 

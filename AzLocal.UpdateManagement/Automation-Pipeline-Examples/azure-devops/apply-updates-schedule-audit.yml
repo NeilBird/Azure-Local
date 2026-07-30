@@ -262,7 +262,8 @@ stages:
         LEGACY_DEBUG_PARAM:      ${{ lower(parameters.debug) }}
         DEBUG_VERBOSE_SETTING:   $(DEBUG_VERBOSE)
         BUILD_REASON:            $(Build.Reason)
-        DIAGNOSTICS_LOG_PATH:    $(Build.ArtifactStagingDirectory)/diagnostics/apply-updates-schedule-audit.log
+        DIAGNOSTICS_LOG_PATH:    $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
       inputs:
@@ -315,11 +316,13 @@ stages:
               $params['SideloadLeadDays'] = [int]$sideloadSettings.planning.leadDays
             }
 
-          Export-AzLocalApplyUpdatesScheduleAudit @params
+          Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates-schedule-audit' -StepNumber 20 -StepName 'Run schedule coverage audit' -ScriptBlock {
+            Export-AzLocalApplyUpdatesScheduleAudit @params
+          }
 
     - task: PublishPipelineArtifact@1
-      displayName: 'Publish verbose diagnostics'
-      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), or(eq('${{ lower(parameters.diagnostics) }}', 'true'), eq('${{ lower(parameters.debug) }}', 'true')))))
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
         artifact: 'azlocal-apply-updates-schedule-audit-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

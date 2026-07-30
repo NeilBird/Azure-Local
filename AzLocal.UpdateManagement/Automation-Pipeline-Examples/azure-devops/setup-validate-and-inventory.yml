@@ -177,7 +177,8 @@ stages:
               DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
               DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
               BUILD_REASON: $(Build.Reason)
-              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/setup-validate-and-inventory.log
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ValidateAuthAndScope
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update if your service connection has a different name.
@@ -205,15 +206,17 @@ stages:
                     Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
                 }
                 $reportDir = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'auth-report'
-                Export-AzLocalAuthValidationReport `
-                    -ReportDirectory         $reportDir `
-                    -InstalledModuleVersion  "$(installedModuleVersion)" `
-                    -GeneratedAgainstVersion "$(generatedAgainstVersion)" `
-                    -LatestOnPSGallery       "$(latestOnPsGallery)"
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'setup-validate-and-inventory' -StepNumber 20 -StepName 'Validate authentication and scope' -ScriptBlock {
+                  Export-AzLocalAuthValidationReport `
+                      -ReportDirectory         $reportDir `
+                      -InstalledModuleVersion  "$(installedModuleVersion)" `
+                      -GeneratedAgainstVersion "$(generatedAgainstVersion)" `
+                      -LatestOnPSGallery       "$(latestOnPsGallery)"
+                }
 
           - task: PublishPipelineArtifact@1
-            displayName: 'Publish verbose diagnostics'
-            condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+            displayName: 'Publish pipeline performance diagnostics'
+            condition: always()
             inputs:
               targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
               artifact: 'azlocal-setup-validate-and-inventory-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

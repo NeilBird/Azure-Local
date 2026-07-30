@@ -231,7 +231,8 @@ stages:
         DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
         DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
         BUILD_REASON: $(Build.Reason)
-        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/fleet-update-status.log
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-CollectStatus
@@ -259,12 +260,14 @@ stages:
               InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
           }
           if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
-          Export-AzLocalFleetUpdateStatusReport @params
+          Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 20 -StepName 'Collect fleet update status' -ScriptBlock {
+            Export-AzLocalFleetUpdateStatusReport @params
+          }
           if ($diagnosticsEnabled) { Stop-Transcript }
 
     - task: PublishPipelineArtifact@1
-      displayName: 'Publish verbose diagnostics'
-      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
         artifact: 'azlocal-fleet-update-status-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
