@@ -2,7 +2,8 @@
 
 ## TL;DR
 
-Generate a starter schedule from the rings currently tagged in Azure:
+For first-time setup, generate a starter schedule from the rings currently
+tagged in Azure:
 
 ```powershell
 New-AzLocalApplyUpdatesScheduleConfig `
@@ -182,7 +183,9 @@ A four-week cycle provides a repeating operating pattern for Azure Local's
 monthly update releases. This example introduces one rollout stage each week,
 then starts the cycle again after week 4. Including earlier rings in later
 rows allows them to continue receiving updates during the rollout. Weeks 2
-and 3 demonstrate the common semicolon-separated multi-ring pattern.
+and 3 demonstrate the common semicolon-separated multi-ring pattern. The
+top-level `allowedUpdateVersions` list applies to every schedule row because
+none defines an override.
 
 ```yaml
 schemaVersion: 2
@@ -191,7 +194,7 @@ cycleWeeks:           4
 cycleAnchorISOWeek:   31
 cycleAnchorYear:      2026
 
-allowedUpdateVersions: 'Latest'
+allowedUpdateVersions: 'Solution12.2603.1002.502;Solution12.2604.1003.1006;SBE5.0.2603.1522;Solution12.2607.1003.70'
 
 schedule:
   - weeksInCycle: '1'
