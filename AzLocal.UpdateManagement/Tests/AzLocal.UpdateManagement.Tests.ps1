@@ -380,8 +380,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.29' {
-            $script:ModuleInfo.Version | Should -Be '0.9.29'
+        It 'Should have version 0.9.30' {
+            $script:ModuleInfo.Version | Should -Be '0.9.30'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -546,7 +546,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 $content | Should -Match 'pipeline-transcript\.log' -Because "$($yaml.Name) must use the stable opt-in transcript filename"
                 $content | Should -Match 'pipeline-timings\.json' -Because "$($yaml.Name) must publish the always-on timing report"
                 $content | Should -Match '(?m)^\s*if:\s*always\(\)\s*$' -Because "$($yaml.Name) must publish timings after successful and failed workloads"
-                $content | Should -Match 'actions/upload-artifact@v5' -Because "$($yaml.Name) must publish a downloadable diagnostics artifact"
+                $content | Should -Match 'actions/upload-artifact@v6' -Because "$($yaml.Name) must publish a Node.js 24-compatible diagnostics artifact"
                 $content | Should -Match 'github\.run_id.*github\.run_attempt' -Because "$($yaml.Name) artifact name must identify the run attempt"
                 $content | Should -Match "retention-days:\s*\`$\{\{\s*fromJSON\(vars\.DEBUG_RETENTION_DAYS\s*\|\|\s*'14'\)\s*\}\}" -Because "$($yaml.Name) diagnostics retention must use DEBUG_RETENTION_DAYS with a 14-day fallback"
             }
@@ -5308,7 +5308,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.29'
+            $report.moduleVersion | Should -Match '^0\.9\.30'
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw
@@ -22925,19 +22925,19 @@ Describe 'v0.8.6 regression guard: GitHub Actions Node.js 20 deprecation' {
         } else { @() }
     }
 
-    It 'no bundled GHA YAML uses actions/upload-artifact@v[1-4] (Node 20 - deprecated)' {
+    It 'no bundled GHA YAML uses actions/upload-artifact@v[1-5] (Node 20 - deprecated)' {
         $offenders = [System.Collections.Generic.List[string]]::new()
         foreach ($yml in $script:V086_GhaYamls) {
             $lines = Get-Content -LiteralPath $yml.FullName
             for ($i = 0; $i -lt $lines.Count; $i++) {
-                if ($lines[$i] -match 'actions/upload-artifact@v[1-4]\b') {
+                if ($lines[$i] -match 'actions/upload-artifact@v[1-5]\b') {
                     $offenders.Add(("{0}:{1}: {2}" -f $yml.Name, ($i + 1), $lines[$i].Trim()))
                 }
             }
         }
         $offenders.Count | Should -Be 0 -Because (
-            "actions/upload-artifact v1-v4 run on Node.js 20 which GitHub has scheduled for deprecation. " +
-            "Bump to @v5 or @v6 to avoid the deprecation warning in production runs. Found:`n$($offenders -join "`n")"
+            "actions/upload-artifact v1-v5 run on Node.js 20 which GitHub has deprecated. " +
+            "Bump to @v6 or later to avoid the deprecation warning in production runs. Found:`n$($offenders -join "`n")"
         )
     }
 

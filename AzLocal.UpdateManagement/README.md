@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.29 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.29)
+**Latest Version:** v0.9.30 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.30)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.29](#whats-new-in-v0929)
+- [What's New in v0.9.30](#whats-new-in-v0930)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,15 +78,15 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.29
+## What's New in v0.9.30
 
-**Config: 1 now compares the live Azure Local inventory with the desired state in `config/ClusterUpdateRings.csv` on its existing weekly schedule.** The report identifies live-only clusters, source-only clusters, and mismatches in `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and optional `UpdateAuthAccountId`. It publishes CSV, JSON, JUnit, and Markdown artifacts plus pipeline outputs and warnings. Drift stays visible without failing the pipeline; when the source CSV has not yet been committed, the run reports `NotConfigured` with onboarding guidance instead of failing.
+**Config: 1 now distinguishes desired-state drift from active operator holds and runs daily at 15:37 UTC.** Blank optional `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and `UpdateAuthAccountId` source CSV cells mean preserve/unmanaged, matching Config: 2 reconciliation behavior; explicit values, including `UpdateExcluded=False`, still detect drift. Live `UpdateExcluded=True` / `1` tags remain prominent as separate advisories with named clusters and remediation, including when no source CSV is configured. GitHub summaries also include a direct inventory-artifact download link.
 
-**Update: 4's metric table now includes fleet-relative percentages.** Each metric renders a one-decimal Percentage based on `Clusters scoped`, with `N/A` when no clusters are admitted. The managed development-channel helper avoids Windows native-argument corruption by parsing GitHub variable JSON locally, and its missing-CLI guidance includes the exact `winget install --id GitHub.cli --exact` command. Public exports increase from 72 to 73 with `Export-AzLocalClusterInventoryDriftReport`; all bundled pipeline pins are `0.9.29`.
+**Bundled GitHub workflows now use the Node.js 24 artifact runtime.** Diagnostics uploads move from `actions/upload-artifact@v5` to `@v6`, removing the Node.js 20 deprecation warning. No public function or export-count change (73); all bundled pipeline pins are `0.9.30`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.28`](docs/release-history.md#whats-new-in-v0928) for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.29`](docs/release-history.md#whats-new-in-v0929) for the previous release.
 
 ## Files
 
@@ -586,7 +586,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.29** stay above under [`What's New in v0.9.29`](#whats-new-in-v0929).
+The most recent release notes for **v0.9.30** stay above under [`What's New in v0.9.30`](#whats-new-in-v0930).
+
+### What's New in v0.9.29
+
+**Config: 1 turns its inventory run into a source-control drift audit, and Update: 4 adds fleet-relative percentages.** Config: 1 compares the live estate with `config/ClusterUpdateRings.csv` and reports live-only clusters, source-only clusters, and managed-tag differences through CSV, JSON, JUnit, pipeline summaries, and warning annotations. A missing CSV remains a successful first-run onboarding state. Update: 4's metric table adds a one-decimal Percentage column based on admitted clusters. The development-channel helper parses GitHub variable JSON locally on Windows and gives an exact WinGet command when `gh` is absent. Public exports increase from 72 to 73 with `Export-AzLocalClusterInventoryDriftReport`; pipeline pins are updated to `0.9.29`. See [CHANGELOG.md](CHANGELOG.md#0929---2026-07-30) for full details.
 
 ### What's New in v0.9.27
 

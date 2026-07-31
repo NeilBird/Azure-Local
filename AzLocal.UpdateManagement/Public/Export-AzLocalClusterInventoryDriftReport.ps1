@@ -5,8 +5,10 @@ function Export-AzLocalClusterInventoryDriftReport {
     .DESCRIPTION
         Produces read-only CSV, JSON, JUnit, and markdown reports that identify
         clusters missing from either side and operator-managed tag values that
-        differ from config/ClusterUpdateRings.csv. A missing source CSV is
-        reported as an onboarding state and does not fail the command.
+        differ from config/ClusterUpdateRings.csv. Blank optional tag values are
+        treated as unmanaged and preserve the live value, matching the tag
+        writer's reconciliation semantics. A missing source CSV is reported as
+        an onboarding state and does not fail the command.
     .PARAMETER LiveInventory
         Live rows returned by Invoke-AzLocalClusterInventory.
     .PARAMETER SourceCsvPath
@@ -73,9 +75,25 @@ function Export-AzLocalClusterInventoryDriftReport {
     $jsonPath = Join-Path -Path $OutputDirectory -ChildPath $JsonFileName
     $xmlPath = Join-Path -Path $OutputDirectory -ChildPath $XmlFileName
     $managedFields = @('UpdateRing', 'UpdateStartWindow', 'UpdateExclusionsWindow', 'UpdateExcluded', 'UpdateAuthAccountId')
+    $optionalManagedFields = @('UpdateStartWindow', 'UpdateExclusionsWindow', 'UpdateExcluded', 'UpdateAuthAccountId')
     $driftRows = New-Object System.Collections.ArrayList
+    $operatorExcludedRows = New-Object System.Collections.ArrayList
     $sourceRows = @()
     $status = 'NotConfigured'
+
+    foreach ($liveRow in @($LiveInventory)) {
+        $liveUpdateExcluded = if ($liveRow.PSObject.Properties['UpdateExcluded']) { ([string]$liveRow.UpdateExcluded).Trim() } else { '' }
+        if ($liveUpdateExcluded -notmatch '^(?i:true|1)$') { continue }
+        [void]$operatorExcludedRows.Add([pscustomobject][ordered]@{
+            Status       = 'OperatorExcluded'
+            ClusterName  = [string]$liveRow.ClusterName
+            ResourceId   = [string]$liveRow.ResourceId
+            Field        = 'UpdateExcluded'
+            SourceValue  = ''
+            LiveValue    = $liveUpdateExcluded
+            Detail       = 'Cluster is excluded from update automation. Remove the tag manually, or set UpdateExcluded=False in the source CSV, commit it, and run Config: 2 - Manage UpdateRing Tags.'
+        })
+    }
 
     if (Test-Path -LiteralPath $SourceCsvPath -PathType Leaf) {
         $sourceRows = @(Import-Csv -LiteralPath $SourceCsvPath -ErrorAction Stop)
@@ -137,6 +155,7 @@ function Export-AzLocalClusterInventoryDriftReport {
             foreach ($field in $managedFields) {
                 if ($field -notin $sourceColumns) { continue }
                 $sourceValue = if ($sourceRow.PSObject.Properties[$field]) { ([string]$sourceRow.$field).Trim() } else { '' }
+                if ($field -in $optionalManagedFields -and -not $sourceValue) { continue }
                 $liveValue = if ($liveRow.PSObject.Properties[$field]) { ([string]$liveRow.$field).Trim() } else { '' }
                 if (-not [string]::Equals($sourceValue, $liveValue, [StringComparison]::Ordinal)) {
                     [void]$driftRows.Add([pscustomobject][ordered]@{
@@ -165,13 +184,15 @@ function Export-AzLocalClusterInventoryDriftReport {
                 Detail       = 'Cluster exists in the source-controlled CSV but is not visible in the live inventory.'
             })
         }
-        $status = if ($driftRows.Count -gt 0) { 'Drift' } else { 'Clean' }
+        $status = if ($driftRows.Count -gt 0) { 'Drift' } elseif ($operatorExcludedRows.Count -gt 0) { 'Review' } else { 'Clean' }
     }
 
-    $rows = @($driftRows.ToArray() | Sort-Object Status, ClusterName, Field)
-    $liveOnlyRows = @($rows | Where-Object { $_.Status -eq 'LiveOnly' })
-    $sourceOnlyRows = @($rows | Where-Object { $_.Status -eq 'SourceOnly' })
-    $tagMismatchRows = @($rows | Where-Object { $_.Status -eq 'TagMismatch' })
+    $driftResultRows = @($driftRows.ToArray() | Sort-Object Status, ClusterName, Field)
+    $operatorExcludedResultRows = @($operatorExcludedRows.ToArray() | Sort-Object ClusterName)
+    $rows = @($driftResultRows) + @($operatorExcludedResultRows)
+    $liveOnlyRows = @($driftResultRows | Where-Object { $_.Status -eq 'LiveOnly' })
+    $sourceOnlyRows = @($driftResultRows | Where-Object { $_.Status -eq 'SourceOnly' })
+    $tagMismatchRows = @($driftResultRows | Where-Object { $_.Status -eq 'TagMismatch' })
     $tagMismatchClusters = @($tagMismatchRows | Select-Object -ExpandProperty ResourceId -Unique)
     $matchingCount = if ($status -eq 'NotConfigured') { 0 } else {
         @($LiveInventory).Count - $liveOnlyRows.Count - $tagMismatchClusters.Count
@@ -194,7 +215,9 @@ function Export-AzLocalClusterInventoryDriftReport {
         SourceOnlyCount         = [int]$sourceOnlyRows.Count
         TagMismatchClusterCount = [int]$tagMismatchClusters.Count
         FieldDiscrepancyCount   = [int]$tagMismatchRows.Count
-        DriftCount              = [int]$rows.Count
+        OperatorExcludedCount   = [int]$operatorExcludedResultRows.Count
+        DriftCount              = [int]$driftResultRows.Count
+        FindingCount            = [int]$rows.Count
         CsvPath                 = $csvPath
         JsonPath                = $jsonPath
         XmlPath                 = $xmlPath
@@ -231,9 +254,16 @@ function Export-AzLocalClusterInventoryDriftReport {
         else { $tagCase.SystemOut = 'No managed tag drift detected.' }
         $tagCases = @($tagCase)
     }
+    $operatorExclusionMessage = "$($operatorExcludedResultRows.Count) cluster(s) have UpdateExcluded=True/1 and will remain outside update automation."
+    $operatorExclusionCase = @{ Name = 'No clusters have an active UpdateExcluded operator hold' }
+    if ($operatorExcludedResultRows.Count -gt 0) {
+        $operatorExclusionCase.Failure = @{ Message = $operatorExclusionMessage; Type = 'OperatorExcluded'; Body = $operatorExclusionMessage }
+    }
+    else { $operatorExclusionCase.SystemOut = 'No active UpdateExcluded operator holds detected.' }
     [void](New-AzLocalPipelineJUnitXml -TestSuitesName 'Config: 1 - Cluster Inventory Drift' -Suites @(
         @{ Name = 'Inventory Membership'; ClassName = 'ClusterInventoryDrift'; TestCases = $membershipCases }
         @{ Name = 'Managed Tags'; ClassName = 'ClusterInventoryDrift'; TestCases = $tagCases }
+        @{ Name = 'Operator Exclusions'; ClassName = 'ClusterInventoryDrift'; TestCases = @($operatorExclusionCase) }
     ) -OutputPath $xmlPath -Timestamp $Timestamp)
 
     $md = New-Object System.Text.StringBuilder
@@ -257,35 +287,57 @@ function Export-AzLocalClusterInventoryDriftReport {
         [void]$md.AppendLine("| Source-controlled clusters missing from live inventory | $($sourceOnlyRows.Count) |")
         [void]$md.AppendLine("| Clusters with managed-tag drift | $($tagMismatchClusters.Count) |")
         [void]$md.AppendLine("| Managed-tag field discrepancies | $($tagMismatchRows.Count) |")
-        if ($rows.Count -gt 0) {
+        [void]$md.AppendLine("| Clusters with UpdateExcluded=True/1 | $($operatorExcludedResultRows.Count) |")
+        if ($driftResultRows.Count -gt 0) {
             [void]$md.AppendLine('')
             [void]$md.AppendLine('### Discrepancies')
             [void]$md.AppendLine('')
             [void]$md.AppendLine('| Status | Cluster | Field | Source | Live |')
             [void]$md.AppendLine('|--------|---------|-------|--------|------|')
-            foreach ($row in @($rows | Select-Object -First 50)) {
+            foreach ($row in @($driftResultRows | Select-Object -First 50)) {
                 $clusterCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$row.ClusterName)
                 $fieldCell = if ($row.Field) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$row.Field) } else { '-' }
                 $sourceCell = if ($row.SourceValue) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$row.SourceValue) } else { '-' }
                 $liveCell = if ($row.LiveValue) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$row.LiveValue) } else { '-' }
                 [void]$md.AppendLine("| $($row.Status) | $clusterCell | $fieldCell | $sourceCell | $liveCell |")
             }
-            if ($rows.Count -gt 50) {
+            if ($driftResultRows.Count -gt 50) {
                 [void]$md.AppendLine('')
-                [void]$md.AppendLine("_Showing 50 of $($rows.Count) discrepancies. Download ``$CsvFileName`` for the full report._")
+                [void]$md.AppendLine("_Showing 50 of $($driftResultRows.Count) discrepancies. Download ``$CsvFileName`` for the full report._")
             }
         }
+    }
+    if ($operatorExcludedResultRows.Count -gt 0) {
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('### Active UpdateExcluded operator holds')
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('These clusters are excluded from update automation until the operator hold is cleared:')
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('| Cluster | Live UpdateExcluded |')
+        [void]$md.AppendLine('|---------|--------------------|')
+        foreach ($row in $operatorExcludedResultRows) {
+            $clusterCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$row.ClusterName)
+            $liveCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$row.LiveValue)
+            [void]$md.AppendLine("| $clusterCell | $liveCell |")
+        }
+        [void]$md.AppendLine('')
+        [void]$md.AppendLine('Remove the tag manually, or set `UpdateExcluded=False` for these clusters in `config/ClusterUpdateRings.csv`, commit the change, and run **Config: 2 - Manage UpdateRing Tags**.')
     }
     Add-AzLocalPipelineStepSummary -Markdown $md.ToString() -SummaryFileName $SummaryFileName | Out-Null
 
     Set-AzLocalPipelineOutput -Name 'inventory_drift_status' -Value $status
-    Set-AzLocalPipelineOutput -Name 'inventory_drift_count' -Value ([string]$rows.Count)
+    Set-AzLocalPipelineOutput -Name 'inventory_drift_count' -Value ([string]$driftResultRows.Count)
     Set-AzLocalPipelineOutput -Name 'inventory_live_only_count' -Value ([string]$liveOnlyRows.Count)
     Set-AzLocalPipelineOutput -Name 'inventory_source_only_count' -Value ([string]$sourceOnlyRows.Count)
     Set-AzLocalPipelineOutput -Name 'inventory_tag_mismatch_count' -Value ([string]$tagMismatchClusters.Count)
+    Set-AzLocalPipelineOutput -Name 'inventory_operator_excluded_count' -Value ([string]$operatorExcludedResultRows.Count)
 
     if ($status -eq 'Drift') {
-        Write-AzLocalPipelineWarning -Title 'Cluster inventory drift detected' -Message "$($rows.Count) discrepancy row(s) found. Review the pipeline summary and '$CsvFileName' artifact."
+        Write-AzLocalPipelineWarning -Title 'Cluster inventory drift detected' -Message "$($driftResultRows.Count) discrepancy row(s) found. Review the pipeline summary and '$CsvFileName' artifact."
+    }
+    if ($operatorExcludedResultRows.Count -gt 0) {
+        $operatorExcludedNames = @($operatorExcludedResultRows | Select-Object -ExpandProperty ClusterName)
+        Write-AzLocalPipelineWarning -Title 'Clusters excluded from update automation' -Message "$($operatorExcludedResultRows.Count) cluster(s) have UpdateExcluded=True/1: $($operatorExcludedNames -join ', '). Remove the tag manually, or set UpdateExcluded=False in the source CSV, commit it, and run Config: 2 - Manage UpdateRing Tags."
     }
 
     if ($PassThru) { return $report }

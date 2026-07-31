@@ -1406,9 +1406,9 @@ Run **Config: 1 - Validate Auth and Inventory Clusters** with no parameters. It 
 
 Download `cluster-inventory.csv` from the run artifacts. It contains `SubscriptionId`, `ResourceGroupName`, `ClusterName`, `ResourceId`, `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow` (renamed from `UpdateExclusions` in v0.7.90), `UpdateExcluded` (new in v0.7.90), and the sideloaded-workflow columns added in v0.7.1.
 
-**Keep the desired state in source control.** Copy the generated `ClusterUpdateRings.csv` to `config/ClusterUpdateRings.csv`, populate the operator-managed tag columns, and commit it. On every manual run and the shipped weekly Sunday 08:17 UTC run, Config: 1 compares live inventory with this file by normalized `ResourceId`. It reports live-only clusters, source-only clusters, and differences in `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and optional `UpdateAuthAccountId`.
+**Keep the desired state in source control.** Copy the generated `ClusterUpdateRings.csv` to `config/ClusterUpdateRings.csv`, populate the operator-managed tag columns, and commit it. On every manual run and the shipped daily 15:37 UTC run, Config: 1 compares live inventory with this file by normalized `ResourceId`. It reports live-only clusters, source-only clusters, and differences in `UpdateRing` plus non-empty desired values for `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and optional `UpdateAuthAccountId`. A blank optional cell means preserve/unmanaged, so Config: 1 does not report it as drift and Config: 2 does not overwrite an existing live value. Set `UpdateExcluded=False` explicitly when source control should remove a live exclusion.
 
-The comparison publishes `cluster-inventory-drift.csv`, `.json`, `.xml`, and `-summary.md`. Drift raises a visible warning and failed JUnit checks but does not fail the pipeline by default. Before the source CSV exists, the check reports `NotConfigured` with onboarding guidance and the run remains green.
+The comparison publishes `cluster-inventory-drift.csv`, `.json`, `.xml`, and `-summary.md`. The GitHub run summary includes a direct **Download Inventory Artifact** link after the upload completes. Drift raises a visible warning and failed JUnit checks but does not fail the pipeline by default. Active `UpdateExcluded=True` / `1` holds are listed separately with manual and Config: 2 remediation; when they are the only findings, the assessment reports `Review` rather than `Clean`. Before the source CSV exists, the check reports `NotConfigured` with onboarding guidance and the run remains green.
 
 **What a successful inventory run looks like.** The `Run Cluster Inventory` step prints the discovery summary, the absolute path of the exported CSV under the run artifacts, the `UpdateRing` tag distribution across all clusters, and a "Next Steps" block that points at `Set-AzLocalClusterUpdateRingTag` for the next workflow:
 
@@ -2437,7 +2437,7 @@ Automation-Pipeline-Examples/
     fleet-update-status.yml           # Monitor: 3. Scheduled fleet update-status snapshot (daily 06:00 UTC).
     manage-updatering-tags.yml        # Config: 2. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
     monitor-updates.yml               # Update: 4. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (every 6h cron + event-driven from apply-updates.yml + manual; -SkipWhenIdle heartbeat; v0.7.90, v0.8.90 cadence).
-    setup-validate-and-inventory.yml  # Config: 1. Auth, inventory, and source-control drift (manual + weekly Sun 08:17 UTC).
+    setup-validate-and-inventory.yml  # Config: 1. Auth, inventory, and source-control drift (manual + daily 15:37 UTC).
     sideload-updates.yml              # Update: 2. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
 
   azure-devops/

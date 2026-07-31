@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.29'
+    ModuleVersion = '0.9.30'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -387,19 +387,21 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.30 - Config: 1 treats blank optional CSV fields as unmanaged, highlights active UpdateExcluded holds, links directly to the inventory artifact, and runs daily at 15:37 UTC. GitHub artifact uploads use Node 24. No export change (73).
+
 ## Version 0.9.29 - Weekly drift, percentages, policy-aware stale scans, health REVIEW, and timed-pipeline exit handling. Exports 72 -> 73.
 
 ## Version 0.9.28 - ARM recovery, retry correlation, tag-aware idle detection, and large-fleet batching. All 20 pipelines add always-on timing JSON plus opt-in transcripts with bounded ARG/ARM telemetry. Exports 71 -> 72.
 
-## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).
+## Version 0.9.27 - Minute-17 schedules, job timeouts, and fleet-settings schema v4. No export change (71).
 
-## Version 0.9.26 - Update: 1 scopes and batches ARG reads, preserves Ready solutions beside prerequisite SBE, reconciles stale ARG rows, and emits clean-run JUnit. No export change (71).
+## Version 0.9.26 - Scoped ARG reads and sparse ARM reconciliation. No export change (71).
 
-## Version 0.9.25 - Fixes large readiness summaries, normalizes Markdown cells, and expands Config: 3 remediation. No export change (71).
+## Version 0.9.25 - Larger readiness summaries and safe Markdown cells. No export change (71).
 
-## Version 0.9.24 - Adds grouped fleet tag admission, null-safe cloud payload handling, and 2,000-row reporting limits. No export change (71).
+## Version 0.9.24 - Grouped tag admission and null-safe cloud payloads. No export change (71).
 
-## Version 0.9.23 - Adds global cluster tag admission across read and mutation boundaries with backed-up schema migration. No export change (71).
+## Version 0.9.23 - Global cluster tag admission and schema migration. No export change (71).
 
 ## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
 
