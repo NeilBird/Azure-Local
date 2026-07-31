@@ -168,6 +168,12 @@ Three controls decide **what** installs and **when**. Configure them in this ord
 | `apply-updates.yml` cron | Config: 3 recommendation | How often Update: 3 wakes up to check the schedule. |
 | Per-cluster `UpdateStartWindow` tag | Config: 2 | When, during an eligible day, an update may start. |
 
+The schedule uses a fixed ISO 8601 week/year anchor and a repeating cycle
+instead of future calendar dates. Define the rollout pattern once and it
+continues across months and year boundaries. See [Configure the Apply Updates
+repeating schedule](docs/apply-updates-schedule.md) for the cycle model, how to
+start the cycle, same-week day targeting, and three worked examples.
+
 How the layers work together:
 
 - `apply-updates-schedule.yml` is the source of truth for eligible days. A cron firing on an ineligible day exits successfully without starting updates.
@@ -179,7 +185,7 @@ In one sentence: **the schedule file picks the days, the cron wakes the pipeline
 #### Step-by-step: from tags to a live schedule
 
 1. **Tag the clusters.** Run **Config: 2 - Manage UpdateRing Tags** to apply `UpdateRing`, `UpdateStartWindow`, and optional exclusion values from CSV. See [section 6.3](#63-apply-tags).
-2. **Generate `apply-updates-schedule.yml`.** Produce the ring calendar from the live fleet with `New-AzLocalApplyUpdatesScheduleConfig`, review it, and commit it. See [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet).
+2. **Generate `apply-updates-schedule.yml`.** Produce the ring calendar from the live fleet with `New-AzLocalApplyUpdatesScheduleConfig`, review it, and commit it. See [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet) and the [schedule configuration guide](docs/apply-updates-schedule.md).
 3. **Run Config: 3 - Apply-Updates Schedule Coverage Audit.** This read-only pipeline diffs the live `UpdateRing` / `UpdateStartWindow` tags against `apply-updates-schedule.yml`, reports any coverage gaps, and **outputs two ready-to-paste cron snippets** in its step summary:
    - a **recommended apply cron** for **Update: 3 - Apply Updates** (`apply-updates.yml`), and
    - a **recommended in-flight monitor cron** for **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`).
@@ -1037,7 +1043,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 
   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\config\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled apply workflow ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
 
-   **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
+  **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). See the [schedule configuration guide](docs/apply-updates-schedule.md) for the ISO-week cycle and worked rollout examples, and [section 8.4](#84-restrict-which-updates-each-ring-installs-allowedupdateversions-schema-v2) for the `allowedUpdateVersions` policy.
 
 ### 5.2 Azure DevOps
 
@@ -1094,7 +1100,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 
   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Apply Updates (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./config/apply-updates-schedule.yml`) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled apply workflow ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
 
-   **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
+  **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). See the [schedule configuration guide](docs/apply-updates-schedule.md) for the ISO-week cycle and worked rollout examples, and [section 8.4](#84-restrict-which-updates-each-ring-installs-allowedupdateversions-schema-v2) for the `allowedUpdateVersions` policy.
 
 7. **Create the `AzureLocal-Pipeline-Settings` variable group (required - one-time).** Every ADO example pipeline pulls its **shared, non-secret settings** from a single variable group named **`AzureLocal-Pipeline-Settings`** via a `- group: AzureLocal-Pipeline-Settings` reference at the top of each pipeline. This is the Azure DevOps equivalent of GitHub repo **Variables** (`vars.*`) - set the values **once** and all ten pipelines inherit them, instead of editing each YAML. See [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once) below for the create commands and the full member list.
 
@@ -1640,6 +1646,12 @@ New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedul
 
 The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
 
+The generator anchors cycle week 1 to the current UTC ISO week and year. Before
+editing its rows, read [Configure the Apply Updates repeating
+schedule](docs/apply-updates-schedule.md). It explains how to retain the
+anchor, choose the cycle length, define several day-specific rows for the same
+cycle week, and preview the result.
+
 **Why this step matters**: the schedule file is required for scheduled apply and schedule-audit runs. Manual `workflow_dispatch` (GitHub) / queue (Azure DevOps) runs of apply work without it - they take `update_ring` / `updateRing` verbatim from the run-form input - but anything cron-triggered reads ring eligibility from this file.
 
 **Safety rails**:
@@ -1648,7 +1660,7 @@ The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the cluste
 - The bundled apply workflow ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until at least one cron is explicitly uncommented - the demo starter is safe to leave in place until you regenerate.
 - Pass `-SkipStarterSchedule` to `Copy-AzLocalPipelineExample` to suppress the starter drop entirely (e.g. for estates that pre-stage the schedule via separate tooling).
 
-For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The weekly drift detector (`apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` combinations with no matching apply cron is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
+For the detailed `allowedUpdateVersions` allow-list, see [section 8.4](#84-restrict-which-updates-each-ring-installs-allowedupdateversions-schema-v2). The weekly drift detector (`apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` combinations with no matching apply cron is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
 
 ### 6.6 Apply updates - one wave at a time
 
@@ -1837,6 +1849,12 @@ Phase 2 (lifecycle close-out via `Sync-AzLocalIncident`) and Phase 3 (Teams + Sl
 ---
 
 ## 8. Scheduling, maintenance windows, and change-freeze periods
+
+This section covers operational start windows, cron coverage, approvals,
+auditing, and update allow-lists. For the date-free ISO-week cycle itself,
+including four-week, same-week day-targeting, and eight-week examples, see
+[Configure the Apply Updates repeating
+schedule](docs/apply-updates-schedule.md).
 
 ### 8.1 Schedule windows, exclusions, and cron triggers
 
