@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.30 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0930) `What's New in v0.9.30` section.
+> **For v0.9.31 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0931) `What's New in v0.9.31` section.
 
 ---
+
+### What's New in v0.9.31
+
+**Long-running GitHub workflows can renew expired OIDC-backed Azure CLI authentication, large explicit fleet reads scale by represented subscription, and Monitor: 3 reports incomplete data honestly.** Shared ARM and Resource Graph transports obtain a fresh GitHub runner assertion, repeat federated login, restore the configured default CLI subscription, and retry once when authentication has expired. Explicit fleets above 200 cluster IDs use bounded 40-subscription ARG groups with exact client-side resource-ID filtering for readiness, summaries, available updates, and update runs; smaller fleets retain 40-ID KQL batches. Monitor: 3 and Update: 4 skip sideload-tag reset checks so reporting remains read-only. Monitor: 3 records supplementary completeness, removes stale exports, writes available evidence, and fails late when a requested current-run export is missing. `AZURE_SUBSCRIPTION_ID` is the post-login CLI default context, not fleet scope. No public function or export-count change (73); pipeline pins are updated to `0.9.31`. See [CHANGELOG.md](../CHANGELOG.md#0931---2026-07-31) for full details.
 
 ### What's New in v0.9.30
 

@@ -371,6 +371,33 @@ scope:
             $rows[80].Value | Should -Be 'cluster-81'
         }
     }
+
+    It 'queries large resource-ID fleets in bounded subscription batches and exact-filters candidates' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzResourceGraphQuery {
+                if ($SubscriptionId -contains 'sub-1') {
+                    @(
+                        [pscustomobject]@{ ClusterResourceId_ = '/subscriptions/sub-1/resourcegroups/rg/providers/microsoft.azurestackhci/clusters/cluster-1'; Value = 'admitted' }
+                        [pscustomobject]@{ ClusterResourceId_ = '/subscriptions/sub-1/resourcegroups/rg/providers/microsoft.azurestackhci/clusters/outside-scope'; Value = 'outside' }
+                        $null
+                    )
+                }
+            }
+
+            $values = 1..201 | ForEach-Object {
+                "/subscriptions/sub-$_/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+            }
+            $template = "resources | extend ClusterResourceId_ = tolower(id) | where ClusterResourceId_ in~ ({0}) | project ClusterResourceId_"
+            $rows = Invoke-AzLocalResourceGraphValueBatches -Value $values -QueryTemplate $template -ExactResourceIdProperty 'ClusterResourceId_' -BatchSize 40
+
+            @($rows).Count | Should -Be 1
+            $rows[0].Value | Should -Be 'admitted'
+            Assert-MockCalled Invoke-AzResourceGraphQuery -Times 6 -Exactly
+            Assert-MockCalled Invoke-AzResourceGraphQuery -ParameterFilter {
+                @($SubscriptionId).Count -le 40 -and $Query -notmatch 'ClusterResourceId_ in~'
+            } -Times 6 -Exactly
+        }
+    }
 }
 
 Describe 'Module: AzLocal.UpdateManagement' {
@@ -380,8 +407,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.30' {
-            $script:ModuleInfo.Version | Should -Be '0.9.30'
+        It 'Should have version 0.9.31' {
+            $script:ModuleInfo.Version | Should -Be '0.9.31'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -4941,6 +4968,30 @@ Describe 'Internal Helper: Invoke-AzResourceGraphQuery' {
             }
         }
 
+        It 'Renews GitHub OIDC authentication and retries an expired assertion once' {
+            InModuleScope AzLocal.UpdateManagement {
+                $script:AuthCalls = 0
+                function az {
+                    $script:AuthCalls++
+                    if ($script:AuthCalls -eq 1) {
+                        Write-Error -ErrorAction Continue 'ERROR: AADSTS700024: Client assertion is not within its valid time range.'
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    return '{"count":1,"data":[{"id":"renewed"}],"total_records":1}'
+                }
+                Mock Repair-AzLocalAzureCliAuthentication { return $true }
+
+                $rows = Invoke-AzResourceGraphQuery -Query 'resources' -WarningAction SilentlyContinue
+
+                $rows | Should -HaveCount 1
+                $rows[0].id | Should -Be 'renewed'
+                $script:AuthCalls | Should -Be 2
+                Assert-MockCalled Repair-AzLocalAzureCliAuthentication -Times 1 -Exactly
+            }
+        }
+
         It 'Should reset throttle diagnostic flags at the start of every call' {
             InModuleScope AzLocal.UpdateManagement {
                 # First call: triggers a throttle + retry to set flags TRUE / >0.
@@ -5286,6 +5337,114 @@ Describe 'Internal Helper: Invoke-AzRestJson diagnostics' {
             $script:diagnosticRestResult.Error | Should -Not -Match 'secret-value'
         }
     }
+
+    It 'Renews GitHub OIDC authentication after an expired assertion and retries once' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:RestCalls = 0
+            function az {
+                param([Parameter(ValueFromRemainingArguments = $true)][object[]]$RemainingArgs)
+                if ($RemainingArgs[0] -eq 'rest') {
+                    $script:RestCalls++
+                    if ($script:RestCalls -eq 1) {
+                        Write-Error -ErrorAction Continue 'ERROR: AADSTS700024: assertion is not within its valid time range.'
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    return '{"id":"recovered"}'
+                }
+                $global:LASTEXITCODE = 1
+            }
+            Mock Repair-AzLocalAzureCliAuthentication { return $true }
+
+            $result = Invoke-AzRestJson -Uri 'https://management.azure.com/subscriptions/sub-1?api-version=2025-01-01'
+
+            $result.Ok | Should -BeTrue
+            $result.Data.id | Should -Be 'recovered'
+            $script:RestCalls | Should -Be 2
+            Assert-MockCalled Repair-AzLocalAzureCliAuthentication -Times 1 -Exactly
+        }
+    }
+}
+
+Describe 'Internal Helper: Repair-AzLocalAzureCliAuthentication' {
+    It 'Requests a fresh GitHub assertion, signs in, and restores the default subscription' {
+        InModuleScope AzLocal.UpdateManagement {
+            $savedEnvironment = @{
+                GITHUB_ACTIONS                 = $env:GITHUB_ACTIONS
+                ACTIONS_ID_TOKEN_REQUEST_URL   = $env:ACTIONS_ID_TOKEN_REQUEST_URL
+                ACTIONS_ID_TOKEN_REQUEST_TOKEN = $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN
+                AZLOCAL_OIDC_CLIENT_ID         = $env:AZLOCAL_OIDC_CLIENT_ID
+                AZLOCAL_OIDC_TENANT_ID         = $env:AZLOCAL_OIDC_TENANT_ID
+                AZLOCAL_OIDC_SUBSCRIPTION_ID   = $env:AZLOCAL_OIDC_SUBSCRIPTION_ID
+            }
+            try {
+                $env:GITHUB_ACTIONS = 'true'
+                $env:ACTIONS_ID_TOKEN_REQUEST_URL = 'https://token.actions.example/oidc?api-version=1'
+                $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = 'request-token'
+                $env:AZLOCAL_OIDC_CLIENT_ID = 'client-id'
+                $env:AZLOCAL_OIDC_TENANT_ID = 'tenant-id'
+                $env:AZLOCAL_OIDC_SUBSCRIPTION_ID = 'subscription-id'
+                $script:AzRenewalCalls = [System.Collections.Generic.List[string]]::new()
+                function az {
+                    param([Parameter(ValueFromRemainingArguments = $true)][object[]]$RemainingArgs)
+                    [void]$script:AzRenewalCalls.Add(($RemainingArgs -join ' '))
+                    $global:LASTEXITCODE = 0
+                }
+                Mock Invoke-RestMethod { return [pscustomobject]@{ value = 'fresh-assertion' } }
+
+                Repair-AzLocalAzureCliAuthentication | Should -BeTrue
+
+                Assert-MockCalled Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+                    $Uri -match 'audience=api%3A%2F%2FAzureADTokenExchange' -and
+                    $Headers.Authorization -eq 'Bearer request-token'
+                }
+                $script:AzRenewalCalls | Should -HaveCount 2
+                $script:AzRenewalCalls[0] | Should -Match '^login --service-principal .*--username client-id .*--tenant tenant-id .*--federated-token fresh-assertion'
+                $script:AzRenewalCalls[1] | Should -Be 'account set --subscription subscription-id'
+            }
+            finally {
+                foreach ($entry in $savedEnvironment.GetEnumerator()) {
+                    [Environment]::SetEnvironmentVariable([string]$entry.Key, $entry.Value, 'Process')
+                }
+            }
+        }
+    }
+
+    It 'Declines renewal when GitHub OIDC metadata is unavailable' {
+        InModuleScope AzLocal.UpdateManagement {
+            $savedGitHubActions = $env:GITHUB_ACTIONS
+            try {
+                Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+                Mock Invoke-RestMethod { throw 'must not be called' }
+
+                Repair-AzLocalAzureCliAuthentication | Should -BeFalse
+
+                Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
+            }
+            finally {
+                [Environment]::SetEnvironmentVariable('GITHUB_ACTIONS', $savedGitHubActions, 'Process')
+            }
+        }
+    }
+}
+
+Describe 'GitHub monitoring workflows expose OIDC renewal metadata' {
+    It 'Wires renewal metadata into <Workflow>' -ForEach @(
+        @{ Workflow = 'fleet-connectivity-status.yml' }
+        @{ Workflow = 'fleet-health-status.yml' }
+        @{ Workflow = 'fleet-update-status.yml' }
+        @{ Workflow = 'monitor-updates.yml' }
+    ) {
+        $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\github-actions\$Workflow"
+        $workflowText = Get-Content -LiteralPath $workflowPath -Raw
+
+        @($workflowText | Select-String -Pattern 'AZLOCAL_OIDC_CLIENT_ID:\s*\$\{\{ secrets\.AZURE_CLIENT_ID \}\}' -AllMatches).Matches.Count | Should -Be 1
+        @($workflowText | Select-String -Pattern 'AZLOCAL_OIDC_TENANT_ID:\s*\$\{\{ vars\.AZURE_TENANT_ID \}\}' -AllMatches).Matches.Count | Should -Be 1
+        @($workflowText | Select-String -Pattern 'AZLOCAL_OIDC_SUBSCRIPTION_ID:\s*\$\{\{ vars\.AZURE_SUBSCRIPTION_ID \}\}' -AllMatches).Matches.Count | Should -Be 1
+        $workflowText | Should -Match 'subscription id restores the CLI default account after login'
+        $workflowText | Should -Match 'does not scope ARG queries'
+    }
 }
 
 Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
@@ -5308,7 +5467,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.30'
+            $report.moduleVersion | Should -Match '^0\.9\.31'
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw
@@ -6501,15 +6660,15 @@ Describe 'Get-AzLocalFleetStatusData (schema contract)' {
 
 #region Integration: Get-AzLocalUpdateSummary parallel dispatch
 
-# v0.7.68 ARG-first refactor: the multi-cluster path now reads via a single
-# Invoke-AzResourceGraphQuery batch against
+# v0.7.68 ARG-first refactor: the multi-cluster path now reads via batched
+# Invoke-AzResourceGraphValueBatches calls against
 # microsoft.azurestackhci/clusters/updatesummaries instead of per-cluster
 # Invoke-AzRestJson fan-out. Tests rewritten accordingly.
 Describe 'Get-AzLocalUpdateSummary (ARG-batch dispatch)' {
 
-    Context 'Single ARG batch read for multi-cluster -ClusterResourceIds' {
+    Context 'Batched ARG read for multi-cluster -ClusterResourceIds' {
 
-        It 'Returns one row per input cluster from a single ARG batch and strips internal __DisplayTag' {
+        It 'Returns one row per input cluster through the shared batch helper and strips internal __DisplayTag' {
             InModuleScope AzLocal.UpdateManagement {
                 # Shadow native `az` so `az account show` returns success.
                 function global:az { $global:LASTEXITCODE = 0; return '{}' }
@@ -6517,9 +6676,9 @@ Describe 'Get-AzLocalUpdateSummary (ARG-batch dispatch)' {
                 Mock Install-AzGraphExtension { return $true }
 
                 $script:seenQueries = [System.Collections.Generic.List[string]]::new()
-                Mock Invoke-AzResourceGraphQuery {
-                    param($Query)
-                    [void]$script:seenQueries.Add([string]$Query)
+                Mock Invoke-AzLocalResourceGraphValueBatches {
+                    param($Value, $QueryTemplate)
+                    [void]$script:seenQueries.Add([string]$QueryTemplate)
                     return @(
                         [PSCustomObject]@{
                             id = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/cluster-a/providers/Microsoft.AzureStackHCI/updateSummaries/default'
@@ -6567,14 +6726,12 @@ Describe 'Get-AzLocalUpdateSummary (ARG-batch dispatch)' {
                 ($results | Where-Object ClusterName -eq 'cluster-a').UpdateState | Should -Be 'UpToDate'
                 ($results | Where-Object ClusterName -eq 'cluster-b').UpdateState | Should -Be 'UpdateAvailable'
 
-                # Exactly one ARG batch fired for the whole fleet, regardless of
-                # the number of cluster IDs supplied.
-                Assert-MockCalled Invoke-AzResourceGraphQuery -Times 1 -Exactly
-                # And the KQL targets the updatesummaries namespace with the
-                # cluster IDs lower-cased into an in~() literal.
+                Assert-MockCalled Invoke-AzLocalResourceGraphValueBatches -Times 1 -Exactly -ParameterFilter {
+                    $Value.Count -eq 2 -and $QueryTemplate -match '\| where ClusterResourceId_ in~ \(\{0\}\)'
+                }
+                # The template targets the update-summary namespace; the shared
+                # helper safely inserts lower-cased resource IDs in bounded batches.
                 $script:seenQueries[0] | Should -Match "microsoft\.azurestackhci/clusters/updatesummaries"
-                $script:seenQueries[0] | Should -Match "cluster-a"
-                $script:seenQueries[0] | Should -Match "cluster-b"
 
                 # Output rows must not leak internal projection columns.
                 foreach ($r in $results) {
@@ -6614,6 +6771,26 @@ Describe 'Get-AzLocalUpdateSummary (ARG-batch dispatch)' {
                 $results = Get-AzLocalUpdateSummary -ClusterResourceIds $ids -PassThru
                 ($results | Where-Object ClusterName -eq 'cluster-good').UpdateState   | Should -Be 'UpToDate'
                 ($results | Where-Object ClusterName -eq 'cluster-missing').UpdateState | Should -Be 'No Summary'
+            }
+        }
+    }
+}
+
+Describe 'Get-AzLocalAvailableUpdates (ARG-batch dispatch)' {
+    It 'Routes a large fleet through the shared resource-ID batch helper' {
+        InModuleScope AzLocal.UpdateManagement {
+            function global:az { $global:LASTEXITCODE = 0; return '{}' }
+            Mock Test-AzCliAvailable { return $true }
+            Mock Install-AzGraphExtension { return $true }
+            Mock Invoke-AzLocalResourceGraphValueBatches { return @() }
+            $resourceIds = @(1..81 | ForEach-Object {
+                "/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+            })
+
+            [void](Get-AzLocalAvailableUpdates -ClusterResourceIds $resourceIds -PassThru 6>$null)
+
+            Assert-MockCalled Invoke-AzLocalResourceGraphValueBatches -Times 1 -Exactly -ParameterFilter {
+                $Value.Count -eq 81 -and $QueryTemplate -match '\| where ClusterResourceId_ in~ \(\{0\}\)'
             }
         }
     }
@@ -6806,6 +6983,36 @@ Describe 'Start-AzLocalClusterUpdate (prefetched pass-through)' {
 Describe 'Get-AzLocalClusterUpdateReadiness (ARG-batch dispatch)' {
 
     Context 'Cluster, update-summary, and available-update ARG phases' {
+
+        It 'routes all explicit large-fleet ARG phases through exact resource-ID filtering' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable       { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Get-HealthCheckFailureSummary { return '' }
+                Mock Write-Log {}
+                Mock Invoke-AzLocalResourceGraphValueBatches {
+                    if ($QueryTemplate -match "resources \| where type =~ 'microsoft.azurestackhci/clusters'") {
+                        return @([pscustomobject]@{
+                            id = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-1'
+                            name = 'cluster-1'; resourceGroup = 'rg'; subscriptionId = 'sub-1'; tags = $null
+                            properties = [pscustomobject]@{ status = 'ConnectedRecently' }
+                        })
+                    }
+                    return @()
+                }
+
+                $clusterResourceIds = 1..201 | ForEach-Object {
+                    "/subscriptions/sub-$_/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+                }
+                $results = @(Get-AzLocalClusterUpdateReadiness -ClusterResourceIds $clusterResourceIds -PassThru)
+
+                $results | Should -HaveCount 201
+                Assert-MockCalled Invoke-AzLocalResourceGraphValueBatches -Times 3 -Exactly -ParameterFilter {
+                    $ExactResourceIdProperty -eq 'ClusterResourceId_'
+                }
+            }
+        }
 
         It 'Scopes child-resource queries to target clusters and lets a Ready solution outrank a prerequisite SBE' {
             InModuleScope AzLocal.UpdateManagement {
@@ -7329,6 +7536,32 @@ Describe 'Integration: Get-AzLocalUpdateRuns ARG batch dispatch' {
                     $QueryTemplate -match 'extensibilityresources' -and
                     $QueryTemplate -match 'ClusterResourceId_ in~ \(\{0\}\)'
                 }
+            }
+        }
+
+        It 'Uses one subscription-scoped query and exact client filtering for a large fleet' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable      { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Invoke-AzLocalResourceGraphValueBatches { return @() }
+                Mock Invoke-AzResourceGraphQuery { throw 'Get-AzLocalUpdateRuns must delegate ARG dispatch to the shared helper.' }
+
+                $clusterResourceIds = 1..201 | ForEach-Object {
+                    $subscription = if ($_ % 2) { 'sub-a' } else { 'sub-b' }
+                    "/subscriptions/$subscription/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+                }
+
+                $results = @(Get-AzLocalUpdateRuns -ClusterResourceIds $clusterResourceIds -Latest -PassThru)
+
+                $results | Should -HaveCount 201
+                Assert-MockCalled Invoke-AzLocalResourceGraphValueBatches -Times 1 -Exactly -ParameterFilter {
+                    @($Value).Count -eq 201 -and
+                    $QueryTemplate -match 'extensibilityresources' -and
+                    $QueryTemplate -match 'ClusterResourceId_ in~ \(\{0\}\)' -and
+                    $ExactResourceIdProperty -eq 'ClusterResourceId_'
+                }
+                Assert-MockCalled Invoke-AzResourceGraphQuery -Times 0 -Exactly
             }
         }
     }
@@ -17653,6 +17886,7 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         # JUnit XML must include all 3 always-on suites.
         $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
         $xml | Should -Match 'Authentication'
+        $xml | Should -Match 'Default CLI subscription \(authentication context only; not fleet scope\)'
         $xml | Should -Match 'Subscription Scope \(count=2\)'
         $xml | Should -Match 'Resource Graph Reachability'
         # Subscription artifact contents.
@@ -17682,6 +17916,8 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         # Summary file should now contain the rendered markdown.
         $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
         $summary | Should -Match '## Authentication Validation and Subscription Scope Report'
+        $summary | Should -Match '\| Default CLI subscription \|.*authentication context only; not fleet scope'
+        $summary | Should -Match 'Fleet scope is the accessible-subscription set below, not that default subscription'
         $summary | Should -Match '### Count of subscriptions accessible = 2'
         $summary | Should -Match '<details>'
         $summary | Should -Match 'Expand for subscription details'
@@ -19856,6 +20092,9 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
             Mock Get-AzLocalUpdateRuns             { @($global:_s8_payload.Runs) }
             Mock Get-AzLocalUpdateRunFailures      { @() }
             Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now | Out-Null
+            Assert-MockCalled Get-AzLocalUpdateRuns -Times 1 -Exactly -Scope It -ParameterFilter {
+                $SkipSideloadedReset -eq $true
+            }
         }
         $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
         $summary | Should -Match '### :scroll: Updates - Recent Successful Updates'
@@ -19944,6 +20183,35 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
             { Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -IncludeUpdateRuns:$false } | Should -Not -Throw
             Assert-MockCalled Get-AzLocalUpdateRuns -Times 0 -Exactly -Scope It
         }
+    }
+
+    It 'fails after writing primary reports when a requested supplementary export is missing' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='complete-check'; ResourceId='/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/complete-check' })
+            Readiness = @([pscustomobject]@{
+                ClusterName='complete-check'; ResourceGroup='rg'; SubscriptionId='sub-a'; ResourceId='/subscriptions/sub-a/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/complete-check'
+                UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''; RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+            })
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { New-Item -ItemType File -Path $ExportPath -Force | Out-Null; @() }
+            Mock Get-AzLocalAvailableUpdates       { New-Item -ItemType File -Path $ExportPath -Force | Out-Null; @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            { Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -FailOnIncompleteSupplementaryData } |
+                Should -Throw '*UpdateRuns*Primary reports and available artifacts were written*'
+        }
+        Test-Path -LiteralPath (Join-Path $script:_s8_outDir 'readiness-status.xml') | Should -BeTrue
+        (Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw) | Should -Match 'supplementary_data_complete=false'
+        (Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw) | Should -Match 'Supplementary fleet data is incomplete.*UpdateRuns'
     }
 
     It 'Scope=by-update-ring passes ScopeByUpdateRingTag + UpdateRingValue to Get-AzLocalClusterUpdateReadiness' {
@@ -20040,6 +20308,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
             'HasPrerequisiteCount','RunHistoryCount','VersionDistCount',
             'SupportedClusters','UnsupportedClusters','UnknownVersionClusters',
             'SupportedYymmWindow','SupportSource','LatestReleasedYymm','LatestReleasedVersion',
+            'SupplementaryDataComplete','IncompleteSupplementaryData',
             'InventoryCsvPath','ReadinessCsvPath','ReadinessJsonPath','XmlPath',
             'SummariesCsvPath','AvailableCsvPath','RunsCsvPath','RunHistoryCsvPath','RunHistoryJsonPath',
             'SummaryPath','Rows','RunHistoryRows','VersionDistribution'

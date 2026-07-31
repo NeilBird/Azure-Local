@@ -386,10 +386,13 @@ function Get-AzLocalUpdateRuns {
     # identical in shape to the ARM REST /updateRuns response, so we can
     # reuse Format-AzLocalUpdateRun unchanged.
 
-    # Batch cluster IDs so large management-group fleets do not produce a KQL
-    # argument that exceeds the Windows az.cmd command-line limit.
+    # Batch cluster IDs so normal scopes do not produce a KQL argument that
+    # exceeds the Windows az.cmd command-line limit. For large fleets, the
+    # shared helper queries represented subscriptions in bounded groups and
+    # enforces the exact admitted cluster scope client-side.
     $clusterResourceIds = @($clustersToProcess | ForEach-Object { [string]$_.ResourceId })
     $updateNameClause = if ($UpdateName) { "| where UpdateName_ =~ '$UpdateName'" } else { '' }
+    $resourceIdFilterClause = '| where ClusterResourceId_ in~ ({0})'
 
     $runsKqlTemplate = @"
 extensibilityresources
@@ -397,7 +400,7 @@ extensibilityresources
 | extend ids = split(id, '/')
 | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10])
 | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_))
-| where ClusterResourceId_ in~ ({0})
+$resourceIdFilterClause
 $updateNameClause
 | project id, name, type, location, properties, ClusterName_, ClusterResourceId_, UpdateName_, ts = todatetime(properties.timeStarted)
 | order by ts desc
@@ -405,8 +408,9 @@ $updateNameClause
 
     try {
         $batchParams = @{
-            Value         = $clusterResourceIds
-            QueryTemplate = $runsKqlTemplate
+            Value                   = $clusterResourceIds
+            QueryTemplate           = $runsKqlTemplate
+            ExactResourceIdProperty = 'ClusterResourceId_'
         }
         if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
         $allRunsRaw = @(Invoke-AzLocalResourceGraphValueBatches @batchParams)

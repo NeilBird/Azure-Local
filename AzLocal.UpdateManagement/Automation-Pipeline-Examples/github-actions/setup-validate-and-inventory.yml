@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.30'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.31'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -139,6 +139,8 @@ jobs:
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          # Selects the default Azure CLI account after OIDC token exchange.
+          # This is authentication context only; it does not limit fleet scope.
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       # v0.9.1: single automatic retry for the transient login failure above. Runs
@@ -319,6 +321,8 @@ jobs:
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        # Selects the default Azure CLI account after OIDC token exchange.
+        # This is authentication context only; it does not limit fleet scope.
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
     # v0.9.1: single automatic retry for the transient login failure above. Runs

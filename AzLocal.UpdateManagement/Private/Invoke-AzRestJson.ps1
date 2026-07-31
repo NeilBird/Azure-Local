@@ -102,15 +102,21 @@ function Invoke-AzRestJson {
             $is401 = ($errText -match '\b401\b' -or
                       $errText -match 'ExpiredAuthenticationToken' -or
                       $errText -match 'InvalidAuthenticationToken' -or
-                      $errText -match 'AuthenticationFailed')
+                      $errText -match 'AuthenticationFailed' -or
+                      $errText -match 'AADSTS700024' -or
+                      $errText -match 'assertion is not within its valid time range')
             if ($is401) {
                 Write-Verbose "Invoke-AzRestJson: detected 401 / token-expiry on $Method $Uri; refreshing access token and retrying once."
+                $refreshExit = 1
                 try {
-                    # Forces the CLI to refresh the cached bearer token.
                     $null = & az account get-access-token --resource 'https://management.azure.com/' --output none 2>&1
+                    $refreshExit = $LASTEXITCODE
                 }
                 catch {
-                    Write-Verbose "Invoke-AzRestJson: token refresh failed: $($_.Exception.Message)"
+                    Write-Verbose "Invoke-AzRestJson: cached token refresh failed: $($_.Exception.Message)"
+                }
+                if ($refreshExit -ne 0) {
+                    [void](Repair-AzLocalAzureCliAuthentication)
                 }
                 $raw = & az @azArgs 2>&1
                 $exit = $LASTEXITCODE

@@ -234,8 +234,8 @@ function Get-AzLocalUpdateSummary {
     Write-Log -Message "Querying update summaries for $($clustersToProcess.Count) cluster(s)..." -Level Info
 
     # v0.7.68: Replaced per-cluster ARM REST fan-out (Start-Job +
-    # Invoke-FleetJobsInParallel) with a SINGLE Azure Resource Graph
-    # query against the `extensibilityresources` namespace
+    # Invoke-FleetJobsInParallel) with batched Azure Resource Graph queries
+    # against the `extensibilityresources` namespace
     # (microsoft.azurestackhci/clusters/updatesummaries). One round-trip
     # returns every updateSummaries/default record for the entire cluster
     # list - typically sub-second for fleets of hundreds of clusters -
@@ -246,13 +246,16 @@ function Get-AzLocalUpdateSummary {
     # whereas older ARM responses used `lastUpdatedTime`/`lastCheckedTime`;
     # both are handled defensively below.
 
-    $idListKql = ($clustersToProcess | ForEach-Object { "'$($_.ResourceId.ToLower())'" }) -join ','
-    $summariesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ($idListKql) | project id, name, type, location, properties, ClusterName_, ClusterResourceId_"
+    $summaryQueryTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ({0}) | project id, name, type, location, properties, ClusterName_, ClusterResourceId_"
 
     try {
-        $argParams = @{ Query = $summariesKql }
-        if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-        $allSummariesRaw = Invoke-AzResourceGraphQuery @argParams
+        $batchParams = @{
+            Value                   = @($clustersToProcess | ForEach-Object { $_.ResourceId })
+            QueryTemplate           = $summaryQueryTemplate
+            ExactResourceIdProperty = 'ClusterResourceId_'
+        }
+        if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+        $allSummariesRaw = Invoke-AzLocalResourceGraphValueBatches @batchParams
     }
     catch {
         Write-Log -Message "Azure Resource Graph query for update summaries failed: $($_.Exception.Message)" -Level Error

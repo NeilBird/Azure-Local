@@ -284,7 +284,7 @@ function Export-AzLocalAuthValidationReport {
                 Name = 'OIDC token exchange (az account show succeeded)'
                 SystemOut = "Tenant: $($account.tenantId)`nSubscription: $($account.name) ($($account.id))`nIdentity: $(if ($account.user) { $account.user.name } else { '(none)' })"
             }
-            @{ Name = "Default subscription = $($account.name)" }
+            @{ Name = "Default CLI subscription (authentication context only; not fleet scope) = $($account.name)" }
             @{ Name = "Pipeline identity (appId) = $(if ($account.user) { $account.user.name } else { '(none)' })" }
         )
     }
@@ -340,7 +340,7 @@ function Export-AzLocalAuthValidationReport {
     [void]$md.AppendLine('| Check | Result |')
     [void]$md.AppendLine('|---|---|')
     [void]$md.AppendLine("| Authentication | :white_check_mark: working |")
-    [void]$md.AppendLine("| Default Subscription | $($account.name) (``$($account.id)``) |")
+    [void]$md.AppendLine("| Default CLI subscription | $($account.name) (``$($account.id)``) - authentication context only; not fleet scope |")
     [void]$md.AppendLine("| Tenant | ``$($account.tenantId)`` |")
     $identityName = if ($account.user) { $account.user.name } else { '(none)' }
     [void]$md.AppendLine("| Pipeline identity (appId) | ``$identityName`` |")
@@ -351,6 +351,8 @@ function Export-AzLocalAuthValidationReport {
         [void]$md.AppendLine("| AzLocal.UpdateManagement (YAML generated against) | ``$GeneratedAgainstVersion`` |")
         [void]$md.AppendLine("| AzLocal.UpdateManagement (latest on PSGallery) | ``$latestRender`` |")
     }
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine('The default CLI subscription is selected after login so Azure CLI has an account context. Fleet scope is the accessible-subscription set below, not that default subscription.')
     [void]$md.AppendLine('')
     [void]$md.AppendLine("### Count of subscriptions accessible = $subCount")
     [void]$md.AppendLine('')

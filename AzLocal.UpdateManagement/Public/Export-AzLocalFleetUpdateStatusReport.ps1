@@ -67,6 +67,11 @@ function Export-AzLocalFleetUpdateStatusReport {
         across the fleet) and writes update-runs.csv. Set $false to skip
         the recent-runs collection to shorten run time on very large fleets.
 
+    .PARAMETER FailOnIncompleteSupplementaryData
+        When supplied, throws after the primary reports, step summary, and
+        pipeline outputs have been written if any requested supplementary
+        dataset did not produce its expected export file.
+
     .PARAMETER RunHistorySinceDays
         How far back to look for unresolved Failed update runs when
         building the 'Update Run History and Error Details' testsuite.
@@ -188,6 +193,9 @@ function Export-AzLocalFleetUpdateStatusReport {
         [bool]$IncludeUpdateRuns = $true,
 
         [Parameter(Mandatory = $false)]
+        [switch]$FailOnIncompleteSupplementaryData,
+
+        [Parameter(Mandatory = $false)]
         [ValidateRange(1, 365)]
         [int]$RunHistorySinceDays = 30,
 
@@ -305,6 +313,8 @@ function Export-AzLocalFleetUpdateStatusReport {
         foreach ($n in @('supported_yymm_window','support_source','latest_released_yymm','latest_released_version')) {
             Set-AzLocalPipelineOutput -Name $n -Value ''
         }
+        Set-AzLocalPipelineOutput -Name 'supplementary_data_complete' -Value 'true'
+        Set-AzLocalPipelineOutput -Name 'incomplete_supplementary_data' -Value ''
         $emptyMd = "## Fleet Update Status Summary  _(generated $($Now.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss UTC')))_`n`n_No clusters found in inventory._"
         Add-AzLocalPipelineStepSummary -Markdown $emptyMd -SummaryFileName $SummaryFileName | Out-Null
         if ($PassThru) {
@@ -330,6 +340,8 @@ function Export-AzLocalFleetUpdateStatusReport {
                 SupportSource            = ''
                 LatestReleasedYymm       = ''
                 LatestReleasedVersion    = ''
+                SupplementaryDataComplete = $true
+                IncompleteSupplementaryData = @()
                 InventoryCsvPath         = $inventoryCsv
                 ReadinessCsvPath         = $readinessCsv
                 ReadinessJsonPath        = $readinessJson
@@ -814,6 +826,16 @@ function Export-AzLocalFleetUpdateStatusReport {
         @($inventory | Select-Object -ExpandProperty ResourceId)
     }
 
+    # Remove stale files so a failed collector cannot be mistaken for a
+    # successful current-run export when the output directory is reused.
+    $requestedSupplementaryFiles = @($summariesCsv, $availableCsv)
+    if ($IncludeUpdateRuns) { $requestedSupplementaryFiles += $runsCsv }
+    foreach ($supplementaryFile in $requestedSupplementaryFiles) {
+        if (Test-Path -LiteralPath $supplementaryFile) {
+            Remove-Item -LiteralPath $supplementaryFile -Force -WhatIf:$false
+        }
+    }
+
     Write-Host ""
     Write-Host "Step 4a: Collecting fleet update summaries..." -ForegroundColor Yellow
     $summaries = Get-AzLocalUpdateSummary -ClusterResourceIds $fleetResourceIds -ExportPath $summariesCsv -PassThru
@@ -835,7 +857,9 @@ function Export-AzLocalFleetUpdateStatusReport {
         # 48h window (a cluster may complete more than one update in that period).
         # The state counts below are still computed latest-per-cluster to preserve
         # the prior console-summary semantics.
-        $allRuns = Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru
+        # Monitor 3 is read-only. Auto-reset performs one ARM tag GET per cluster
+        # and belongs in update execution/reconciliation paths, not daily reporting.
+        $allRuns = Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru -SkipSideloadedReset
         $allRunsList = @($allRuns)
         $latestPerCluster = @($allRunsList | Group-Object ClusterName | ForEach-Object {
             @($_.Group | Sort-Object @{ Expression = 'EndTimeUtc'; Descending = $true }, @{ Expression = 'StartTime'; Descending = $true })[0]
@@ -855,6 +879,15 @@ function Export-AzLocalFleetUpdateStatusReport {
             ([datetime]$_.EndTimeUtc).ToUniversalTime() -ge $recentSuccessCutoff
         } | Sort-Object @{ Expression = 'EndTimeUtc'; Descending = $true }, @{ Expression = 'ClusterName'; Descending = $false })
         Write-Host "  Recently completed (Succeeded, last 48h): $($recentSuccessRuns.Count)"
+    }
+
+    $incompleteSupplementaryData = [System.Collections.Generic.List[string]]::new()
+    if (-not (Test-Path -LiteralPath $summariesCsv -PathType Leaf)) { $incompleteSupplementaryData.Add('UpdateSummaries') | Out-Null }
+    if (-not (Test-Path -LiteralPath $availableCsv -PathType Leaf)) { $incompleteSupplementaryData.Add('AvailableUpdates') | Out-Null }
+    if ($IncludeUpdateRuns -and -not (Test-Path -LiteralPath $runsCsv -PathType Leaf)) { $incompleteSupplementaryData.Add('UpdateRuns') | Out-Null }
+    $supplementaryDataComplete = ($incompleteSupplementaryData.Count -eq 0)
+    if (-not $supplementaryDataComplete) {
+        Write-Warning ("Supplementary fleet data is incomplete. Missing current-run export(s): {0}." -f ($incompleteSupplementaryData -join ', '))
     }
 
     # ---- Step 5: console summary + step outputs ---------------------------
@@ -902,6 +935,8 @@ function Export-AzLocalFleetUpdateStatusReport {
     Set-AzLocalPipelineOutput -Name 'support_source'          -Value $supportSource
     Set-AzLocalPipelineOutput -Name 'latest_released_yymm'    -Value $latestReleasedYymm
     Set-AzLocalPipelineOutput -Name 'latest_released_version' -Value $latestReleasedVersion
+    Set-AzLocalPipelineOutput -Name 'supplementary_data_complete' -Value ([string]$supplementaryDataComplete).ToLowerInvariant()
+    Set-AzLocalPipelineOutput -Name 'incomplete_supplementary_data' -Value ($incompleteSupplementaryData -join ',')
 
     # ---- Step 6: render markdown summary ----------------------------------
     $generatedUtc = $Now.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss UTC')
@@ -910,6 +945,10 @@ function Export-AzLocalFleetUpdateStatusReport {
     $md = New-Object 'System.Collections.Generic.List[string]'
     [void]$md.Add("## Fleet Update Status Summary  _(generated $generatedUtc)_")
     [void]$md.Add('')
+    if (-not $supplementaryDataComplete) {
+        [void]$md.Add("**Warning:** Supplementary fleet data is incomplete. Missing current-run export(s): ``$($incompleteSupplementaryData -join ', ')``.")
+        [void]$md.Add('')
+    }
 
     # Version distribution table (YYMM-grouped, with support-status emoji)
     if ($distinctVersions -gt 0) {
@@ -1252,6 +1291,10 @@ function Export-AzLocalFleetUpdateStatusReport {
         Write-Warning "$criticalHealthFailed cluster(s) have update failures, health issues, or SBE prerequisite blocks. Check the detailed reports."
     }
 
+    if ($FailOnIncompleteSupplementaryData -and -not $supplementaryDataComplete) {
+        throw ("Supplementary fleet data collection was incomplete. Missing current-run export(s): {0}. Primary reports and available artifacts were written before this failure." -f ($incompleteSupplementaryData -join ', '))
+    }
+
     if ($PassThru) {
         return [pscustomobject]@{
             TotalClusters            = [int]$totalTests
@@ -1275,6 +1318,8 @@ function Export-AzLocalFleetUpdateStatusReport {
             SupportSource            = $supportSource
             LatestReleasedYymm       = $latestReleasedYymm
             LatestReleasedVersion    = $latestReleasedVersion
+            SupplementaryDataComplete = $supplementaryDataComplete
+            IncompleteSupplementaryData = @($incompleteSupplementaryData)
             InventoryCsvPath         = $inventoryCsv
             ReadinessCsvPath         = $readinessCsv
             ReadinessJsonPath        = $readinessJson

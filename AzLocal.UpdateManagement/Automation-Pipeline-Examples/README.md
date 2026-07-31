@@ -623,7 +623,7 @@ Subject-claim patterns for other trigger types:
 |---|---|---|
 | `AZURE_CLIENT_ID` | Secret | The App Registration `appId` from step 1. |
 | `AZURE_TENANT_ID` | **Variable** (not a Secret) | Your Entra ID tenant ID. A tenant id is a public ARM/AAD identifier (it is logged on every `azure/login@v3` run and rendered in workflow telemetry), not a credential. |
-| `AZURE_SUBSCRIPTION_ID` | **Variable** (not a Secret) | Any subscription the federated identity can read - it is used to set the runner's default `az account` context, nothing more. The bundled cmdlets query Azure Resource Graph fleet-wide and never scope to this id. |
+| `AZURE_SUBSCRIPTION_ID` | **Variable** (not a Secret) | Any subscription the federated identity can read. After OIDC token exchange, `azure/login` selects it as the runner's default Azure CLI account context. It is not fleet scope: bundled ARG queries still span every accessible subscription unless an explicit cmdlet scope or exclusion is configured. |
 
 > **Why are `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` repository Variables, not Secrets?** Both values are public ARM/AAD identifiers - they appear in workflow logs on every `azure/login@v3` run, in the OIDC token issuer URL, and in portal deep-links built from per-row ARG data - not credentials. They are each consumed in exactly one place: the `tenant-id:` and `subscription-id:` inputs to `azure/login@v3`, which exchanges the OIDC token for an Azure AD token in the tenant and then runs `az account set --subscription <id>` so the runner has a default `az account` context. Neither value is used to scope Azure Resource Graph queries (the bundled cmdlets omit `--subscriptions` and therefore enumerate every cluster the federated identity can read across the tenant) and neither is interpolated into portal deep-link URLs (those are built from the per-row `subscriptionId` that ARG returns alongside each cluster). A Variable is preferred over a Secret because (a) the values are public identifiers rather than credentials, and (b) `gh variable list` returns the value, which is useful for setup verification. The OIDC `client-id` is the only remaining Secret (legacy path: `client-secret` is also a Secret).
 
@@ -671,7 +671,7 @@ You can add the secrets via the **GitHub UI** (**Settings -> Secrets and variabl
 # Inputs - reuse the variables from the federation step where you can
 $repo     = '<owner>/<repo>'                                 # e.g. contoso/azlocal-update-automation (your GitHub repo)
 $clientId = '<appId-from-step-1>'                            # GUID printed by az ad app create (from step 1)
-$subId    = (az account show --query id       -o tsv)        # current az subscription
+$subId    = (az account show --query id       -o tsv)        # readable default CLI context only; not fleet scope
 $tenantId = (az account show --query tenantId -o tsv)        # current az tenant
 
 # 0. Preflight - confirm gh is signed in as the right account and can write to $repo.
@@ -720,6 +720,7 @@ gh variable list --repo $repo
 [OK] Set Actions variable AZURE_TENANT_ID for <owner>/<repo>
 # gh variable set AZURE_SUBSCRIPTION_ID ...
 [OK] Set Actions variable AZURE_SUBSCRIPTION_ID for <owner>/<repo>
+# Authentication/default CLI context only; this value does not limit fleet scope.
 
 # gh secret list --repo $repo
 NAME                   UPDATED
@@ -731,7 +732,7 @@ AZURE_TENANT_ID        00000000-0000-0000-0000-000000000000   about 1 minute ago
 AZURE_SUBSCRIPTION_ID  00000000-0000-0000-0000-000000000000   about 1 minute ago
 ```
 
-The key signals are: one repo-level secret (`AZURE_CLIENT_ID`) and two repo-level variables (`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) with their values visible. With OIDC + federated credentials there is **no** `AZURE_CLIENT_SECRET` - the federated-credential `subject` claim is what restricts who can mint a token.
+The key signals are: one repo-level secret (`AZURE_CLIENT_ID`) and two repo-level variables (`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) with their values visible. `AZURE_SUBSCRIPTION_ID` is only the default Azure CLI account selected after login; it is not the subscription scope reported by the Auth test. With OIDC + federated credentials there is **no** `AZURE_CLIENT_SECRET` - the federated-credential `subject` claim is what restricts who can mint a token.
 
 > **Note**: `gh secret list` shows only the secret **names** and last-updated timestamps - GitHub never returns the secret values back, even to admins. If you need to confirm what's there, the names + dates are the only signal; to verify a value you must overwrite with the same `gh secret set` command.
 
@@ -887,7 +888,7 @@ Save the `appId`, `password`, and `tenant` from the output - they go into two Se
 | `AZURE_CLIENT_ID` | Secret | `appId` from the command output. |
 | `AZURE_CLIENT_SECRET` | Secret | `password` from the command output. **Expires - rotate every 90 days.** |
 | `AZURE_TENANT_ID` | **Variable** (not a Secret) | `tenant` from the command output. A tenant id is a public ARM/AAD identifier; see the OIDC section above for why this is a Variable, not a Secret. |
-| `AZURE_SUBSCRIPTION_ID` | **Variable** (not a Secret) | Your subscription ID. See the OIDC section above for why this is a Variable, not a Secret. |
+| `AZURE_SUBSCRIPTION_ID` | **Variable** (not a Secret) | Any readable subscription used only as the default Azure CLI account after login. It does not limit fleet scope; see the OIDC section above. |
 
 In the example GitHub Actions YAMLs, the OIDC step is active by default and the client-secret variant is left commented out. Switch the comments around (and remove the OIDC `permissions:` block) to flip to client-secret auth.
 
@@ -1760,6 +1761,8 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 
 **Fleet Update Status** runs daily at 06:17 UTC. It does no writes and produces the fleet-wide JUnit, CSV, and JSON snapshot used for dashboards and alerting.
 
+**v0.9.31 scale, authentication, and completeness behavior:** explicit fleets above 200 cluster resource IDs query represented subscriptions in bounded groups of 40, then exact-filter returned child resources to the admitted cluster set. This applies to readiness discovery, update summaries, available updates, and update runs; it avoids one sequential ARG call per 40 clusters as rollout expands while preserving exact ring/tag scope. On GitHub Actions, an expired federated assertion can be renewed from the runner and the interrupted ARM/ARG request retried once. Monitor: 3 and Update: 4 pass `-SkipSideloadedReset`, so monitoring does not perform per-cluster sideload-tag checks or mutate tags. Monitor: 3 removes stale supplementary exports before collection and fails only after writing the primary reports and a visible warning when a requested current-run export is missing. Report artifacts publish under `always()` so partial evidence remains downloadable.
+
 ![Monitor: 3 - Fleet Update Status summary tab: Fleet Version Distribution table breaking 20 clusters into 5 YYMM rows (2605 / 2604 / 2603 / 2601 supported, 2511 unsupported) with per-row cluster counts, percentages, support badges and the first 15 cluster names per version row, plus a Critical Health Status table (13 Passed / 7 Failed) and a Primary Status table (Total Clusters 20, Up to Date 7, Ready for Update 5, Update In Progress 1)](../docs/images/fleet-update-status.png)
 
 *For illustration purposes only. Screenshots may differ from current workflow output.*
@@ -1774,6 +1777,8 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 | `update-summaries.csv` | Update-summary state per cluster from Azure. |
 | `available-updates.csv` | Every available update across the fleet with version + health state. |
 | `update-runs.csv` | Recent run history per cluster (durations, failure summaries) - this is what section 6.6's "size the next maintenance window" advice consumes. |
+
+Monitor: 3 also emits `supplementary_data_complete` (`true` / `false`) and `incomplete_supplementary_data` (comma-delimited dataset names). Direct PowerShell callers can inspect the matching `SupplementaryDataComplete` and `IncompleteSupplementaryData` `-PassThru` properties; pipelines opt into `-FailOnIncompleteSupplementaryData` so missing supplementary exports cannot produce a silent green run.
 
 **Fleet Health Status** runs daily at 07:17 UTC and surfaces 24-hour system health-check failures across every visible cluster, including clusters that are already up to date. Use it for fleet health issues outside the update workflow.
 
