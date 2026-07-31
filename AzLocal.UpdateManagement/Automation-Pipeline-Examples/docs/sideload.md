@@ -4,8 +4,8 @@
 > The sole runtime configuration source is `config/sideload-settings.yml`; the
 > pipeline is inert while that file contains `enabled: false`.
 >
-> Every run starts with a `preflight` job/stage (~10s on a Microsoft-hosted Windows
-> runner) that writes a clear panel to the run step summary explaining what is set,
+> Every run starts with a `preflight` job/stage on a Microsoft-hosted Windows
+> runner that writes a clear panel to the run step summary explaining what is set,
 > what is missing, and how to enable Update: 2. When the gate is OFF the preflight
 > succeeds with an enablement walkthrough; when the gate is ON but required
 > configuration is missing it fails fast and the `sideload` job/stage is skipped.
@@ -355,7 +355,7 @@ The runtime rejects unsupported schema versions with a clear error. There is no
 
 > **Automatic gate reset - you normally never run `Reset-AzLocalSideloadedTag` by hand.**
 > After a sideloaded cluster's update run **succeeds**, `Get-AzLocalUpdateRuns` (used by
-> Monitor: 3 / Monitor: 4) calls `Invoke-AzLocalSideloadedAutoReset`, which flips
+> Monitor: 3 / Update: 4) calls `Invoke-AzLocalSideloadedAutoReset`, which flips
 > `UpdateSideloaded` back to `False` and clears `UpdateVersionInProgress` - reopening the
 > gate so the cluster is ready to be sideloaded again next cycle (it also tidies stale
 > `UpdateLastAttempt` / `UpdateRetryAttempted` tags). `Reset-AzLocalSideloadedTag` is the
@@ -409,7 +409,7 @@ agent that most repos and projects do not have. Before v0.8.76 a triggered run w
 no setup completed simply showed `Status: Skipped` (no logs, no annotation), which
 gave operators no actionable feedback. v0.8.76 prepends a `preflight` job
 (GitHub Actions) / `Preflight` stage (Azure DevOps) that always runs on
-`windows-latest` (Microsoft-hosted, no Azure/Key Vault access, ~10s).
+`windows-latest` (Microsoft-hosted, with no Azure or Key Vault access).
 
 ### Behaviour matrix
 

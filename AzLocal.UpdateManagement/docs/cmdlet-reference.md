@@ -89,7 +89,7 @@ Compares live Azure Local inventory rows with a source-controlled desired-state 
 - `-Timestamp`: Report timestamp override, primarily for deterministic automation and tests.
 - `-PassThru`: Returns the summary counts, status, paths, and discrepancy rows.
 
-A missing source CSV returns `NotConfigured` with onboarding guidance. Detected drift returns `DriftDetected`, emits a pipeline warning and failed JUnit checks, but does not throw solely because drift exists.
+`UpdateRing` is compared as required desired state. Blank optional `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and `UpdateAuthAccountId` values mean preserve/unmanaged and are not compared. `HasUpdateRingTag` is an informational inventory projection and is ignored. A missing source CSV returns `NotConfigured` with onboarding guidance; actual discrepancies return `Drift`; active operator exclusions alone return `Review`; otherwise the status is `Clean`. Drift and active holds emit pipeline warnings and failed JUnit checks, but do not throw solely because findings exist.
 
 ### `Copy-AzLocalPipelineExample`
 
@@ -602,7 +602,7 @@ Gets an inventory of all Azure Local clusters with their UpdateRing tag status. 
 | `SubscriptionId` | Azure subscription ID |
 | `SubscriptionName` | Human-readable subscription name |
 | `UpdateRing` | Current UpdateRing tag value (empty if not set) |
-| `HasUpdateRingTag` | "Yes" or "No" indicator |
+| `HasUpdateRingTag` | Informational "Yes" or "No" indicator derived from the live `UpdateRing` value. Useful for filtering and counts; ignored when the CSV is passed to Config: 1 or Config: 2. |
 | `ResourceId` | Full Azure Resource ID |
 
 **CSV Workflow (for Excel editing):**
@@ -1479,7 +1479,7 @@ $matrix = Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -ExportPath .\sc
 $rec    = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -ExportPath .\schedule-coverage-recommend.md -PassThru
 ```
 
-> **CI/CD**: the bundled `apply-updates-schedule-audit.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a weekly-scheduled run (Mon 05:00 UTC) that emits JUnit XML, three CSV/MD exports, and a Markdown step summary. Full end-to-end runbook in [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
+> **CI/CD**: the bundled `apply-updates-schedule-audit.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a weekly-scheduled run (Mon 05:17 UTC) that emits JUnit XML, three CSV/MD exports, and a Markdown step summary. Full end-to-end runbook in [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
 
 **Required permissions** (read-only):
 - `Microsoft.Resources/subscriptions/resourceGroups/read`
