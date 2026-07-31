@@ -177,6 +177,42 @@ rows when the rings need different days or row-level policies. If multiple
 rows match the same cycle week and day, their rings are unioned and
 deduplicated case-insensitively.
 
+## Choose allowed update versions
+
+Schema v2 requires a top-level `allowedUpdateVersions` value. It controls
+which Ready updates the schedule is permitted to install:
+
+```yaml
+# No version constraint: install the latest Ready update.
+allowedUpdateVersions: 'Latest'
+```
+
+Or provide a semicolon-separated allow-list of exact update names:
+
+```yaml
+allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE5.0.2603.1522'
+```
+
+- `Latest` must appear alone and means no version constraint.
+- Explicit values match the update `name` or `properties.version` exactly,
+  case-insensitively. If no Ready update matches, the cluster is skipped with
+  `NotInAllowList`; the workflow does not fall back to the latest update.
+- Include a Ready OEM SBE update when it is a prerequisite for the next
+  Microsoft Solution update.
+- The top-level value applies to every schedule row unless that row defines
+  its own `allowedUpdateVersions` override.
+
+Discover exact names before editing the file:
+
+```powershell
+Get-AzLocalAvailableUpdates -ClusterName <name> -PassThru |
+    Select-Object ClusterName, UpdateName, UpdateState
+```
+
+See [Restrict which updates each ring installs](../README.md#84-restrict-which-updates-each-ring-installs-allowedupdateversions-schema-v2)
+for precedence, cross-row union behavior, SBE handling, and additional
+examples.
+
 ## Example 1: basic four-week staged rollout
 
 A four-week cycle provides a repeating operating pattern for Azure Local's
