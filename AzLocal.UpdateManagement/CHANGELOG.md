@@ -5,6 +5,20 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.30] - 2026-07-31
+
+### Added
+
+- Config: 1 keeps clusters with a live `UpdateExcluded=True` or `1` tag prominently visible as separate operator-hold advisories, even when the optional source CSV cell is blank or the source CSV is not configured. Reports include named clusters, dedicated CSV/JSON/JUnit rows, counts, warnings, and remediation to remove the tag manually or commit `UpdateExcluded=False` and run Config: 2.
+- GitHub Config: 1 summaries include a direct `Download Inventory Artifact` link generated from the inventory upload action's artifact URL.
+
+### Changed
+
+- Blank optional `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and `UpdateAuthAccountId` source CSV cells now mean preserve/unmanaged during Config: 1 drift assessment, matching Config: 2 reconciliation semantics. Explicit values, including `UpdateExcluded=False`, continue to participate in drift detection.
+- Config: 1 now runs daily at 15:37 UTC on GitHub Actions and Azure DevOps instead of weekly on Sunday at 08:17 UTC. Existing customized schedule marker blocks remain preserved during pipeline refresh.
+- GitHub diagnostics artifacts use `actions/upload-artifact@v6`, moving all bundled workflows from the deprecated Node.js 20 runtime to Node.js 24.
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.30`.
+
 ## [0.9.29] - 2026-07-30
 
 ### Added

@@ -12,7 +12,7 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 | Pipeline | GitHub Actions trigger | Azure DevOps trigger | Notes |
 |---|---|---|---|
-| **Config: 1** - Validate Auth and Inventory Clusters | `workflow_dispatch` + weekly `schedule: cron '17 8 * * 0'` (Sun 08:17 UTC) | `trigger: none` + weekly `schedules: cron '17 8 * * 0'` (Sun 08:17 UTC) | Run on initial wiring + after every RBAC / federated-credential / subscription change. |
+| **Config: 1** - Validate Auth and Inventory Clusters | `workflow_dispatch` + daily `schedule: cron '37 15 * * *'` (15:37 UTC) | `trigger: none` + daily `schedules: cron '37 15 * * *'` (15:37 UTC) | Run on initial wiring + after every RBAC / federated-credential / subscription change. |
 | **Config: 2** - Manage UpdateRing Tags | `workflow_dispatch` only | `trigger: none` (manual only) | Runs on-demand whenever you edit the CSV. |
 | **Config: 3** - Apply-Updates Schedule Coverage Audit | `workflow_dispatch` + `schedule: cron '17 5 * * 1'` (Mondays 05:17 UTC) | `trigger: none` + `schedules: cron '17 5 * * 1'` | Weekly read-only drift advisor with offset Apply and Monitor recommendations. |
 | **Monitor: 1** - Fleet Connectivity Status | `workflow_dispatch` + `schedule: cron '17 5 * * *'` (daily 05:17 UTC) | `trigger: none` + `schedules: cron '17 5 * * *'` | Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot. |
@@ -39,7 +39,7 @@ The table below is the ground truth for what each shipped YAML does **out of the
 |---|---|
 | **Purpose** | End-to-end probe of the federated identity, Azure RBAC, readable subscriptions, and visible Azure Local clusters. It also compares the generated live inventory with `config/ClusterUpdateRings.csv` by `ResourceId`, reporting live-only, source-only, and managed-tag mismatch drift without modifying Azure. |
 | **Inputs** | `environment` (optional - GitHub Actions only; leave blank to test the branch-scoped federated credential), `module_version` (optional). |
-| **Trigger** | `workflow_dispatch` / **Run pipeline** button, **plus a shipped weekly cron** - GitHub `schedule: cron '17 8 * * 0'` / Azure DevOps `schedules: cron '17 8 * * 0'` (every Sunday at 08:17 UTC), inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. Also run it manually on initial wiring and after every RBAC / federated-credential / subscription change. Edit the cron - or delete it from the customize block - to change the cadence. |
+| **Trigger** | `workflow_dispatch` / **Run pipeline** button, **plus a shipped daily cron** - GitHub `schedule: cron '37 15 * * *'` / Azure DevOps `schedules: cron '37 15 * * *'` (every day at 15:37 UTC), inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. Also run it manually on initial wiring and after every RBAC / federated-credential / subscription change. Edit the cron - or delete it from the customize block - to change the cadence. |
 | **Cmdlets invoked** | `Export-AzLocalClusterInventoryDriftReport` after the core `az` CLI probes. Pipeline guards: `Assert-AzLocalAzureSubscriptionAccess` (after login) + `Assert-AzLocalPipelineReport` (after collect). |
 | **Depends on** | None. This is the first pipeline that must run on a freshly-wired identity. Committing `config/ClusterUpdateRings.csv` enables drift comparison; until then the drift check reports `NotConfigured` with onboarding guidance. |
 | **Artefacts** | Authentication/inventory reports plus `cluster-inventory-drift.csv`, `cluster-inventory-drift.json`, `cluster-inventory-drift.xml`, and `cluster-inventory-drift-summary.md`. |
@@ -57,7 +57,7 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | Bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, and `UpdateExcluded` tags from a CSV. Default-stamps `UpdateExcluded=False` on any cluster that does not already carry the tag (v0.7.90) so the operator hard-override is always discoverable in the Azure portal. |
+| **Purpose** | Bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, and `UpdateExcluded` tags from a CSV. Blank optional cells preserve existing live values. An explicit `UpdateExcluded=False` clears a live exclusion; when the tag is absent both live and in the CSV, the cmdlet default-stamps `False` (v0.7.90) so the operator hard-override is discoverable in the Azure portal. |
 | **Inputs** | `csv_path` (required). |
 | **Trigger** | Manual only (`workflow_dispatch` / **Run pipeline** button). No schedule shipped - this is a deliberate change-controlled operation that should follow a CSV edit + review. Add a `schedule:` / `schedules:` block if your CSV is auto-generated and you want periodic re-application. |
 | **Cmdlets invoked** | `Set-AzLocalClusterUpdateRingTag`. Pipeline guard (v0.9.12): `Assert-AzLocalAzureSubscriptionAccess` (after login). |

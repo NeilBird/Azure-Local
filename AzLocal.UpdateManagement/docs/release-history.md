@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.29 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0929) `What's New in v0.9.29` section.
+> **For v0.9.30 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0930) `What's New in v0.9.30` section.
 
 ---
+
+### What's New in v0.9.30
+
+**Config: 1 now distinguishes desired-state drift from active operator holds and runs daily at 15:37 UTC.** Blank optional source CSV fields mean preserve/unmanaged, while explicit values continue to participate in drift detection. Live `UpdateExcluded=True` / `1` tags remain visible as separate advisories with named clusters and remediation, even when no source CSV is configured. GitHub summaries add a direct inventory-artifact download link, and all bundled GitHub diagnostics uploads move from `actions/upload-artifact@v5` to the Node.js 24-based `@v6`. No public function or export-count change (73); pipeline pins are updated to `0.9.30`. See [CHANGELOG.md](../CHANGELOG.md#0930---2026-07-31) for full details.
 
 ### What's New in v0.9.29
 

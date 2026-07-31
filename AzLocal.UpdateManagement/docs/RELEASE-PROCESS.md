@@ -18,8 +18,8 @@ In the steps below, `<candidate>` is the version being released (for example `1.
  4. Update CHANGELOG.md with a new entry for <candidate>.
  4a. REFRESH IN-PACKAGE DOCS BEFORE PUBLISH. The following Markdown files
     ship inside the published PSGallery .nupkg (Publish-Module.ps1 only
-    strips Tests/, Tools/, Publish-Module.ps1, and root-level non-README
-    *.md - everything else under the module folder is retained). Any time
+    strips Tests/, Publish-Module.ps1, all Tools/ content except the runtime
+    sideload-copy helper, and root-level non-README *.md). Any time
     a candidate changes pipeline behaviour, refresh:
       - docs/release-history.md  (current-release pointer + new entry)
       - Automation-Pipeline-Examples/README.md  (section-1 step bullets,
@@ -148,8 +148,9 @@ release-time invariants. If any of these fail, do not publish.
 ## Publish-Module.ps1 behaviour
 
 - Stages a clean copy of the module to `C:\Temp\AzLocal.UpdateManagement`.
-- Removes `Tests/`, `Publish-Module.ps1`, and `Tools/` from the staging
-  copy (repo-only artefacts).
+- Excludes `Tests/`, `Publish-Module.ps1`, and repo-only `Tools/` content from
+  staging. `Tools/Invoke-AzLocalSideloadCopyTask.ps1` is intentionally retained
+  because `Register-AzLocalSideloadCopyTask` invokes it at runtime.
 - Strips root-level `*.md` files except `README.md` from the staging copy.
   Subfolder markdown (`ITSM/*.md`, `docs/*.md`,
   `Automation-Pipeline-Examples/README.md`) is retained because consumers
