@@ -150,6 +150,8 @@ The active workflow model uses three clear groups:
 
   ![GitHub Actions sidebar showing Config, Monitor, and Update workflows grouped](../docs/images/github-actions-10-pipelines-view.png)
 
+  *For illustration purposes only. Screenshots may differ from current workflow output.*
+
   *The Config/Monitor/Update numeric prefixes keep the GitHub Actions sidebar grouped by purpose rather than a purely alphabetical scatter.*
 
 - **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Config: N` / `Monitor: N` / `Update: N` naming when you import so the list stays grouped by purpose.
@@ -993,6 +995,8 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 
   ![Config: 1 - Validate Auth and Inventory Clusters run, showing authentication validation output and subscription scope details](../docs/images/auth-smoke-test-validate-oidc.png)
 
+    *For illustration purposes only. Screenshots may differ from current workflow output.*
+
    You may see one informational `windows-latest` -> `windows-2025-vs2026` migration notice in the run annotations. The sample workflows pin `runs-on: windows-latest` (the module is a Windows-side PowerShell module), and GitHub will retarget the alias to the new image automatically when it becomes the default - no action required on your part. As of v0.7.60 the previously-seen Node.js 20 deprecation banner (against `actions/checkout@v4`, `azure/login@v2`, `actions/upload-artifact@v4`, `dorny/test-reporter@v1`) is gone: the sample workflows have been refreshed to Node 24-compatible majors (`@v5`, `@v3`, `@v6`, `@v3` respectively).
 
    **If it fails**, the most likely causes (and what to check) are:
@@ -1421,6 +1425,8 @@ The comparison publishes `cluster-inventory-drift.csv`, `.json`, `.xml`, and `-s
 
 ![inventory-clusters.yml run: Run Cluster Inventory step expanded, showing Inventory Summary with Total Clusters 20 / Clusters with UpdateRing tag 19 / 1 cluster without UpdateRing tag (warning), UpdateRing Distribution Canary=3 / Prod=9 / Ring1=3 / Ring2=4, CSV export path under the artifacts folder, and the Next Steps block guiding the operator to populate the UpdateRing column and then run Set-AzLocalClusterUpdateRingTag](../docs/images/inventory-clusters-run-output.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 > If you would rather skip the inventory pipeline entirely, the same operation runs from a local PowerShell session: `Import-Module ./AzLocal.UpdateManagement.psd1; Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv`. This is the same code path the pipeline uses.
 
 #### 6.1.1 (Optional) Exclude whole subscriptions from every fleet scan
@@ -1606,6 +1612,8 @@ The step summary now leads with the **"Clusters - Ready for Update"** table; the
 
 ![Update: 1 - Assess Update Readiness summary tab: Cluster Readiness table on a 20-cluster fleet (Total 11 / Ready 2 / Up to Date 9 / Not Ready 0 / Stale assessment 1) with per-cluster Current Version, Update State, Health, Status, Support, Recommended Update and Blocking Reasons columns - one cluster flagged "Update Available (stale assessment)" / Unsupported / Disconnected - and the footer note explaining stale "Up to Date" clusters running a build behind the latest manifest should re-run Sync-AzLocalClusterUpdateSummary](../docs/images/apply-updates-update-readiness.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 *Update: 1 Assess Update Readiness summary tab - the Cluster Readiness table flags stale "Up to Date" clusters running a solution build behind the latest manifest and surfaces blocking reasons (e.g. Disconnected) plus a Support column per cluster.*
 
 The pipeline itself is **report-only and always succeeds**. Per-cluster red tests are signal, not a stop condition for the wave - in a large fleet, one or two clusters out at any given moment is the norm, and blocking the entire wave on those is rarely what you want. `Start-AzLocalClusterUpdate` is per-cluster-scoped and will no-op on the un-ready clusters anyway.
@@ -1687,6 +1695,8 @@ The four run in distinct (offset) cron slots so they don't contend for the same 
 
 ![Update: 4 - Monitor In-Flight Updates summary tab: red Fleet Status CRITICAL header (1 run > 6d, 1 step > 4h, 4 unresolved failures, 20 clusters scoped), the new Tip line explaining Ctrl/Cmd/middle-click for new-tab opens (GitHub markdown strips target="_blank"), the In-flight runs table with the new deep-tree Progress column showing `132/167 steps (79%)` for the Arizona Solution12.2604.1003.1005 CAU Attempt step, and the Failed runs table with plain-anchor Cluster + Update hyperlinks for Toronto / Virginia / NewYorkCity](../docs/images/monitor-inflight-updates.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 *Update: 4 in-flight monitor on a real 20-cluster fleet - the `Progress` column reports leaf-step completion (`M/N steps (P%)`) since v0.8.74 instead of the coarse top-level wrapper count that previously always read `1/2 steps`, and the `Tip` line above the runs table makes the Ctrl/Cmd/middle-click new-tab behaviour explicit (GitHub markdown strips `target="_blank"` from anchors).*
 
 #### Event-driven monitor trigger and the optional `MONITOR_TRIGGER_DELAY_MINUTES` variable (v0.8.90)
@@ -1740,6 +1750,8 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 
 ![Monitor: 3 - Fleet Update Status summary tab: Fleet Version Distribution table breaking 20 clusters into 5 YYMM rows (2605 / 2604 / 2603 / 2601 supported, 2511 unsupported) with per-row cluster counts, percentages, support badges and the first 15 cluster names per version row, plus a Critical Health Status table (13 Passed / 7 Failed) and a Primary Status table (Total Clusters 20, Up to Date 7, Ready for Update 5, Update In Progress 1)](../docs/images/fleet-update-status.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 *Monitor: 3 Fleet Update Status summary tab on a real 20-cluster fleet - leads with the version-distribution table (anchored on the Microsoft manifest YYMM) and the Primary Status breakdown that uses the same priority cascade (Up to Date / Ready for Update / In Progress / SBE Prerequisite / Health Failure / Update Failed / Action Required / Needs Investigation) as Update: 1 and Update: 3 since v0.8.74.*
 
 | Artefact | Description |
@@ -1769,9 +1781,13 @@ It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalflee
 
 ![Monitor: 2 - Fleet Health Status summary tab part 1: Health Check Failures By Reason table sorted most-widespread-first, with Severity / Failure Reason / Cluster Count / Failure Count / Affected Clusters (Seattle, Toronto, Mobile, Nashville, Tacoma, Virginia linked) / Latest columns - leading critical reasons are Storage Services Physical Disks Health Check (2 clusters / 12 failures), Storage Virtual Disk Health Check (2/8), Storage Job Health Check (2/7), Test Network intent on existing cluster nodes (2/5) and several Environment Validator exceptions and HCIOrchestratorAccount / ECEAgentService Account / Cluster-Aware Updating Rule 6 health checks](../docs/images/fleet-health-status-part1.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 *Monitor: 2 Fleet Health Status part 1: the pivot-by-failure-reason table that leads the summary. Sorted by `ClusterCount desc` so the most widespread fleet-wide issues bubble to the top - this is the ready-made "what should we fix first?" prioritisation view.*
 
 ![Monitor: 2 - Fleet Health Status summary tab part 2: Detailed Results (per-cluster, per-failure) section with collapsible cluster rows sorted worst-first - Toronto Critical x28, Seattle Critical x27 / Warning x7, Tacoma Critical x9, Nashville Critical x3 / Warning x1 (expanded) showing three [Critical] Environment Validator Exception - Test-AzStackHciHardware rows with Failure Remediation "Raise case with Microsoft support" plus one [Warning] Microsoft.Health.FaultType.Cluster.KeyVaultDoesNotExist row linking out to the Microsoft Learn key-vault remediation guide, then collapsed rows for Mobile, Virginia, NewYorkCity, Bellevue, Portland, ending with Reports Available pointing to fleet-health-detail.csv](../docs/images/fleet-health-status-part-2.png)
+
+*For illustration purposes only. Screenshots may differ from current workflow output.*
 
 *Monitor: 2 Fleet Health Status part 2: the per-cluster Detailed Results drill-down. Clusters are listed worst-affected first, each expander shows the full per-(cluster, failing check) rows with Failure Reason, Failure Remediation, Target Resource Name / Type, and Last Occurrence - mirroring the standalone "24-Hour System Health Checks - Detailed Results" view.*
 
@@ -2033,13 +2049,19 @@ The three captures below are from the same Config: 3 run on a fleet with a drift
 
 ![Config: 3 step summary - Action required (1 of 2): cron coverage remediation](../docs/images/apply-updates-schedule-audit-part1.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 **Part 2 - Action required (2 of 2): NoWindowTag remediation** - per-cluster advisor with a peer-derived `UpdateStartWindow` value to apply via `Set-AzLocalClusterUpdateRingTag`:
 
 ![Config: 3 step summary - Action required (2 of 2): NoWindowTag remediation](../docs/images/apply-updates-schedule-audit-part2.png)
 
+*For illustration purposes only. Screenshots may differ from current workflow output.*
+
 **Part 3 - Cycle calendar (enriched, 7 columns)** - per-day UTC projection over the schedule's cycle horizon, with the Update: 3 apply-updates cron firing times and `Tag Start Window Match (>=95%)` per ring/date so you can verify at-a-glance that each ring's tagged clusters have an `UpdateStartWindow` that actually covers at least one cron firing on its eligible days:
 
 ![Config: 3 step summary - Cycle calendar (enriched, 7 columns)](../docs/images/apply-updates-schedule-audit-part3.png)
+
+*For illustration purposes only. Screenshots may differ from current workflow output.*
 
 #### Step 5 - Apply the recommendation
 
