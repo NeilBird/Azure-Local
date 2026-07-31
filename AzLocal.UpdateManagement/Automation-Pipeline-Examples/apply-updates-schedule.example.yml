@@ -34,6 +34,8 @@
 #
 # Generate a starter file from your current fleet via:
 #   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml
+# Detailed configuration guide:
+#   https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/Automation-Pipeline-Examples/docs/apply-updates-schedule.md
 # =====================================================================
 
 schemaVersion: 2
@@ -43,10 +45,23 @@ schemaVersion: 2
 # relative to this anchor. After `cycleWeeks` weeks the calendar loops
 # back to cycleWeek=1.
 #
-# ISO reference: https://en.wikipedia.org/wiki/ISO_week_date
+# The generator uses the current UTC ISO 8601 week and year, making the week
+# in which it runs cycle week 1. When editing by hand, use the converter
+# below to find both values for the UTC week in which the cycle should
+# start:
+#   https://time.now/tool/iso-8601-converter/
 #
-# Example anchor: ISO Week 1 of 2026 began on Monday,
-# 29 December 2025 and ended on Sunday, 4 January 2026.
+# ISO weeks run Monday through Sunday. ISO week 1 contains the year's
+# first Thursday, so early January can belong to the previous ISO year
+# and late December can belong to the next ISO year. Always use both the
+# ISO week and ISO year returned for the chosen date.
+#
+# ISO references:
+#   https://en.wikipedia.org/wiki/ISO_week_date
+#   https://en.wikipedia.org/wiki/ISO_8601
+#
+# This example anchors cycle week 1 at ISO week 1 of 2026, which ran
+# from Monday, 29 December 2025 through Sunday, 4 January 2026.
 #
 # Example cycle duration: with cycleWeeks = 8 the schedule repeats
 # every 8 weeks (56 days). Once the cycle completes, the resolver
@@ -54,6 +69,9 @@ schemaVersion: 2
 #
 # cycleAnchorISOWeek + cycleAnchorYear identify the ISO-8601 week that
 # is "week 1" of the cycle. cycleWeeks tells the resolver when to wrap.
+# Keep the anchor fixed after committing the file; do not advance it
+# each week. A four-week cycle is a 28-day repeating operating pattern,
+# not a calendar month; use a longer cycle for additional soak time.
 cycleWeeks:           8
 cycleAnchorISOWeek:   1
 cycleAnchorYear:      2026
@@ -168,10 +186,14 @@ allowedUpdateVersions: 'Latest'
 #                 below `rings` and before `notes` is recommended only for
 #                 readability; placing it below `notes` is equally valid.
 #
-# Multiple rows MAY use the same weeksInCycle value. Each row is matched
-# independently by both week and day, so week 1 Monday can target Canary
-# while a separate week 1 Tuesday row targets DevTest. If multiple rows
-# match the same week AND day, their rings are UNIONed and deduplicated.
+# COMMON SETUP: put every ring that shares the same week and days in one
+# row, separated by semicolons, for example `rings: 'Canary;DevTest'`.
+# This selects every cluster carrying either UpdateRing tag value.
+#
+# OPTIONAL: multiple rows MAY use the same weeksInCycle value when rings
+# need different days or row-level policies. Each row is matched by both
+# week and day. If multiple rows match the same week AND day, their rings
+# are UNIONed and deduplicated.
 schedule:
   - weeksInCycle: '1'
     daysOfWeek:   'Mon-Fri'
