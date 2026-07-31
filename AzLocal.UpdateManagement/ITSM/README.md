@@ -1,7 +1,6 @@
 # ITSM Connector for AzLocal.UpdateManagement
 
-> Optional feature. Disabled by default. Module: `AzLocal.UpdateManagement` v0.7.4+ (Phase 1 shipped in v0.7.4; current module is v0.9.10).
-> Phase 1 (this release): ServiceNow incident creation + dedupe + connection probe. Phase 2 (Sync close-out via `Sync-AzLocalIncident`) and Phase 3 (Teams / Slack mirror adapters) are **deferred** to a future release - the design lives in [`ITSM-Connector-Plan.md`](./ITSM-Connector-Plan.md) but the functions are not yet shipped.
+> Optional feature. Disabled by default. Requires `AzLocal.UpdateManagement` v0.7.4 or later; this guide describes the current v0.9.30 behavior.
 
 This folder is the setup-and-configure landing page for the ITSM Connector. It walks an operator through every step from "nothing wired" to "the apply-updates pipeline opens a deduped ServiceNow incident when a cluster needs human intervention".
 
@@ -19,20 +18,14 @@ A working sample config plus the Mustache ticket-body template live at [`../Auto
 
 ## 1. What this connector does
 
-When any of the four "operator-attention" pipelines finishes - **`fleet-connectivity-status.yml`** (Monitor: 1; Critical / Warning Arc-machine / ARB / NIC / cluster connectivity failures), **`apply-updates.yml`** (Update: 3), **`fleet-update-status.yml`** (Monitor: 3; unresolved Failed update runs), and **`fleet-health-status.yml`** (Monitor: 2; Critical / Warning fleet-health failures) - the connector reads the JUnit results file the module already emits and, for each cluster row whose `Status` is in your trigger matrix:
+Five operator-attention pipelines support the connector: Monitor: 1, Monitor: 2, Monitor: 3, Update: 3, and Update: 4. When enabled, the connector reads the pipeline's JUnit results and processes each cluster row whose `Status` is configured to raise a ticket:
 
 1. Computes a deterministic dedupe key (SHA256 of `ClusterResourceId | UpdateName | TriggerCategory`).
 2. Asks ServiceNow whether an incident with that key already exists in state New / In Progress / On Hold.
 3. If yes -> returns `Action='DedupedToExisting'` (no new ticket).
 4. If no -> creates a new incident with the trigger's severity, category, and the five `u_azlocal_*` custom fields populated.
 
-> **v0.7.70: Step.6 and Step.7 now raise tickets too (Phase D).** Until v0.7.69 only `Step.6_apply-updates` auto-called `New-AzLocalIncident`. In v0.7.70 the same opt-in wiring is present in both `Step.7_fleet-update-status` (renumbered to `Step.8_fleet-update-status` in v0.7.90; sources from the `Update Run History and Error Details` testsuite produced by `Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved`) and `Step.8_fleet-health-status` (renumbered to `Step.9_fleet-health-status` in v0.7.90; sources from the `Fleet Health Failures` testsuite produced by `Get-AzLocalFleetHealthFailures -View Detail`, sorted Critical-first). Both new wirings are **gated** by a `raise_itsm_ticket` workflow input (default `false`) and an `itsm_dry_run` input - so existing runs that do not toggle them on are byte-identical to v0.7.69. The `itsm-secrets` block is wrapped in `BEGIN-AZLOCAL-CUSTOMIZE:itsm-secrets` / `END-AZLOCAL-CUSTOMIZE:itsm-secrets` markers so operator-side secret bindings survive a `Update-AzLocalPipelineExample` upgrade. The JUnit files Step.6 and the renamed Step.8/Step.9 emit carry the v0.7.70 hyperlinked deep-link columns (`UpdateRunPortalUrl`, `ClusterPortalUrl`, `CurrentStep`, `Duration`, `DeepestErrMsg`, `Severity`, `TargetResourceName`, `TargetResourceType`, `HealthResultsAgeDays`) so the ticket title + body can deep-link straight into the Azure portal blade for the affected cluster / update run.
-
-> **v0.7.76: Step.4 fleet-connectivity ticketing added.** When the `Step.4_fleet-connectivity-status` pipeline was introduced in v0.7.76 it shipped with the same opt-in ITSM wiring as Step.7 / Step.8 - gated on `raise_itsm_ticket=true`, reading `./reports/fleet-connectivity-status.xml`, and using the existing `azurelocal-itsm.yml` trigger matrix. Each row in the JUnit file emits `Status=Critical` or `Status=Warning` (Disconnected / Offline / partial-connectivity Arc-agent / ARB / NIC / cluster rows), so the same `Critical` / `Warning` entries from the trigger matrix in [Section 5](#5-author-the-trigger-matrix) drive Step.4 with no extra config. Step.4 emits a row-specific `UpdateName` per testcase (e.g. `ClusterConnectivity=Disconnected`, `ArcAgent=Disconnected [<NodeName>]`, `PhysicalNic=Down [<NodeName>/<NicName>]`, `ARB=Offline [<ArbName>]`), so the SHA256 dedupe key naturally separates a cluster-level disconnect from an individual NIC / Arc-agent / ARB failure even when several rows fire for the same cluster on the same day.
-
-> **v0.8.87: Update: 4 in-flight monitor ticketing added.** The `monitor-updates.yml` pipeline (Update: 4 - Monitor In-Flight Updates, produced by `Export-AzLocalUpdateRunMonitorReport`) now ships with the same opt-in ITSM wiring - gated on `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps), reading `./reports/update-monitor.xml`, and using the existing `azurelocal-itsm.yml` trigger matrix. Until v0.8.87 the monitor JUnit carried no per-`<testcase>` `<properties>`, so every monitor row was skipped by `New-AzLocalIncident` for a missing `ClusterResourceId` / `UpdateName`. The monitor now emits `ClusterName` / `ClusterResourceId` / `UpdateName` / `Status` / `CurrentStep` / `ClusterPortalUrl` / `UpdateRunPortalUrl` per row, with `Status` one of `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`. The trigger matrix gains `AttemptWithoutRun` (raise, severity 3) and `StepError` (raise, severity 2) plus opt-in `LongRunningOverall` / `LongRunningStep` entries (see [Section 5](#5-author-the-trigger-matrix)). `AttemptWithoutRun` rows (UpdateLastAttempt tag with no observable updateRun) use a `(no update name)` `UpdateName` fallback so the SHA256 dedupe key stays stable per cluster. The monitor remains report-only and always green - ITSM failures never affect its result.
-
-What it deliberately does **not** do in Phase 1: open Jira / ADO Work Items, send Teams / Slack notifications, or close tickets on success. See [ITSM-Connector-Plan.md Sections 2 + 9](./ITSM-Connector-Plan.md) for the phased roadmap.
+Ticket creation is fully opt-in and does not change pipeline success. Dry-run mode builds and exports the proposed incidents without creating them. The connector does not open Jira or Azure DevOps work items, send Teams or Slack notifications, or close incidents automatically; see the [design plan](./ITSM-Connector-Plan.md) for deferred capabilities.
 
 ---
 
@@ -252,7 +245,7 @@ New-AzLocalIncident `
 
 ## 8. Wire into the pipeline
 
-The example pipelines under [`../Automation-Pipeline-Examples/`](../Automation-Pipeline-Examples/) ship the wired step in **four** places as of v0.7.76:
+The example pipelines under [`../Automation-Pipeline-Examples/`](../Automation-Pipeline-Examples/) ship the connector in **five** places:
 
 | Pipeline | Trigger source | JUnit input | Default behaviour |
 |---|---|---|---|
@@ -260,8 +253,9 @@ The example pipelines under [`../Automation-Pipeline-Examples/`](../Automation-P
 | `apply-updates.yml` (Update: 3) | `Get-AzLocalUpdateRunFailures` (live, from the run that just executed) | `./reports/update-results.xml` | Wired since v0.7.4 |
 | `fleet-update-status.yml` (Monitor: 3) | `Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved` (fleet, last 30 days) | `./reports/fleet-update-status.xml` | **v0.7.70 Phase D**, default OFF |
 | `fleet-health-status.yml` (Monitor: 2) | `Get-AzLocalFleetHealthFailures -View Detail` (Critical-first) | `./reports/fleet-health-status.xml` | **v0.7.70 Phase D**, default OFF |
+| `monitor-updates.yml` (Update: 4) | In-flight failures and configured long-running conditions | `./reports/update-monitor.xml` | Default OFF |
 
-All four are gated on `raise_itsm_ticket` (a `workflow_dispatch` choice / pipeline parameter, default `false`) and fully opt-in - existing runs that do not toggle it on are byte-identical to before. The Monitor: 1 / Update: 3 / Monitor: 3 wirings also expose an `itsm_dry_run` input (and Monitor: 3 an `itsm_force_create`) so operators can preview tickets before flipping the switch.
+All five are gated on `raise_itsm_ticket` (a `workflow_dispatch` choice or pipeline parameter, default `false`). Use `itsm_dry_run` to preview ticket payloads before enabling creation; use `itsm_force_create` only when intentionally bypassing dedupe.
 
 Key points from the wired step (full YAML in the example files):
 
@@ -307,7 +301,7 @@ The first production run should keep `raise_itsm_ticket=false` (or set `itsm_dry
 | `Test-AzLocalItsmConnection` step 1 fails with `not a recognised form` | A secret reference is malformed. | Confirm `kv://<vault>/<secret>` / `env://<NAME>` / bare-name format. Bare names need `secrets.source: keyvault` + `keyvaultName`. |
 | Step 1 succeeds, step 2 fails with `Failed to read Key Vault secret` | Service principal lacks RBAC on the vault. | Grant `Key Vault Secrets User`. See Section 4.1. |
 | Step 3 fails with `ServiceNow OAuth response did not contain an access_token` | Wrong client_id / client_secret, or the OAuth app is restricted to a different grant type. | Re-issue the secret in ServiceNow; ensure `Application Registry -> Auth Scope` allows the API endpoints used. |
-| Step 4 fails with HTTP 403 | The OAuth app role is missing `web_service_admin` (read on the incident table). | Add the role to the OAuth user. |
+| Step 4 fails with HTTP 403 | The ServiceNow integration user lacks incident-table access. | Grant the dedicated integration user the `itil` role and verify no additional ACL blocks the required rows; do not grant `admin`. |
 | Connector creates a new ticket every run for the same problem | Custom field `u_azlocal_dedupe_key` not installed, so `FindByDedupe` always returns empty. | Install the custom fields (Section 3.2). |
 | `Action='Skipped'` for a status you wanted to ticket | Status not in `triggers`, or `raiseTicket: false`. | Add an entry with `raiseTicket: true`. |
 | `Action='CreateFailed'` with rate-limit messages | ServiceNow per-instance throttle (default 100 req/min). | The HTTP layer honours `Retry-After` automatically; if it still fails, lower the concurrent cluster count on the run or contact your SN admin. |
