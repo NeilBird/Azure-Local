@@ -511,6 +511,10 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         Test-Path -LiteralPath $r.ReadinessXmlPath | Should -BeTrue
         Test-Path -LiteralPath $r.CombinedXmlPath  | Should -BeTrue
         (Get-Item -LiteralPath $r.ReadinessCsvPath).Length | Should -BeGreaterThan 0
+        $r.PSObject.Properties.Name | Should -Contain 'ClustersWithUnknownHealth'
+        $r.ClustersWithUnknownHealth | Should -Be @($r.HealthRows | Where-Object {
+                $_.HealthState -in @('No Data', 'Unknown')
+            }).Count
     }
 
     It '[Step.6] Export-AzLocalClusterReadinessGateReport short-circuits cleanly when -UpdateRing is empty (no-op, read-only)' {

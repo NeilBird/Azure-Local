@@ -147,7 +147,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.9.28'
+$script:ModuleVersion = '0.9.29'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -387,6 +387,8 @@ Export-ModuleMember -Function @(
     'Export-AzLocalAuthValidationReport',
     # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
     'Invoke-AzLocalClusterInventory',
+    # Config: 1 inventory drift report (v0.9.29) - compares live inventory to config/ClusterUpdateRings.csv
+    'Export-AzLocalClusterInventoryDriftReport',
     # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
     'Set-AzLocalClusterUpdateRingTagFromCsv',
     # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + markdown + 6 step outputs)

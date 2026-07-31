@@ -380,8 +380,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.28' {
-            $script:ModuleInfo.Version | Should -Be '0.9.28'
+        It 'Should have version 0.9.29' {
+            $script:ModuleInfo.Version | Should -Be '0.9.29'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -729,9 +729,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
         }
 
-        It 'Should export exactly 72 functions' {
+        It 'Should export exactly 73 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 72
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 73
         }
 
         It 'Should export the expected functions' {
@@ -802,6 +802,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Export-AzLocalAuthValidationReport',
                 # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (timestamped + canonical CSV, JSON, README, step summary)
                 'Invoke-AzLocalClusterInventory',
+                # Config: 1 desired-state drift report (v0.9.29)
+                'Export-AzLocalClusterInventoryDriftReport',
                 # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply via Set-AzLocalClusterUpdateRingTag + JSON sidecar + step summary)
                 'Set-AzLocalClusterUpdateRingTagFromCsv',
                 # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + step summary + 6 step outputs)
@@ -4574,6 +4576,34 @@ Describe 'Function: Test-AzLocalClusterHealth' {
                 $result.Passed      | Should -Be $true
             }
         }
+
+        It 'Reports missing health data as unknown and non-blocking instead of fully healthy' {
+            InModuleScope AzLocal.UpdateManagement {
+                $resourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/no-hcr-summary'
+                $summaryRow = [PSCustomObject]@{
+                    properties         = [PSCustomObject]@{ state = 'AppliedSuccessfully' }
+                    ClusterResourceId_ = $resourceId.ToLower()
+                }
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Invoke-AzResourceGraphQuery { return @($summaryRow) }
+                Mock Write-Log { }
+
+                $result = Test-AzLocalClusterHealth -ClusterResourceIds @($resourceId) -PassThru 6>$null
+
+                $result.Passed | Should -BeTrue
+                Assert-MockCalled Write-Log -Scope It -ParameterFilter {
+                    $Message -like 'Unknown:*no health data*non-blocking*'
+                }
+                Assert-MockCalled Write-Log -Scope It -ParameterFilter {
+                    $Message -like 'HEALTH VALIDATION PASSED WITH UNKNOWN DATA*'
+                }
+                Assert-MockCalled Write-Log -Scope It -Times 0 -ParameterFilter {
+                    $Message -like '*All clusters are ready for updates*'
+                }
+            }
+        }
     }
 
     Context 'Fleet-scale ARG query batching' {
@@ -5278,7 +5308,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.28'
+            $report.moduleVersion | Should -Match '^0\.9\.29'
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw
@@ -5311,6 +5341,27 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
         }
     }
 
+    It 'Clears a handled native failure exit code when the workload succeeds' {
+        InModuleScope AzLocal.UpdateManagement {
+            $path = Join-Path $TestDrive 'handled-native-failure\pipeline-timings.json'
+            $global:LASTEXITCODE = 0
+
+            $result = Invoke-AzLocalPipelineTimedOperation `
+                -PipelineName 'fleet-update-status' `
+                -StepNumber 20 `
+                -StepName 'Collect fleet update status' `
+                -Path $path `
+                -ScriptBlock {
+                    $global:LASTEXITCODE = 1
+                    'report-complete'
+                }
+
+            $result | Should -Be 'report-complete'
+            $global:LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).status | Should -Be 'Succeeded'
+        }
+    }
+
     It 'Records and rethrows failures while scrubbing credential fragments' {
         InModuleScope AzLocal.UpdateManagement {
             $path = Join-Path $TestDrive 'failed\pipeline-timings.json'
@@ -5335,9 +5386,31 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
     It 'Executes normally without writing a report when disabled' {
         InModuleScope AzLocal.UpdateManagement {
             $path = Join-Path $TestDrive 'disabled\pipeline-timings.json'
-            $result = Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Disabled timing' -Path $path -Enabled:$false -ScriptBlock { 'workload-output' }
+            $global:LASTEXITCODE = 0
+            $result = Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Disabled timing' -Path $path -Enabled:$false -ScriptBlock {
+                $global:LASTEXITCODE = 1
+                'workload-output'
+            }
             $result | Should -Be 'workload-output'
+            $global:LASTEXITCODE | Should -Be 0
             Test-Path -LiteralPath $path | Should -BeFalse
+        }
+    }
+
+    It 'All bundled pipeline workloads use the shared timed-operation success boundary' {
+        $pipelineRoot = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples'
+        $pipelineFiles = @(
+            Get-ChildItem -LiteralPath (Join-Path $pipelineRoot 'github-actions') -Filter '*.yml'
+            Get-ChildItem -LiteralPath (Join-Path $pipelineRoot 'azure-devops') -Filter '*.yml'
+        )
+        $timedPipelineFiles = @($pipelineFiles | Where-Object {
+                (Get-Content -LiteralPath $_.FullName -Raw) -match 'Invoke-AzLocalPipelineTimedOperation'
+            })
+
+        $timedPipelineFiles.Count | Should -Be 20
+        foreach ($pipelineFile in $timedPipelineFiles) {
+            (Get-Content -LiteralPath $pipelineFile.FullName -Raw) |
+                Should -Match 'Invoke-AzLocalPipelineTimedOperation' -Because "$($pipelineFile.FullName) must use the shared exit-code boundary"
         }
     }
 
@@ -8984,6 +9057,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$versionText'
         $text | Should -Match 'gh\s+variable\s+set\s+\$VariableName\s+--repo\s+\$Repository\s+--body\s+\$versionText'
         $text | Should -Match 'gh\s+variable\s+delete\s+\$VariableName\s+--repo\s+\$Repository'
+        $text | Should -Match 'winget install --id GitHub\.cli --exact'
         $text | Should -Match 'SupportsShouldProcess\s*=\s*\$true'
         $text | Should -Match "ValidateSet\('Auto',\s*'GitHub',\s*'AzureDevOps'\)"
         $text | Should -Match '\.github\\workflows'
@@ -9002,6 +9076,36 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $output | Should -Not -Match '--name REQUIRED_MODULE_VERSION'
     }
 
+    It 'v0.9.28: GitHub disable parses variable JSON locally and deletes the existing pin' {
+        $path = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\apply-module-development-channel.ps1'
+        $global:developmentChannelGhCalls = [System.Collections.Generic.List[string]]::new()
+        function global:gh {
+            $call = $args -join ' '
+            $global:developmentChannelGhCalls.Add($call)
+            $global:LASTEXITCODE = 0
+            if ($args -contains '--jq') {
+                $global:LASTEXITCODE = 1
+                return 'function not defined: REQUIRED_MODULE_VERSION/0'
+            }
+            if ($call -eq 'variable list --repo owner/repo --json name') {
+                return '[{"name":"REQUIRED_MODULE_VERSION"}]'
+            }
+        }
+
+        try {
+            $output = @(& $path -Disable -Platform GitHub -Repository owner/repo -SkipPipelineRefresh -Confirm:$false 6>&1) -join "`n"
+
+            $output | Should -Match 'Development channel disabled for owner/repo'
+            $global:developmentChannelGhCalls | Should -Contain 'variable list --repo owner/repo --json name'
+            $global:developmentChannelGhCalls | Should -Contain 'variable delete REQUIRED_MODULE_VERSION --repo owner/repo'
+            ($global:developmentChannelGhCalls -join "`n") | Should -Not -Match '--jq'
+        }
+        finally {
+            Remove-Item function:\gh -ErrorAction SilentlyContinue
+            Remove-Variable developmentChannelGhCalls -Scope Global -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'v0.9.28: Copy exposes -SkipDevelopmentChannelHelper as a switch' {
         $cmd = Get-Command Copy-AzLocalPipelineExample
         $cmd.Parameters.ContainsKey('SkipDevelopmentChannelHelper') | Should -BeTrue
@@ -9017,7 +9121,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         $helperDest = Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1'
         Test-Path $helperDest | Should -BeTrue
-        (Get-Content -LiteralPath $helperDest -Raw) | Should -Match 'AZLOCAL-DEVELOPMENT-CHANNEL-VERSION:\s*1\.3\.0'
+        (Get-Content -LiteralPath $helperDest -Raw) | Should -Match 'AZLOCAL-DEVELOPMENT-CHANNEL-VERSION:\s*1\.3\.1'
     }
 
     It 'v0.9.28: GitHub Copy preserves a markerless operator-owned development-channel helper' {
@@ -11925,7 +12029,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
 
                 $text = Get-Content -LiteralPath $helperDest -Raw
-                $text | Should -Match 'AZLOCAL-DEVELOPMENT-CHANNEL-VERSION:\s*1\.3\.0'
+                $text | Should -Match 'AZLOCAL-DEVELOPMENT-CHANNEL-VERSION:\s*1\.3\.1'
                 $text | Should -Not -Match 'STALE BODY'
             }
             finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -14230,8 +14334,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 72 functions' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 72
+        It 'BS7: Module exports exactly 73 functions' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 73
         }
     }
 
@@ -18277,6 +18381,35 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $summary | Should -Match 'Fleet Status: IDLE'
     }
 
+    It 'Suppresses child inventory and update-run host renderers while preserving returned rows' {
+        $global:_s7_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName = 'synthetic-cluster'; ResourceId = '/subscriptions/test/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/synthetic-cluster' })
+            Runs = @([pscustomobject]@{
+                ClusterName = 'synthetic-cluster'; ClusterResourceId = '/subscriptions/test/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/synthetic-cluster'
+                UpdateName = 'Solution-test'; State = 'Succeeded'; Status = 'Success'; StartTime = '2026-06-10 08:00'; EndTime = '2026-06-10 10:00'
+                LastUpdatedTime = '2026-06-10 10:00'; Duration = '2 hours'; Progress = '10/10 steps'; CurrentStep = ''; CurrentStepDetail = ''
+                StepStartTime = ''; StepElapsed = ''; ErrorMessage = ''; ErrorDescription = ''; RunId = 'run-test'; RunResourceId = '/subscriptions/test/run-test'
+            })
+            Now = $script:_s7_now
+            OutDir = $script:_s7_outDir
+        }
+        $output = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                Write-Host 'CHILD-INVENTORY-IDENTIFIER'
+                @($global:_s7_payload.Inventory)
+            }
+            Mock Get-AzLocalUpdateRuns {
+                Write-Host 'CHILD-UPDATE-RUN-IDENTIFIER'
+                @($global:_s7_payload.Runs)
+            }
+            @(Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru 6>&1)
+        }
+        ($output | Out-String) | Should -Not -Match 'CHILD-(INVENTORY|UPDATE-RUN)-IDENTIFIER'
+        $result = @($output | Where-Object { $_.PSObject.Properties['Rows'] })[-1]
+        @($result.Rows).Count | Should -Be 1
+        $result.Rows[0].ClusterName | Should -Be 'synthetic-cluster'
+    }
+
     It '-SkipWhenIdle with no in-flight runs or recent attempts: emits IDLE and skips the update-run sweep' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
@@ -18923,7 +19056,11 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         @($result.Rows | Where-Object ClusterName -eq 'arm-visible')[0].RunId | Should -Be 'run-arm'
         @($result.Rows | Where-Object ClusterName -eq 'resumed-original-start')[0].RunId | Should -Be 'run-resumed'
         @($result.AttemptGaps)[0].ClusterName | Should -Be 'truly-missing'
-        (Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile) | Should -Match '\| Clusters scoped \| 3 \|'
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match '\| Metric \| Count \| Percentage \|'
+        $summary | Should -Match '\| Clusters scoped \| 3 \| 100\.0% \|'
+        $summary | Should -Match '\| Update runs in flight \| 1 \| 33\.3% \|'
+        $summary | Should -Match '\| Update attempts without observable run \(last 72h\) \| 1 \| 33\.3% \|'
     }
 
     It 'CSV is sorted by SeverityScore descending (worst first), and contains all rows' {
@@ -20442,6 +20579,88 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $result.AllowListFilteredUpdateCount | Should -Be 2
     }
 
+    It 'v0.9.29: stale scan honours allowed Solution YYMM targets' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $heldId = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/held'
+        $missingAllowedId = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/missing-allowed'
+        $visibleAllowedId = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/visible-allowed'
+        $sbeOnlyId = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/sbe-only'
+        $staleId = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/stale'
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='held'; ResourceId=$heldId; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='missing-allowed'; ResourceId=$missingAllowedId; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='visible-allowed'; ResourceId=$visibleAllowedId; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='sbe-only'; ResourceId=$sbeOnlyId; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='stale'; ResourceId=$staleId; UpdateRing='Prod' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='held'; ClusterResourceId=$heldId; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2607.1003.71'; ReadyUpdates='Solution12.2607.1003.71'
+                                   CurrentVersion='12.2604.1003.1006'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowedUpdateVersions='12.2603.1002.500; 12.2604.1003.1006; SBE4.2.2606.1'
+                                   AllowListSource='TopLevel'; AllowListSuppressedUpdates='Solution12.2607.1003.71' }
+                [pscustomobject]@{ ClusterName='missing-allowed'; ClusterResourceId=$missingAllowedId; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2605.1003.1003'; ReadyUpdates='Solution12.2605.1003.1003'
+                                   CurrentVersion='12.2604.1003.1006'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowedUpdateVersions='Solution12.2607.1003.71; SBE4.2.2606.1'
+                                   AllowListSource='RowOverride'; AllowListSuppressedUpdates='Solution12.2605.1003.1003' }
+                [pscustomobject]@{ ClusterName='visible-allowed'; ClusterResourceId=$visibleAllowedId; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2607.1003.71'; ReadyUpdates='Solution12.2607.1003.71'
+                                   CurrentVersion='12.2604.1003.1006'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowedUpdateVersions='12.2607.1003.71'
+                                   AllowListSource='Explicit'; AllowListSuppressedUpdates='' }
+                [pscustomobject]@{ ClusterName='sbe-only'; ClusterResourceId=$sbeOnlyId; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2607.1003.71'; ReadyUpdates='Solution12.2607.1003.71'
+                                   CurrentVersion='12.2604.1003.1006'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowedUpdateVersions='SBE4.2.2606.1'
+                                   AllowListSource='TopLevel'; AllowListSuppressedUpdates='Solution12.2607.1003.71' }
+                [pscustomobject]@{ ClusterName='stale'; ClusterResourceId=$staleId; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates=''; ReadyUpdates=''
+                                   CurrentVersion='12.2604.1003.1006'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowListSource='Latest'; AllowListSuppressedUpdates='' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='held'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='missing-allowed'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='visible-allowed'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='sbe-only'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='stale'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+            )
+            Manifest = [pscustomobject]@{ LatestYYMM='2607'; LatestVersion='12.2607.1003.71' }
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s5_payload.Manifest }
+            Mock Sync-AzLocalClusterUpdateSummary  { }
+            $report = Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+            Assert-MockCalled Sync-AzLocalClusterUpdateSummary -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ClusterResourceIds.Count -eq 2 -and
+                $ClusterResourceIds -contains $global:_s5_payload.Readiness[1].ClusterResourceId -and
+                $ClusterResourceIds -contains $global:_s5_payload.Readiness[4].ClusterResourceId
+            }
+            $report
+        }
+        $result.StaleAssessmentCount | Should -Be 2
+        $result.StaleAssessmentScanTriggered | Should -BeTrue
+        @($result.StaleAssessmentClusters).Count | Should -Be 2
+        @($result.StaleAssessmentClusters.ClusterName) | Should -Contain 'missing-allowed'
+        @($result.StaleAssessmentClusters.ClusterName) | Should -Contain 'stale'
+        @($result.StaleAssessmentClusters.ClusterName) | Should -Not -Contain 'held'
+        @($result.StaleAssessmentClusters.ClusterName) | Should -Not -Contain 'visible-allowed'
+        @($result.StaleAssessmentClusters.ClusterName) | Should -Not -Contain 'sbe-only'
+    }
+
     It 'v0.9.19: no filtered-updates table and allowlist_filtered_updates=0 when the allow-list suppresses nothing' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
@@ -20670,6 +20889,38 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
         $summary | Should -Match '\[OK\]'
         $summary | Should -Match 'All clear'
+    }
+
+    It 'No health data produces a non-blocking REVIEW summary instead of an all-clear result' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='unknown1'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/unknown1'; UpdateRing='Wave1' })
+            Readiness = @([pscustomobject]@{ ClusterName='unknown1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/unknown1'
+                                              UpdateState='UpdateAvailable'; HealthState='No Data'; ReadyForUpdate=$true
+                                              AllAvailableUpdates='Solution12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='Solution12.2510.0.999'; BlockingReasons='' })
+            Health = @([pscustomobject]@{ ClusterName='unknown1'; HealthState='No Data'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match '\[REVIEW\]'
+        $summary | Should -Match '1 with no health data'
+        $summary | Should -Match 'Missing data remains non-blocking'
+        $summary | Should -Not -Match 'All clear'
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $result.ClustersWithUnknownHealth | Should -Be 1
     }
 
     It 'v0.8.82: Not-Ready Blocking reasons column derives an actionable token when upstream BlockingReasons is empty' {

@@ -64,7 +64,15 @@ function Invoke-AzLocalPipelineTimedOperation {
     )
 
     if (-not $Enabled) {
-        return (& $ScriptBlock)
+        $workloadSucceeded = $false
+        try {
+            & $ScriptBlock
+            $workloadSucceeded = $true
+        }
+        finally {
+            if ($workloadSucceeded) { $global:LASTEXITCODE = 0 }
+        }
+        return
     }
 
     $startedUtc = [datetime]::UtcNow
@@ -168,5 +176,11 @@ function Invoke-AzLocalPipelineTimedOperation {
         $operation.durationMs = [int64][math]::Round(($endedUtc - $startedUtc).TotalMilliseconds, 0)
         & $writeReport $operation
         Write-Verbose ("Pipeline timing completed: pipeline='{0}', step={1}, name='{2}', status={3}, durationMs={4}." -f $PipelineName, $StepNumber, $StepName, $operation.status, $operation.durationMs)
+        if ($operation.status -eq 'Succeeded') {
+            # GitHub's pwsh wrapper exits with the final native exit code. A
+            # workload may intentionally handle an az failure and still return
+            # successfully; do not let that stale code fail the completed step.
+            $global:LASTEXITCODE = 0
+        }
     }
 }

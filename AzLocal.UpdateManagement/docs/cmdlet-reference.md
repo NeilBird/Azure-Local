@@ -61,6 +61,7 @@ This table is the canonical index of every public cmdlet the module ships. It is
 | Cmdlet | Type | Target |
 |---|---|---|
 | [`Test-AzLocalApplyUpdatesScheduleCoverage`](#test-azlocalapplyupdatesschedulecoverage) | READ (validation) | Local pipeline YAML + tag inputs |
+| [`Export-AzLocalClusterInventoryDriftReport`](#export-azlocalclusterinventorydriftreport) | READ (validation) | Live inventory input + source-controlled CSV; writes local reports |
 | [`Test-AzLocalUpdateScheduleAllowed`](#test-azlocalupdatescheduleallowed) | READ (validation) | Local schedule input |
 | [`Connect-AzLocalServicePrincipal`](#connect-azlocalserviceprincipal) | AUTH | Az PowerShell context (no data-plane calls) |
 | [`Copy-AzLocalPipelineExample`](#copy-azlocalpipelineexample) | WRITE (local) | Local file scaffold |
@@ -75,6 +76,20 @@ This table is the canonical index of every public cmdlet the module ships. It is
 | `Get-AzLocalItsmConfig` | READ | Local ITSM config file |
 | `Test-AzLocalItsmConnection` | READ | External ITSM endpoint |
 | `New-AzLocalIncident` | **WRITE** | External ITSM (creates ticket) |
+
+### `Export-AzLocalClusterInventoryDriftReport`
+
+Compares live Azure Local inventory rows with a source-controlled desired-state CSV by normalized `ResourceId`. It classifies live-only clusters, source-only clusters, and managed-tag mismatches without changing Azure resources.
+
+**Parameters:**
+
+- `-LiveInventory` (Mandatory): Inventory rows, normally imported from Config: 1's generated `ClusterUpdateRings.csv`.
+- `-SourceCsvPath`: Desired-state CSV. Defaults to `./config/ClusterUpdateRings.csv`.
+- `-OutputDirectory`: Destination for CSV, JSON, JUnit XML, and Markdown summary files.
+- `-Timestamp`: Report timestamp override, primarily for deterministic automation and tests.
+- `-PassThru`: Returns the summary counts, status, paths, and discrepancy rows.
+
+A missing source CSV returns `NotConfigured` with onboarding guidance. Detected drift returns `DriftDetected`, emits a pipeline warning and failed JUnit checks, but does not throw solely because drift exists.
 
 ### `Copy-AzLocalPipelineExample`
 

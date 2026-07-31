@@ -1,5 +1,5 @@
 #Requires -Version 5.1
-# AZLOCAL-DEVELOPMENT-CHANNEL-VERSION: 1.3.0
+# AZLOCAL-DEVELOPMENT-CHANNEL-VERSION: 1.3.1
 <#
 .SYNOPSIS
     Pins AzLocal pipelines to an exact module version.
@@ -196,7 +196,7 @@ if ($effectivePlatform -eq 'AzureDevOps') {
 }
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-    throw 'GitHub CLI (gh) is required. Install it and run gh auth login.'
+    throw 'GitHub CLI (gh) is required. Install it with: winget install --id GitHub.cli --exact. Then reopen PowerShell and run: gh auth login.'
 }
 
 & gh auth status *> $null
@@ -213,12 +213,18 @@ if (-not $Repository) {
 }
 
 if ($Disable) {
-    $existing = @(& gh variable list --repo $Repository --json name --jq ".[] | select(.name == `"$VariableName`") | .name" 2>&1)
+    $variableListOutput = @(& gh variable list --repo $Repository --json name 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "Could not inspect repository variables for '$Repository'. $($existing -join ' ')"
+        throw "Could not inspect repository variables for '$Repository'. $($variableListOutput -join ' ')"
+    }
+    try {
+        $repositoryVariables = @(($variableListOutput -join [Environment]::NewLine) | ConvertFrom-Json -ErrorAction Stop)
+    }
+    catch {
+        throw "Could not parse repository variables returned for '$Repository'. $($_.Exception.Message)"
     }
 
-    if (-not (@($existing | Where-Object { ([string]$_).Trim() -eq $VariableName }).Count)) {
+    if (-not (@($repositoryVariables | Where-Object { $_.name -eq $VariableName }).Count)) {
         Write-Host "$VariableName is already absent from $Repository. Latest-listed module resolution is active." -ForegroundColor Green
         return
     }

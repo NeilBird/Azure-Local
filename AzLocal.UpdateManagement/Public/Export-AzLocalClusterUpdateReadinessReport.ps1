@@ -425,10 +425,14 @@ function Export-AzLocalClusterUpdateReadinessReport {
     # ---- Stale update-assessment detection (v0.8.88) ----------------------
     # A cluster can report Up-to-Date while a newer solution build is actually
     # available, because its cached update assessment has not been refreshed.
-    # Detect that by comparing each Up-to-Date cluster's installed YYMM against
-    # the latest released YYMM in the public manifest. Detection is read-only and
-    # never throws; the auto-refresh (checkUpdates) is fire-and-forget and is
-    # suppressed by -SkipStaleAssessmentScan.
+    # Without an explicit allow-list, compare installed YYMM with the manifest's
+    # latest YYMM. With an explicit allow-list, refresh only when a newer allowed
+    # Solution version is absent from AllAvailableUpdates. This prevents a newer
+    # disallowed update from causing checkUpdates while still discovering an
+    # allowed feature update that Azure has not surfaced yet. SBE versions are
+    # intentionally outside this Solution YYMM heuristic. Detection is read-only
+    # and never throws; the fire-and-forget refresh is suppressed by
+    # -SkipStaleAssessmentScan.
     $staleClusters = New-Object 'System.Collections.Generic.List[object]'
     $staleScanTriggered = $false
     $latestManifest = $null
@@ -438,26 +442,57 @@ function Export-AzLocalClusterUpdateReadinessReport {
     catch {
         Write-Warning "Could not fetch the latest released solution version for stale-assessment detection: $($_.Exception.Message)"
     }
-    if ($latestManifest -and $latestManifest.LatestYYMM) {
-        foreach ($r in $readiness) {
-            if ((Get-AzLocalClusterReadinessStatus -ReadinessRow $r) -ne 'UpToDate') { continue }
-            $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { [string]$r.CurrentVersion } else { '' }
-            $staleCheck = Test-AzLocalUpdateAssessmentStale -CurrentVersion $cv -LatestYYMM ([string]$latestManifest.LatestYYMM)
-            if ($staleCheck.IsStale) {
-                $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
-                $staleClusters.Add([pscustomobject]@{
-                        ClusterName       = [string]$r.ClusterName
-                        ClusterResourceId = $clusterResId
-                        CurrentVersion    = $cv
-                        ClusterYYMM       = $staleCheck.ClusterYYMM
-                        LatestYYMM        = $staleCheck.LatestYYMM
-                    }) | Out-Null
+    foreach ($r in $readiness) {
+        if ((Get-AzLocalClusterReadinessStatus -ReadinessRow $r) -ne 'UpToDate') { continue }
+        $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { [string]$r.CurrentVersion } else { '' }
+        $assessmentTargetYymm = if ($latestManifest -and $latestManifest.LatestYYMM) { [string]$latestManifest.LatestYYMM } else { '' }
+        $allowListSource = if ($r.PSObject.Properties['AllowListSource'] -and $r.AllowListSource) { [string]$r.AllowListSource } else { 'None' }
+        $allowedVersions = if ($r.PSObject.Properties['AllowedUpdateVersions'] -and $r.AllowedUpdateVersions) {
+            @(([string]$r.AllowedUpdateVersions) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        } else { @() }
+        $constraintActive = ($allowListSource -in @('RowOverride', 'TopLevel', 'Explicit')) -and $allowedVersions.Count -gt 0
+
+        if ($constraintActive) {
+            $currentCheck = Test-AzLocalUpdateAssessmentStale -CurrentVersion $cv
+            if (-not $currentCheck.ClusterYYMM) { continue }
+
+            $visibleSolutions = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+            if ($r.PSObject.Properties['AllAvailableUpdates'] -and $r.AllAvailableUpdates) {
+                foreach ($visible in (([string]$r.AllAvailableUpdates) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+                    [void]$visibleSolutions.Add(([string]$visible -replace '^(?i)Solution', ''))
+                }
             }
+
+            $missingAllowedYymms = @($allowedVersions | ForEach-Object {
+                    $allowed = [string]$_
+                    if ($allowed -notmatch '^(?i)(?:Solution)?\d+\.(?<yymm>\d{4})\.') { return }
+                    $allowedYymm = $Matches['yymm']
+                    if ([int]$allowedYymm -le [int]$currentCheck.ClusterYYMM) { return }
+                    $normalizedAllowed = $allowed -replace '^(?i)Solution', ''
+                    if (-not $visibleSolutions.Contains($normalizedAllowed)) { $allowedYymm }
+                })
+            if ($missingAllowedYymms.Count -eq 0) { continue }
+            $assessmentTargetYymm = [string]($missingAllowedYymms | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
+        }
+        elseif ([string]::IsNullOrWhiteSpace($assessmentTargetYymm)) {
+            continue
+        }
+
+        $staleCheck = Test-AzLocalUpdateAssessmentStale -CurrentVersion $cv -LatestYYMM $assessmentTargetYymm
+        if ($staleCheck.IsStale) {
+            $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
+            $staleClusters.Add([pscustomobject]@{
+                    ClusterName       = [string]$r.ClusterName
+                    ClusterResourceId = $clusterResId
+                    CurrentVersion    = $cv
+                    ClusterYYMM       = $staleCheck.ClusterYYMM
+                    LatestYYMM        = $staleCheck.LatestYYMM
+                }) | Out-Null
         }
     }
     if ($staleClusters.Count -gt 0) {
         Write-Host ''
-        Write-Host "Stale update assessments: $($staleClusters.Count) Up-to-Date cluster(s) behind the latest released YYMM ($($latestManifest.LatestYYMM))"
+        Write-Host "Stale update assessments: $($staleClusters.Count) Up-to-Date cluster(s) may be missing a newer applicable Solution update"
         $staleResourceIds = @($staleClusters | Where-Object { $_.ClusterResourceId } | Select-Object -ExpandProperty ClusterResourceId)
         if ($SkipStaleAssessmentScan) {
             Write-Host '  -SkipStaleAssessmentScan set: NOT triggering an automatic Check for Updates.'
@@ -540,10 +575,12 @@ function Export-AzLocalClusterUpdateReadinessReport {
     $criticalSum = ($health | Measure-Object -Property CriticalCount -Sum).Sum
     $criticalFindings = if ($criticalSum) { [int]$criticalSum } else { 0 }
     $clustersWithCritical = @($health | Where-Object { [int]$_.CriticalCount -gt 0 }).Count
+    $clustersWithUnknownHealth = @($health | Where-Object { $_.HealthState -in @('No Data', 'Unknown') }).Count
 
     Write-Host ''
     Write-Host "Critical findings      : $criticalFindings"
     Write-Host "Clusters with Critical : $clustersWithCritical"
+    Write-Host "Clusters with no data  : $clustersWithUnknownHealth"
 
     # ---- Step outputs -----------------------------------------------------
     Set-AzLocalPipelineOutput -Name 'not_ready'         -Value ([string]$notReady)
@@ -558,13 +595,16 @@ function Export-AzLocalClusterUpdateReadinessReport {
     # 1. Header tile (one-line status, ASCII-safe brackets)
     $scopeLabel = $Scope
     if ($UpdateRing) { $scopeLabel = "$Scope (UpdateRing = $UpdateRing)" }
-    $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } else { 'OK' }
-    [void]$md.Add("**[$statusWord]** $total cluster(s) assessed | $readyForUpdate Ready for Update | $upToDate Up to Date | $notReady Not Ready for Update | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
+    $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } elseif ($clustersWithUnknownHealth -gt 0) { 'REVIEW' } else { 'OK' }
+    [void]$md.Add("**[$statusWord]** $total cluster(s) assessed | $readyForUpdate Ready for Update | $upToDate Up to Date | $notReady Not Ready for Update | $clustersWithCritical with Critical health failures | $clustersWithUnknownHealth with no health data | Scope: $scopeLabel")
     [void]$md.Add('')
 
     # 2. Action banner
     if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
         [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - the **apply-updates** pipeline is per-cluster scoped.")
+    }
+    elseif ($clustersWithUnknownHealth -gt 0) {
+        [void]$md.Add("> **Review health data**: no Critical health failures were found, but $clustersWithUnknownHealth cluster(s) have no health-check data. Missing data remains non-blocking; confirm those clusters' health before the next apply-updates run.")
     }
     else {
         [void]$md.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with the **apply-updates** pipeline for this ring.')
@@ -593,6 +633,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
     [void]$md.Add(("| {0} | {1} |" -f $iconMap['ActionRequired'], $notReady))
     [void]$md.Add(("| {0} (Clusters with Critical health failures) | {1} |" -f $iconMap['HealthFailure'], $clustersWithCritical))
     [void]$md.Add("| Total Critical findings | $criticalFindings |")
+    [void]$md.Add("| Clusters with no health data (non-blocking) | $clustersWithUnknownHealth |")
     [void]$md.Add('')
 
     # 4. Not-Ready cluster table (blocking findings first)
@@ -948,6 +989,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
             NotReadyCount        = [int]$notReady
             CriticalFindings     = [int]$criticalFindings
             ClustersWithCritical = [int]$clustersWithCritical
+            ClustersWithUnknownHealth = [int]$clustersWithUnknownHealth
             ReadinessRows        = @($readiness)
             HealthRows           = @($health)
             StaleAssessmentCount         = [int]$staleClusters.Count

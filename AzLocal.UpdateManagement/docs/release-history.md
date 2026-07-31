@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.28 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0928) `What's New in v0.9.28` section.
+> **For v0.9.29 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0929) `What's New in v0.9.29` section.
 
 ---
+
+### What's New in v0.9.29
+
+**Config: 1 now turns its existing weekly inventory run into a source-control drift audit, and Update: 4 adds fleet-relative percentages.** After collecting the live estate, Config: 1 compares it with `config/ClusterUpdateRings.csv` and reports new live clusters, source-only clusters, and managed-tag differences through CSV, JSON, JUnit, pipeline summaries, and warning annotations. A missing CSV remains a successful first-run onboarding state. Update: 4's metric table adds a one-decimal Percentage column based on admitted clusters. The development-channel helper also parses GitHub variable JSON locally on Windows and gives an exact WinGet command when `gh` is absent. Public exports increase from 72 to 73 with `Export-AzLocalClusterInventoryDriftReport`; pipeline pins are updated to `0.9.29`. See [CHANGELOG.md](../CHANGELOG.md#0929---2026-07-30) for full details.
 
 ### What's New in v0.9.28
 

@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.28'
+    ModuleVersion = '0.9.29'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -219,6 +219,8 @@
         'Public/Export-AzLocalAuthValidationReport.ps1',
         # Thin-YAML Step.1 (v0.8.5) - Cluster inventory + canonical CSV + operator README + step summary
         'Public/Invoke-AzLocalClusterInventory.ps1',
+        # Config: 1 inventory drift report (v0.9.29) - live/source membership and managed-tag comparison
+        'Public/Export-AzLocalClusterInventoryDriftReport.ps1',
         # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply + JSON sidecar + step summary)
         'Public/Set-AzLocalClusterUpdateRingTagFromCsv.ps1',
         # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (severity scoring + CSV + JUnit + step summary + 6 step outputs)
@@ -319,6 +321,8 @@
         'Export-AzLocalAuthValidationReport',
         # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
         'Invoke-AzLocalClusterInventory',
+        # Config: 1 inventory drift report (v0.9.29) - compares live inventory to config/ClusterUpdateRings.csv
+        'Export-AzLocalClusterInventoryDriftReport',
         # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
         'Set-AzLocalClusterUpdateRingTagFromCsv',
         # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (calls Get-AzLocalUpdateRuns -Latest -PassThru, classifies by per-step + overall elapsed + progress-status, writes CSV + JUnit XML + markdown step summary + 6 step outputs)
@@ -383,6 +387,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.29 - Weekly drift, percentages, policy-aware stale scans, health REVIEW, and timed-pipeline exit handling. Exports 72 -> 73.
+
 ## Version 0.9.28 - ARM recovery, retry correlation, tag-aware idle detection, and large-fleet batching. All 20 pipelines add always-on timing JSON plus opt-in transcripts with bounded ARG/ARM telemetry. Exports 71 -> 72.
 
 ## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).

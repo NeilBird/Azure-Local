@@ -37,17 +37,17 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | End-to-end probe of the federated identity, the Azure RBAC role assignment, and the subscriptions the pipeline identity can read. Also enumerates every Azure Local cluster the identity can see. Emits a JUnit-rendered Authentication / Subscription Scope / Resource Graph Reachability / Cluster Inventory report and exports the full cluster list (`cluster-inventory.csv` + JSON) with UpdateRing tag status so you can detect silent scope drift (a new tenant SP suddenly seeing more or fewer subscriptions or clusters than yesterday) before downstream fleet reports under- or over-count. |
+| **Purpose** | End-to-end probe of the federated identity, Azure RBAC, readable subscriptions, and visible Azure Local clusters. It also compares the generated live inventory with `config/ClusterUpdateRings.csv` by `ResourceId`, reporting live-only, source-only, and managed-tag mismatch drift without modifying Azure. |
 | **Inputs** | `environment` (optional - GitHub Actions only; leave blank to test the branch-scoped federated credential), `module_version` (optional). |
 | **Trigger** | `workflow_dispatch` / **Run pipeline** button, **plus a shipped weekly cron** - GitHub `schedule: cron '17 8 * * 0'` / Azure DevOps `schedules: cron '17 8 * * 0'` (every Sunday at 08:17 UTC), inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. Also run it manually on initial wiring and after every RBAC / federated-credential / subscription change. Edit the cron - or delete it from the customize block - to change the cadence. |
-| **Cmdlets invoked** | None for the core probes (uses the `az` CLI directly for the auth / Resource Graph probes). Pipeline guards (v0.9.12): `Assert-AzLocalAzureSubscriptionAccess` (after login) + `Assert-AzLocalPipelineReport` (after collect). |
-| **Depends on** | None. This is the first pipeline that must run on a freshly-wired identity. |
-| **Artefacts** | `auth-report.xml` (JUnit, one `<testcase>` per probe), `subscriptions.json`, `subscriptions.csv`, markdown step / run summary with the subscription detail table. |
-| **When to run** | First, before importing any of the other nine pipelines. Re-run after every RBAC change, federated-credential change, service-connection change, or subscription move. Re-run monthly as a baseline scope-drift check. |
+| **Cmdlets invoked** | `Export-AzLocalClusterInventoryDriftReport` after the core `az` CLI probes. Pipeline guards: `Assert-AzLocalAzureSubscriptionAccess` (after login) + `Assert-AzLocalPipelineReport` (after collect). |
+| **Depends on** | None. This is the first pipeline that must run on a freshly-wired identity. Committing `config/ClusterUpdateRings.csv` enables drift comparison; until then the drift check reports `NotConfigured` with onboarding guidance. |
+| **Artefacts** | Authentication/inventory reports plus `cluster-inventory-drift.csv`, `cluster-inventory-drift.json`, `cluster-inventory-drift.xml`, and `cluster-inventory-drift-summary.md`. |
+| **When to run** | First, before the other pipelines; after RBAC, federated-credential, service-connection, subscription, or desired-state changes; and on the shipped weekly schedule for drift detection. |
 | **RBAC** | Whatever the pipeline identity has - the probe itself is read-only and intentionally surfaces both over- and under-grants. |
-| **Exit conditions** | Pipeline run is green only when every probe passes. A red run means the identity, its role assignment, or its subscription scope is wrong - downstream pipelines will give nonsense results until this passes. |
+| **Exit conditions** | Authentication and inventory probe failures fail the run. Inventory drift produces warnings and failed JUnit checks for visibility but does not fail the pipeline by default. |
 | **ITSM** | Not supported - this is an identity-only probe with no per-cluster failure surface to dispatch on. |
-| **Introduced** | v0.7.70 (separate auth + inventory); v0.8.85 (merged into Config: 1). |
+| **Introduced** | v0.7.70 (separate auth + inventory); v0.8.85 (merged into Config: 1); v0.9.29 (weekly source-control drift report). |
 
 > **Note**: v0.8.85 consolidates the separate authentication and inventory pipelines into a single `setup-validate-and-inventory.yml` workflow.
 

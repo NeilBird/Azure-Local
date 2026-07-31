@@ -5,6 +5,25 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.29] - 2026-07-30
+
+### Added
+
+- Config: 1 remains scheduled weekly on Sunday at 08:17 UTC and now compares the freshly collected live cluster inventory with `config/ClusterUpdateRings.csv`. The read-only drift report identifies new live clusters missing from source control, source-controlled clusters no longer visible live, and differences in `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and optional `UpdateAuthAccountId` values.
+- The new `Export-AzLocalClusterInventoryDriftReport` cmdlet emits CSV, JSON, JUnit, pipeline-summary, annotation, step-output, and `-PassThru` results. A missing source CSV is a successful `NotConfigured` onboarding state with guidance rather than a pipeline failure; detected drift raises warnings and failed JUnit checks for visibility while both platform publishers remain non-failing.
+- Update: 4's In-Flight Update Monitor metric table adds a `Percentage` column after `Count`, using admitted `Clusters scoped` as the denominator, invariant one-decimal formatting, and `N/A` for zero-cluster scope.
+
+### Changed
+
+- Public exports increase from 72 to 73 with `Export-AzLocalClusterInventoryDriftReport`. Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.29`.
+- Update: 1 reports clusters without health-check data as a separate non-blocking `Unknown` count. Its pipeline summary uses `REVIEW` and avoids the all-clear wording until every cluster has confirmed health data; update eligibility remains unchanged.
+
+### Fixed
+
+- The managed development-channel helper no longer sends a shell-sensitive `--jq` expression through native Windows argument handling when disabling a GitHub candidate pin. It parses `gh variable list --json name` locally and includes the exact WinGet installation command when GitHub CLI is absent.
+- Update: 1 stale-assessment refreshes now honor explicit `allowedUpdateVersions`: disallowed newer Solution updates no longer cause redundant `checkUpdates` calls, while a newer allowed Solution YYMM that Azure has not surfaced still triggers discovery. SBE-only policy entries remain outside the Solution YYMM heuristic.
+- All timed pipeline workloads now clear a handled native-command exit code after successful completion. This prevents GitHub Actions and Azure DevOps from reporting exit code 1 when an `az` fallback was handled, reports and timing telemetry were produced successfully, and no terminating exception occurred. Genuine thrown workload failures still propagate unchanged.
+
 ## [0.9.28] - 2026-07-30
 
 ### Added
