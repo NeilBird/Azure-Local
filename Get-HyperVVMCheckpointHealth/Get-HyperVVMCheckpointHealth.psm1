@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-29
-    Version : 0.2.30
+    Version : 0.2.31
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.30'
+$script:ScriptVersion = '0.2.31'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -1947,6 +1947,8 @@ function Invoke-VMCheckpointAudit {
     $script:VMSectionName     = $null
     $reportFile = $null
     $eventsCsvName = $null
+    $auditedVMId = ''
+    $auditErrorMessage = ''
     $reportTimestamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
     if ($OutputPath) {
         if (-not (Test-Path -LiteralPath $OutputPath)) {
@@ -2046,6 +2048,8 @@ function Invoke-VMCheckpointAudit {
         $markerCsvPath = Join-Path (Split-Path -Parent $reportFile) $markerCsvName
         [pscustomobject]@{
             'Time (UTC)' = ''
+            AuditedVMName = $VMName
+            AuditedVMId = $auditedVMId
             Node         = ''
             Id           = ''
             Level        = 'Info'
@@ -2065,7 +2069,7 @@ function Invoke-VMCheckpointAudit {
             RecoveryDisposition = 'NotApplicable'
             DispositionReason = 'Marker row; no event was assessed.'
             FullMessage  = $Message
-        } | Select-Object 'Time (UTC)', Node, Id, Level, Log, Concern, CollectedAsConcern, VmAttributed, AttributionMethod,
+        } | Select-Object 'Time (UTC)', AuditedVMName, AuditedVMId, Node, Id, Level, Log, Concern, CollectedAsConcern, VmAttributed, AttributionMethod,
             AttributionConfidence, EvidenceScope, CorrelationAnchor, CorrelationWindowStartUtc,
             CorrelationWindowEndUtc, EventClassification, VerdictDriver, IsConfirmingFork,
             RecoveryDisposition, DispositionReason, FullMessage |
@@ -2119,6 +2123,30 @@ function Invoke-VMCheckpointAudit {
     }
     $clusterNodes = $script:ClusterNodesCache
 
+    function Initialize-VMNodeProbeMap {
+        if ($null -ne $script:ProbeVmNodeMap) { return }
+        $script:ProbeVmNodeMap = @{}
+        $script:ProbeVmNodeFailures = [System.Collections.Generic.List[string]]::new()
+        $probeNodes = if ($clusterNodes.Count -gt 0) { $clusterNodes } else { @($LocalNode) }
+        foreach ($node in $probeNodes) {
+            try {
+                if ($node.Split('.')[0] -eq $LocalNode) {
+                    $names = @(Get-VM -ErrorAction Stop | ForEach-Object { [string]$_.Name })
+                } else {
+                    $names = @(Invoke-Command -ComputerName $node -ScriptBlock {
+                        Get-VM -ErrorAction Stop | ForEach-Object { [string]$_.Name }
+                    } -ErrorAction Stop)
+                }
+                foreach ($vmn in $names) {
+                    if ($vmn -and -not $script:ProbeVmNodeMap.ContainsKey($vmn)) { $script:ProbeVmNodeMap[$vmn] = $node }
+                }
+            } catch {
+                [void]$script:ProbeVmNodeFailures.Add([string]$node)
+                Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Enumerate VMs on node (fallback discovery)' -Scope ("Node={0}; Cluster={1}; RequestedVM={2}" -f $node, $ClusterName, $VMName)
+            }
+        }
+    }
+
     # (1a) Preferred: the VM's clustered role names the owner directly (cluster API - no hop).
     # v0.2.14: build the VMName -> OwnerNode map ONCE per run (a single Get-ClusterGroup for the whole
     # cluster) instead of re-querying and filtering per VM - a large saving on big fleets. The hashtable
@@ -2147,36 +2175,25 @@ function Invoke-VMCheckpointAudit {
     # cluster-wide VMName -> node map built ONCE by asking each node LOCALLY for its full VM list (one
     # single hop per node, per run - not per VM). Each probe is a single hop (or local) - never double.
     if (-not $OwningNode) {
-        if ($null -eq $script:ProbeVmNodeMap) {
-            $script:ProbeVmNodeMap = @{}
-            $probeNodes = if ($clusterNodes.Count -gt 0) { $clusterNodes } else { @($LocalNode) }
-            foreach ($node in $probeNodes) {
-                try {
-                    if ($node.Split('.')[0] -eq $LocalNode) {
-                        $names = @(Get-VM -ErrorAction Stop | ForEach-Object { [string]$_.Name })
-                    } else {
-                        $names = @(Invoke-Command -ComputerName $node -ScriptBlock {
-                            Get-VM -ErrorAction Stop | ForEach-Object { [string]$_.Name }
-                        } -ErrorAction Stop)
-                    }
-                    foreach ($vmn in $names) {
-                        if ($vmn -and -not $script:ProbeVmNodeMap.ContainsKey($vmn)) { $script:ProbeVmNodeMap[$vmn] = $node }
-                    }
-                } catch {
-                    Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Enumerate VMs on node (fallback discovery)' -Scope ("Node={0}; Cluster={1}; RequestedVM={2}" -f $node, $ClusterName, $VMName)
-                    # Could not reach this node in a single hop - keep building from the others.
-                }
-            }
-        }
+        Initialize-VMNodeProbeMap
         if ($script:ProbeVmNodeMap.ContainsKey($VMName)) { $OwningNode = [string]$script:ProbeVmNodeMap[$VMName] }
     }
 
     if (-not $OwningNode) {
-        $notFoundReason = "VM '$VMName' was not found on any node of cluster '$ClusterName'; event collection was not attempted."
+        $failedProbeCount = @($script:ProbeVmNodeFailures).Count
+        $notFoundReason = if ($failedProbeCount -gt 0) {
+            "VM '$VMName' was not found on successfully queried nodes of cluster '$ClusterName'; $failedProbeCount node inventory query or queries failed, so cluster-wide absence is unverified; event collection was not attempted."
+        } else {
+            "VM '$VMName' was not found on any node of cluster '$ClusterName'; event collection was not attempted."
+        }
         Write-Section 'RESULT: NOT FOUND - this VM was not fully assessed. Do not treat it as healthy based on this report.'
         Write-AuditReportLine ("  Input VM name: {0}" -f $VMName)
         Write-AuditReportLine ("  Cluster: {0}" -f $ClusterName)
-        Write-AuditReportLine ("  Reason: VM was not found on any cluster node.")
+        if ($failedProbeCount -gt 0) {
+            Write-AuditReportLine ("  Reason: VM was not found on successfully queried nodes; {0} node inventory query or queries failed, so cluster-wide absence is unverified." -f $failedProbeCount)
+        } else {
+            Write-AuditReportLine "  Reason: VM was not found on any cluster node."
+        }
         Write-AuditReportLine "  Event collection was not attempted for the missing VM."
         $eventsCsvName = Write-VMEventsMarkerCsv -Message $notFoundReason
         if ($eventsCsvName) {
@@ -2252,8 +2269,17 @@ function Invoke-VMCheckpointAudit {
         }
     } -ArgumentList $VMName
     if (-not $vm) {
-        Write-AuditReportLine "VM '$VMName' could not be read on owning node '$OwningNode'."
-        return (New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail 'VM object could not be read on the owning node.')
+        Initialize-VMNodeProbeMap
+        $foundNode = if ($script:ProbeVmNodeMap.ContainsKey($VMName)) { [string]$script:ProbeVmNodeMap[$VMName] } else { '' }
+        if ($foundNode -and $foundNode.Equals($OwningNode, [StringComparison]::OrdinalIgnoreCase)) { $foundNode = '' }
+        $absence = Get-ClusterRoleVMAbsenceAssessment -RoleOwner $OwningNode -FoundNode $foundNode `
+            -FailedNodeCount @($script:ProbeVmNodeFailures).Count
+        Write-Section 'RESULT: ERROR - clustered role and Hyper-V VM inventory are inconsistent.'
+        Write-AuditReportLine ("  Cluster role owner: {0}" -f $OwningNode)
+        Write-AuditReportLine ("  Cluster-wide VM verification: {0}" -f $absence.Category)
+        Write-AuditReportLine ("  {0}" -f $absence.Detail)
+        Write-AuditReportLine "  No checkpoint, disk, Replica, VSS, or event conclusion was produced for this VM."
+        return (New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail $absence.Detail)
     }
     # Use Hyper-V's canonical VM-name casing for successful results and artifacts. Preserve the
     # operator-supplied name for NOT FOUND / ERROR rows where no authoritative VM object exists.
@@ -2412,6 +2438,9 @@ function Invoke-VMCheckpointAudit {
                 ChainError  = [string]$chainReport.Error
                 TerminalType = [string]$chainReport.TerminalType
                 DepthLimitReached = [bool]$chainReport.DepthLimitReached
+                TopologyComplete = [bool]$chainReport.TopologyComplete
+                MetadataComplete = [bool]$chainReport.MetadataComplete
+                MetadataErrors = @($chainReport.MetadataErrors)
             }
         }
     } -ArgumentList $VMName, $chainCollectorDefinition)
@@ -2426,6 +2455,8 @@ function Invoke-VMCheckpointAudit {
                 SizeGB = $null; ChainDepth = 0; CheckpointCount = 0; AnyStale = $false; Chain = $chain
                 ChainComplete = [bool]$rd.Complete; ChainError = [string]$rd.ChainError; FailurePath = [string]$rd.FailurePath
                 TerminalType = [string]$rd.TerminalType; DepthLimitReached = [bool]$rd.DepthLimitReached
+                TopologyComplete = [bool]$rd.TopologyComplete; MetadataComplete = [bool]$rd.MetadataComplete
+                MetadataErrors = @($rd.MetadataErrors)
             })
             continue
         }
@@ -2449,9 +2480,14 @@ function Invoke-VMCheckpointAudit {
             FailurePath     = [string]$rd.FailurePath
             TerminalType    = [string]$rd.TerminalType
             DepthLimitReached = [bool]$rd.DepthLimitReached
+            TopologyComplete = [bool]$rd.TopologyComplete
+            MetadataComplete = [bool]$rd.MetadataComplete
+            MetadataErrors  = @($rd.MetadataErrors)
         })
     }
     $incompleteChains = @($diskReports | Where-Object { -not $_.ChainComplete })
+    $topologyIncompleteChains = @($incompleteChains | Where-Object { -not $_.TopologyComplete })
+    $metadataIncompleteChains = @($incompleteChains | Where-Object { $_.TopologyComplete -and -not $_.MetadataComplete })
     $hasIncompleteChain = $incompleteChains.Count -gt 0
     $chainLayerCount = (@($diskReports | ForEach-Object { [int]$_.ChainDepth }) | Measure-Object -Sum).Sum
     if (-not $chainLayerCount) { $chainLayerCount = 0 }
@@ -2489,10 +2525,17 @@ function Invoke-VMCheckpointAudit {
         }
         Write-AuditReportLine ("  Chain Size (GB): {0} (total across all {1} layer(s))" -f $d.SizeGB, $d.ChainDepth)
         Write-AuditReportLine ("  Chain Complete : {0}" -f $(if ($d.ChainComplete) { 'YES' } else { 'NO' }))
+        Write-AuditReportLine ("  Chain Topology : {0}" -f $(if ($d.TopologyComplete) { 'COMPLETE' } else { 'INCOMPLETE' }))
+        Write-AuditReportLine ("  File Metadata  : {0}" -f $(if ($d.MetadataComplete) { 'COMPLETE' } else { 'INCOMPLETE' }))
         Write-AuditReportLine ("  Terminal Type  : {0}" -f $(if ($d.TerminalType) { $d.TerminalType } else { '(not reached)' }))
         if (-not $d.ChainComplete) {
-            Write-Alert ("  Chain read failed at '{0}': {1}" -f $d.FailurePath, $d.ChainError) -Level Critical
-            Write-Alert "  This disk's parent chain is incomplete; do not treat its layer counts as authoritative." -Level Critical
+            if (-not $d.TopologyComplete) {
+                Write-Alert ("  Chain read failed at '{0}': {1}" -f $d.FailurePath, $d.ChainError) -Level Critical
+                Write-Alert "  This disk's parent chain is incomplete; do not treat its layer counts as authoritative." -Level Critical
+            } else {
+                Write-Alert ("  File metadata read failed at '{0}': {1}" -f $d.FailurePath, $d.ChainError) -Level Critical
+                Write-Alert "  Parent topology and layer counts were resolved, but file timestamps are incomplete; do not treat age or stale-layer conclusions as authoritative." -Level Critical
+            }
         }
         if ($top -and $top.Created) {
             $topCheckpointAge = [math]::Round(([DateTime]::UtcNow - $top.Created).TotalHours, 1)
@@ -3110,6 +3153,7 @@ function Invoke-VMCheckpointAudit {
     $workerEvents        = @()
     $vmAttributedEvents  = @()
     $vmId                = [string]$vm.VMId
+    $auditedVMId         = $vmId
     $eventCollectionStatus = [pscustomobject]@{
         Status = 'Skipped'; Error = ''; SourceNode = $OwningNode; AttemptedUtc = $null; AttemptCount = 0; ChannelStatus = @()
     }
@@ -3236,8 +3280,14 @@ function Invoke-VMCheckpointAudit {
         # Derive THIS VM's view from the cached node set. Structured GUID/name evidence is exact;
         # bounded friendly-name fallback is retained with explicit low confidence.
         $workerEvents = $null
+        $candidateEvents = @()
         if ($null -ne $cachedNodeEvents) {
-            [object[]]$workerEvents = @($cachedNodeEvents | ForEach-Object {
+            if (-not $script:NodeEventIdentityIndex.ContainsKey($nodeCacheKey)) {
+                $script:NodeEventIdentityIndex[$nodeCacheKey] = New-HyperVEventIdentityIndex -Events $cachedNodeEvents
+            }
+            $candidateEvents = @(Select-HyperVEventsForVM -Index $script:NodeEventIdentityIndex[$nodeCacheKey] `
+                -VMName $VMName -VMId $vmId)
+            [object[]]$workerEvents = @($candidateEvents | ForEach-Object {
                 $attribution = Resolve-HyperVEventAttribution -Message ([string]$_.FullMessage) -VMName $VMName -VMId $vmId
                 $signalAssessment = Get-HyperVEventSignalAssessment -EventId ([int]$_.Id) -Log ([string]$_.Log) `
                     -Message ([string]$_.FullMessage) -Policy $script:EventPolicy
@@ -3261,27 +3311,29 @@ function Invoke-VMCheckpointAudit {
             $workerEvents = $null
         }
         Add-TelemetryEntry -Step '1.10.50.20' -Phase 'Per-VM event attribution' `
-            -Detail ("VM={0}; Rows={1}; Attributed={2}; HighConfidence={3}; LowConfidence={4}; Confirming={5}; Leading={6}" -f `
-                $VMName, @($workerEvents).Count, @($workerEvents | Where-Object { $_.VmAttributed }).Count,
+            -Detail ("VM={0}; NodeRows={1}; Candidates={2}; Attributed={3}; HighConfidence={4}; LowConfidence={5}; Confirming={6}; Leading={7}" -f `
+                $VMName, @($cachedNodeEvents).Count, @($candidateEvents).Count, @($workerEvents | Where-Object { $_.VmAttributed }).Count,
                 @($workerEvents | Where-Object { $_.VmAttributed -and $_.AttributionConfidence -eq 'High' }).Count,
                 @($workerEvents | Where-Object { $_.VmAttributed -and $_.AttributionConfidence -eq 'Low' }).Count,
                 @($workerEvents | Where-Object { $_.VmAttributed -and $_.IsConfirmingFork }).Count,
                 @($workerEvents | Where-Object { $_.VmAttributed -and $_.SignalRole -eq 'Leading' }).Count) `
             -StartUtc $eventAttributionStart -EndUtc (Get-TelemetryNow)
 
-        if ($workerEvents -and $workerEvents.Count -gt 0) {
+        if ($null -ne $cachedNodeEvents -and $cachedNodeEvents.Count -gt 0) {
             $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage)
+            $mergeCompletionEvents = @($workerEvents | Where-Object { $script:EventPolicy.MergeSuccessIds -contains [int]$_.Id })
             foreach ($eventRow in $workerEvents) {
-                $eventDisposition = Get-HyperVEventCsvDisposition -Event $eventRow -Events $workerEvents -Policy $script:EventPolicy
+                $eventDisposition = Get-HyperVEventCsvDisposition -Event $eventRow -Events $workerEvents `
+                    -Policy $script:EventPolicy -CompletionEvents $mergeCompletionEvents
                 Add-Member -InputObject $eventRow -NotePropertyName EventClassification -NotePropertyValue $eventDisposition.EventClassification -Force
                 Add-Member -InputObject $eventRow -NotePropertyName VerdictDriver -NotePropertyValue ([bool]$eventDisposition.VerdictDriver) -Force
                 Add-Member -InputObject $eventRow -NotePropertyName RecoveryDisposition -NotePropertyValue $eventDisposition.RecoveryDisposition -Force
                 Add-Member -InputObject $eventRow -NotePropertyName DispositionReason -NotePropertyValue $eventDisposition.DispositionReason -Force
             }
-            $concernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' })
+            $concernEvents     = @($cachedNodeEvents | Where-Object { $_.Concern -eq 'YES' })
             $eventConcernCount = $concernEvents.Count
             # v0.2.12: split concern events into those attributable to THIS VM vs node-wide (other VMs).
-            $vmConcernEvents     = @($concernEvents | Where-Object { $_.VmAttributed })
+            $vmConcernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' -and $_.VmAttributed })
             $vmEventConcernCount = $vmConcernEvents.Count
 
             # Discover OTHER VMs referenced in this node's HIGH-RISK signals (background disk merge
@@ -3332,7 +3384,7 @@ function Invoke-VMCheckpointAudit {
             if ($removedNotes.Count -gt 0) { Write-AuditReportLine "" }
             Write-AuditReportLine ("  {0} event(s) attributable to this VM ({1} shown after collapsing duplicates); {2} collected as concern." -f $txtVmEvents.Count, $displayRows.Count, $vmEventConcernCount)
             Write-AuditReportLine "  Node-wide event context is summarized below and exported separately; it is not listed in this VM table."
-            Write-AuditReportLine ("  Node-wide context: {0} other event(s), including {1} collected as concern for other VMs or no VM." -f ($workerEvents.Count - $txtVmEvents.Count), ($eventConcernCount - $vmEventConcernCount))
+            Write-AuditReportLine ("  Node-wide context: {0} other event(s), including {1} collected as concern for other VMs or no VM." -f (@($cachedNodeEvents).Count - $txtVmEvents.Count), ($eventConcernCount - $vmEventConcernCount))
             Write-AuditReportLine  "  Informational lifecycle events (VM started, checkpoint completed, merge started / finished OK)"
             Write-AuditReportLine  "  attributable to this VM are listed for context but are not verdict drivers by themselves."
         } else {
@@ -3614,7 +3666,7 @@ function Invoke-VMCheckpointAudit {
             # metacharacter ([ ] * ?) would fail to match under -like and mis-classify the orphan.
             $stuckEvt = @($concernEvents | Where-Object { ($mergeFailIds -contains [int]$_.Id) -and $leaf -and ([string]$_.FullMessage).ToLower().Contains($leaf.ToLower()) })
             # A 16220 delete-attempt lock for THIS VM that names THIS orphan's exact file path.
-            $lockEvt  = @($concernEvents | Where-Object { ([int]$_.Id -eq 16220) -and $_.VmAttributed -and $leaf -and ([string]$_.FullMessage).ToLower().Contains($leaf.ToLower()) } | Sort-Object 'Time (UTC)')
+            $lockEvt  = @($vmConcernEvents | Where-Object { ([int]$_.Id -eq 16220) -and $leaf -and ([string]$_.FullMessage).ToLower().Contains($leaf.ToLower()) } | Sort-Object 'Time (UTC)')
             $cls = if ($stuckEvt.Count -gt 0) { 'StuckMerge' } elseif ($lockEvt.Count -gt 0) { 'TransientDeleteLockObserved' } elseif ($isLiveMount) { 'LiveMount' } else { 'Leftover' }
             [pscustomobject]@{
                 Orphan        = $o
@@ -4439,7 +4491,9 @@ function Invoke-VMCheckpointAudit {
         OldestTimestampDeltaHours = $stalenessAssessment.OldestTimestampDeltaHours
         ChainComplete        = (-not $hasIncompleteChain)
         IncompleteChainCount = $incompleteChains.Count
-        IncompleteChains     = @($incompleteChains | ForEach-Object { [pscustomobject]@{ Disk = [string]$_.Attached; FailurePath = [string]$_.FailurePath; Error = [string]$_.ChainError; TerminalType = [string]$_.TerminalType; DepthLimitReached = [bool]$_.DepthLimitReached } })
+        TopologyIncompleteChainCount = $topologyIncompleteChains.Count
+        MetadataIncompleteChainCount = $metadataIncompleteChains.Count
+        IncompleteChains     = @($incompleteChains | ForEach-Object { [pscustomobject]@{ Disk = [string]$_.Attached; FailurePath = [string]$_.FailurePath; Error = [string]$_.ChainError; TerminalType = [string]$_.TerminalType; DepthLimitReached = [bool]$_.DepthLimitReached; TopologyComplete = [bool]$_.TopologyComplete; MetadataComplete = [bool]$_.MetadataComplete } })
         AttachedVhdLayers    = @($diskReports | ForEach-Object {
             $diskReport = $_
             $diskChain = @($diskReport.Chain)
@@ -4696,6 +4750,7 @@ function Invoke-VMCheckpointAudit {
         # multi-VM run continues with the next VM instead of aborting the whole batch. Still emit a
         # per-VM result object (Recommendation = 'ERROR') so a -PassThru fleet run has a row per VM.
         Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Per-VM audit' -Scope ("VM={0}; Owner={1}; Source={2}" -f $VMName, $OwningNode, $script:CurrentVMSource)
+        $auditErrorMessage = $_.Exception.Message
         Write-Alert "  ERROR auditing '$VMName': $($_.Exception.Message)" -Level Critical
         New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail $_.Exception.Message
     }
@@ -4708,6 +4763,22 @@ function Invoke-VMCheckpointAudit {
             $script:VMSectionStartUtc = $null
         }
         if ($vmAuditStart) { Add-TelemetryEntry -Step '1.10' -Phase 'VM audit (total)' -Detail "$VMName [$script:CurrentVMSource]" -StartUtc $vmAuditStart -EndUtc (Get-TelemetryNow) }
+        if ($OutputPath -and $reportFile) {
+            $eventsCsvPath = if ($eventsCsvName) { Join-Path (Split-Path -Parent $reportFile) $eventsCsvName } else { $null }
+            if (-not $eventsCsvPath -or -not (Test-Path -LiteralPath $eventsCsvPath)) {
+                $markerMessage = if ($auditErrorMessage) {
+                    'The VM audit ended before event evidence could be exported. Review the per-VM report and debug log for the collection error.'
+                } else {
+                    'No event CSV was produced during the VM audit; this marker preserves the expected artifact set.'
+                }
+                try {
+                    $eventsCsvName = Write-VMEventsMarkerCsv -Message $markerMessage
+                } catch {
+                    Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write fallback VM events marker CSV' `
+                        -Scope ("VM={0}; Report={1}" -f $VMName, $reportFile)
+                }
+            }
+        }
         # v0.2.14: remoting sessions are POOLED per owning node ($script:SessionByNode) and reused
         # across VMs; they are disposed together in the end block. Just drop this VM's reference here
         # (do NOT close the pooled session - the next VM on this node reuses it).
@@ -4762,6 +4833,7 @@ Add-TelemetryEntry -Step '1.05.07' -Phase 'Checkpoint health policy initializati
 # v0.2.14: per-node Worker/VMMS event cache (keyed 'node|lookbackHours'). The event scan is node-wide,
 # so caching it means each node is read ONCE per run rather than once per VM on that node.
 $script:NodeEventCache = @{}
+$script:NodeEventIdentityIndex = @{}
 $eventPolicyStart = Get-TelemetryNow
 $script:EventPolicy = Get-HyperVEventPolicy
 Add-TelemetryEntry -Step '1.05.10' -Phase 'Event policy initialization' `
@@ -4782,6 +4854,7 @@ $script:GroupOwnerByVm      = $null   # hashtable VMName -> OwnerNode (Get-Clust
 $script:ClusterGroupByVm    = $null   # hashtable VMName -> role projection (same Get-ClusterGroup query)
 $script:AnalyticStatusCache = $null   # cluster-wide Hyper-V-VMMS/Analytic status rows (once)
 $script:ProbeVmNodeMap      = $null   # hashtable VMName -> node for non-clustered VMs (per-node Get-VM, once)
+$script:ProbeVmNodeFailures = $null   # node names whose cached all-node VM inventory query failed
 $script:SessionByNode       = @{}     # pooled PSSession per owning node, reused across VMs, disposed in end block
 $script:HostVersionsByNode  = @{}     # hashtable node -> supported VM config versions (Get-VMHostSupportedVersion, once per node)
 $script:ClusterCsvCache     = $null   # Get-ClusterSharedVolume result (once)

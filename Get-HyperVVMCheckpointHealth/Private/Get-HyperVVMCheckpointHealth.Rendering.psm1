@@ -1028,7 +1028,13 @@ $eventFloodExecSummaryLi
         } else {
             ConvertTo-HtmlText $replicaProductText
         }
-        $chainCompleteText = if ($rd.PSObject.Properties['ChainComplete'] -and $rd.ChainComplete) { 'Complete' } elseif ($rd.PSObject.Properties['IncompleteChainCount']) { "INCOMPLETE ($($rd.IncompleteChainCount) disk(s) unreadable)" } else { 'Unavailable' }
+        $chainCompleteText = if ($rd.PSObject.Properties['ChainComplete'] -and $rd.ChainComplete) {
+            'Complete'
+        } elseif ($rd.PSObject.Properties['IncompleteChainCount']) {
+            $topologyIncompleteCount = if ($rd.PSObject.Properties['TopologyIncompleteChainCount']) { [int]$rd.TopologyIncompleteChainCount } else { [int]$rd.IncompleteChainCount }
+            $metadataIncompleteCount = if ($rd.PSObject.Properties['MetadataIncompleteChainCount']) { [int]$rd.MetadataIncompleteChainCount } else { 0 }
+            "INCOMPLETE ($topologyIncompleteCount topology; $metadataIncompleteCount file metadata)"
+        } else { 'Unavailable' }
         $chainCompleteHtml = if ($chainCompleteText -eq 'Complete') { $chainCompleteText } else { "<span class='warnval'>$(ConvertTo-HtmlText $chainCompleteText)</span>" }
         $staleAttachedCount = if ($rd.PSObject.Properties['StaleAttachedLayerCount']) { [int]$rd.StaleAttachedLayerCount } else { 0 }
         $staleAttachedHtml = if ($staleAttachedCount -gt 0) { "<span class='warnval'>$staleAttachedCount</span>" } else { '0' }

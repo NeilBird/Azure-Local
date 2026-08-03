@@ -19,6 +19,9 @@ function Get-VHDChainReport {
     $errorText = $null
     $terminalType = $null
     $depthLimitReached = $false
+    $topologyComplete = $false
+    $metadataComplete = $true
+    $metadataErrors = [System.Collections.Generic.List[string]]::new()
 
     while ($currentPath) {
         if ($chain.Count -ge $MaximumDepth) {
@@ -44,7 +47,14 @@ function Get-VHDChainReport {
         }
 
         $file = $null
-        try { $file = & $GetItemCommand $currentPath } catch { }
+        try {
+            $file = & $GetItemCommand $currentPath
+            if (-not $file) { throw "Get-Item returned no data for '$currentPath'." }
+        } catch {
+            $metadataComplete = $false
+            [void]$metadataErrors.Add($_.Exception.Message)
+            if (-not $failurePath) { $failurePath = $currentPath }
+        }
         [void]$chain.Add([pscustomobject]@{
             Path      = [string]$vhd.Path
             Type      = [string]$vhd.VhdType
@@ -60,7 +70,11 @@ function Get-VHDChainReport {
                 $failurePath = [string]$vhd.Path
                 $errorText = "Differencing layer '$($vhd.Path)' has no parent path; a terminal base disk was not reached."
             } else {
-                $complete = $true
+                $topologyComplete = $true
+                $complete = $metadataComplete
+                if (-not $metadataComplete -and -not $errorText) {
+                    $errorText = $metadataErrors -join '; '
+                }
             }
             break
         }
@@ -74,6 +88,9 @@ function Get-VHDChainReport {
         Error       = $errorText
         TerminalType = $terminalType
         DepthLimitReached = $depthLimitReached
+        TopologyComplete = $topologyComplete
+        MetadataComplete = $metadataComplete
+        MetadataErrors = $metadataErrors.ToArray()
     }
 }
 

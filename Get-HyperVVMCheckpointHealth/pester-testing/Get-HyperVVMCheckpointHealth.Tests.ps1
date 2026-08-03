@@ -167,7 +167,8 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Not -Match '\$script:NodeEventCache\[\$nodeCacheKey\]\s*=\s*\$null'
         $script:Source | Should -Match 'EventCollectionStatus\s*=\s*\[pscustomobject\]'
         $script:Source | Should -Match '\$cachedNodeEvents\s*=\s*\$null\s*if\s*\(\$cachedNodeSnapshot\.Status\s*-eq\s*''Success''\)\s*\{\s*\[object\[\]\]\$cachedNodeEvents\s*=\s*@\(\$cachedNodeSnapshot\.Rows\)'
-        $script:Source | Should -Match '\$workerEvents\s*=\s*\$null\s*if\s*\(\$null\s*-ne\s*\$cachedNodeEvents\)\s*\{\s*\[object\[\]\]\$workerEvents\s*=\s*@\('
+        $script:Source | Should -Match '\$workerEvents\s*=\s*\$null\s*\$candidateEvents\s*=\s*@\(\)\s*if\s*\(\$null\s*-ne\s*\$cachedNodeEvents\)\s*\{'
+        $script:Source | Should -Match '\$candidateEvents\s*=\s*@\(Select-HyperVEventsForVM.+\s+-VMName \$VMName -VMId \$vmId\)\s*\[object\[\]\]\$workerEvents\s*=\s*@\(\$candidateEvents'
     }
 
     It 'finalizes complete PassThru automation rows only after run artifacts exist' {
@@ -445,11 +446,13 @@ Describe 'Per-VM event marker CSV contract' {
         $row = Import-Csv -LiteralPath (Join-Path $TestDrive $csvName)
 
         @($row.PSObject.Properties.Name) | Should -Be @(
-            'Time (UTC)', 'Node', 'Id', 'Level', 'Log', 'Concern', 'CollectedAsConcern', 'VmAttributed',
+            'Time (UTC)', 'AuditedVMName', 'AuditedVMId', 'Node', 'Id', 'Level', 'Log', 'Concern', 'CollectedAsConcern', 'VmAttributed',
             'AttributionMethod', 'AttributionConfidence', 'EvidenceScope', 'CorrelationAnchor',
             'CorrelationWindowStartUtc', 'CorrelationWindowEndUtc', 'EventClassification',
             'VerdictDriver', 'IsConfirmingFork', 'RecoveryDisposition', 'DispositionReason', 'FullMessage'
         )
+        $row.AuditedVMName | Should -Be 'MISSING-VM'
+        $row.AuditedVMId | Should -BeNullOrEmpty
         $row.Level | Should -Be 'Info'
         $row.FullMessage | Should -Match 'was not found; event collection was not attempted'
         $row.EventClassification | Should -Be 'Informational'
@@ -464,6 +467,22 @@ Describe 'Per-VM event marker CSV contract' {
         $source | Should -Match 'Event collection was not attempted for the missing VM\.'
         $source | Should -Match "Rerun: Get-HyperVVMCheckpointHealth -VMName '<confirmed-name>' -Cluster"
         $source | Should -Match 'No checkpoint, disk, Replica, VSS, or event conclusion was produced for this VM\.'
+    }
+
+    It 'does not claim cluster-wide absence when a node inventory query failed' {
+        $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $source | Should -Match '\$failedProbeCount\s*=\s*@\(\$script:ProbeVmNodeFailures\)\.Count'
+        $source | Should -Match 'not found on successfully queried nodes.+cluster-wide absence is unverified'
+        $source | Should -Match 'else \{\s*"VM ''\$VMName'' was not found on any node'
+    }
+
+    It 'repairs a missing per-VM Events CSV even when the audit exits early' {
+        $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $source | Should -Match '(?s)finally \{.*?if \(\$OutputPath -and \$reportFile\).*?Test-Path -LiteralPath \$eventsCsvPath.*?Write-VMEventsMarkerCsv -Message \$markerMessage'
+        $source | Should -Match 'The VM audit ended before event evidence could be exported\.'
+        $source | Should -Match 'Add-AuditDiagnostic -ErrorRecord \$_ -Operation ''Write fallback VM events marker CSV'''
     }
 }
 
@@ -485,6 +504,8 @@ Describe 'Structured historic event evidence contract' {
             -VMName 'ContosoVM01' -VMId '11111111-1111-1111-1111-111111111111' -DefaultNode 'Node02')
 
         $rows.Count | Should -Be 1
+        $rows[0].AuditedVMName | Should -Be 'ContosoVM01'
+        $rows[0].AuditedVMId | Should -Be '11111111-1111-1111-1111-111111111111'
         $rows[0].Node | Should -Be 'Node01'
         $rows[0].VmAttributed | Should -BeTrue
         $rows[0].AttributionMethod | Should -Be 'StructuredGuid'
@@ -899,8 +920,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.30 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.30'
+    It 'imports a valid 0.2.31 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.31'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -2236,7 +2257,8 @@ Describe 'Synthetic HTML example report' {
     }
 
     It 'contains only synthetic identities and approved UserStorage paths' {
-        $script:ExampleHtml | Should -Not -Match '(?i)Legal (?:&|&amp;) General|KWDRPT|GBKOS|ALCSS'
+        $script:ExampleHtml | Should -Match 'Cluster <b>contoso01</b>'
+        [regex]::Matches($script:ExampleHtml, '(?i)\bTestVM(?:0[1-9]|1[0-9]|20)\b').Count | Should -BeGreaterThan 0
         $script:ExampleHtml | Should -Not -Match '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'
         $paths = @([regex]::Matches($script:ExampleHtml, '(?i)C:\\ClusterStorage\\[^<\s''"]+') | ForEach-Object {
                 [System.Net.WebUtility]::HtmlDecode($_.Value)
@@ -2331,20 +2353,44 @@ Describe 'VHD chain traversal' {
         Import-Module $modulePath -Force
     }
 
-    It 'marks a differencing chain complete only when it reaches a base disk' {
+    It 'marks a differencing chain complete only when it reaches a base disk with readable metadata' {
+        $vhdByPath = @{
+            'C:\TEST\active.avhdx' = [pscustomobject]@{ Path = 'C:\TEST\active.avhdx'; VhdType = 'Differencing'; ParentPath = 'C:\TEST\base.vhdx'; FileSize = 10GB }
+            'C:\TEST\base.vhdx' = [pscustomobject]@{ Path = 'C:\TEST\base.vhdx'; VhdType = 'Dynamic'; ParentPath = $null; FileSize = 20GB }
+        }
+        $fileByPath = @{
+            'C:\TEST\active.avhdx' = [pscustomobject]@{ Length = 10GB; CreationTimeUtc = [datetime]'2026-01-01'; LastWriteTimeUtc = [datetime]'2026-01-02' }
+            'C:\TEST\base.vhdx' = [pscustomobject]@{ Length = 20GB; CreationTimeUtc = [datetime]'2025-01-01'; LastWriteTimeUtc = [datetime]'2026-01-02' }
+        }
+        $result = Get-VHDChainReport -Path 'C:\TEST\active.avhdx' `
+            -GetVhdCommand { param($path) $vhdByPath[$path] } `
+            -GetItemCommand { param($path) $fileByPath[$path] }
+
+        $result.Complete | Should -BeTrue
+        $result.MetadataComplete | Should -BeTrue
+        $result.Chain.Count | Should -Be 2
+        $result.TerminalType | Should -Be 'Dynamic'
+        $result.DepthLimitReached | Should -BeFalse
+        $result.Error | Should -BeNullOrEmpty
+    }
+
+    It 'traverses to the base disk but marks the chain incomplete when file metadata is unavailable' {
         $vhdByPath = @{
             'C:\TEST\active.avhdx' = [pscustomobject]@{ Path = 'C:\TEST\active.avhdx'; VhdType = 'Differencing'; ParentPath = 'C:\TEST\base.vhdx'; FileSize = 10GB }
             'C:\TEST\base.vhdx' = [pscustomobject]@{ Path = 'C:\TEST\base.vhdx'; VhdType = 'Dynamic'; ParentPath = $null; FileSize = 20GB }
         }
         $result = Get-VHDChainReport -Path 'C:\TEST\active.avhdx' `
             -GetVhdCommand { param($path) $vhdByPath[$path] } `
-            -GetItemCommand { param($path) $null }
+            -GetItemCommand { param($path) throw 'Synthetic metadata read failure' }
 
-        $result.Complete | Should -BeTrue
+        $result.Complete | Should -BeFalse
+        $result.TopologyComplete | Should -BeTrue
+        $result.MetadataComplete | Should -BeFalse
         $result.Chain.Count | Should -Be 2
         $result.TerminalType | Should -Be 'Dynamic'
-        $result.DepthLimitReached | Should -BeFalse
-        $result.Error | Should -BeNullOrEmpty
+        $result.FailurePath | Should -Be 'C:\TEST\active.avhdx'
+        $result.Error | Should -Match 'Synthetic metadata read failure'
+        $result.MetadataErrors.Count | Should -Be 2
     }
 
     It 'surfaces an unreadable parent as an incomplete chain' {
@@ -2709,6 +2755,25 @@ Describe 'Structured Hyper-V event attribution' {
         Import-Module $assessmentModulePath -Force
     }
 
+    It 'selects the same rows through the identity index as direct attribution' {
+        $rows = @(
+            [pscustomobject]@{ RecordId = 1; FullMessage = "Virtual machine ID {$($script:TestVmId)} failed." }
+            [pscustomobject]@{ RecordId = 2; FullMessage = "Virtual machine 'APP01' failed." }
+            [pscustomobject]@{ RecordId = 3; FullMessage = 'Checkpoint operation failed for APP01.' }
+            [pscustomobject]@{ RecordId = 4; FullMessage = "Virtual machine ID {22222222-2222-2222-2222-222222222222}; Virtual machine 'APP01'." }
+            [pscustomobject]@{ RecordId = 5; FullMessage = 'Checkpoint operation failed for APP010.' }
+        )
+        $index = New-HyperVEventIdentityIndex -Events $rows
+        $indexed = @(Select-HyperVEventsForVM -Index $index -VMName 'APP01' -VMId $script:TestVmId)
+        $expected = @($rows | Where-Object {
+            (Resolve-HyperVEventAttribution -Message $_.FullMessage -VMName 'APP01' -VMId $script:TestVmId).Attributed
+        })
+
+        @($indexed.RecordId | Sort-Object) | Should -Be @($expected.RecordId | Sort-Object)
+        @($indexed.RecordId | Sort-Object) | Should -Be @(1, 2, 3)
+        $index.TotalCount | Should -Be 5
+    }
+
     It 'does not attribute a prefix VM name to a longer structured name' {
         $result = Resolve-HyperVEventAttribution -Message "Virtual machine 'APP010' failed." -VMName 'APP01' -VMId $script:TestVmId
         $result.Attributed | Should -BeFalse
@@ -2770,6 +2835,41 @@ Describe 'Hyper-V event signal taxonomy' {
         $result = Get-HyperVEventSignalAssessment -EventId 19100 -Log 'VMMS' -Message 'Merge failed with 0x80070020.' -Policy $script:TestEventPolicy
         $result.Role | Should -Be 'Operational'
         $result.IsConfirmingFork | Should -BeFalse
+    }
+}
+
+Describe 'Cluster role without readable Hyper-V VM' {
+    BeforeAll {
+        $assessmentModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1'
+        Import-Module $assessmentModulePath -Force
+    }
+
+    It 'identifies a stale cluster role candidate when every node was checked' {
+        $result = Get-ClusterRoleVMAbsenceAssessment -RoleOwner 'NODE-A'
+
+        $result.Category | Should -Be 'StaleClusterRoleCandidate'
+        $result.Detail | Should -Match 'deleted in Hyper-V but its Failover Clustering role is not removed'
+    }
+
+    It 'identifies a role owner mismatch when the VM is found on another node' {
+        $result = Get-ClusterRoleVMAbsenceAssessment -RoleOwner 'NODE-A' -FoundNode 'NODE-B'
+
+        $result.Category | Should -Be 'OwnerMismatch'
+        $result.Detail | Should -Match "records owner 'NODE-A'.*found on 'NODE-B'"
+    }
+
+    It 'does not claim a stale role when one or more nodes could not be queried' {
+        $result = Get-ClusterRoleVMAbsenceAssessment -RoleOwner 'NODE-A' -FailedNodeCount 2
+
+        $result.Category | Should -Be 'VerificationIncomplete'
+        $result.Detail | Should -Match '2 node\(s\) could not be queried'
+        $result.Detail | Should -Not -Match 'role is not removed'
+    }
+
+    It 'runs the cached all-node probe after Get-VM fails on the role owner' {
+        $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $source | Should -Match '(?s)if \(-not \$vm\) \{\s*Initialize-VMNodeProbeMap.*Get-ClusterRoleVMAbsenceAssessment'
     }
 }
 
@@ -2849,6 +2949,18 @@ Describe 'Hyper-V operation recovery correlation' {
         $context.EventClassification | Should -Be 'Low-signal'
         $context.VerdictDriver | Should -BeFalse
         $context.RecoveryDisposition | Should -Be 'ContextOnly'
+    }
+
+    It 'uses supplied completion events without changing the recovery decision' {
+        $policy = Get-HyperVEventPolicy
+        $failure = [pscustomobject]@{ Id = 19100; 'Time (UTC)' = '2026-01-01 10:00:00'; FullMessage = 'Merge failed for C:\TEST\disk.avhdx.'; SignalRole = 'Operational'; IsConfirmingFork = $false }
+        $completion = [pscustomobject]@{ Id = 19080; 'Time (UTC)' = '2026-01-01 10:03:00'; FullMessage = 'Merge completed for C:\TEST\disk.avhdx.' }
+
+        $result = Get-HyperVEventCsvDisposition -Event $failure -Events @($failure, $completion) `
+            -Policy $policy -CompletionEvents @($completion)
+
+        $result.VerdictDriver | Should -BeFalse
+        $result.RecoveryDisposition | Should -Be 'ConfirmedRecovered'
     }
 }
 

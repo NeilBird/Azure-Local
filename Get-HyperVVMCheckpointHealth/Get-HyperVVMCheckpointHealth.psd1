@@ -7,7 +7,7 @@
         'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
         'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
     )
-    ModuleVersion = '0.2.30'
+    ModuleVersion = '0.2.31'
     CompatiblePSEditions = @('Desktop')
     GUID = '8b35df55-2975-48f8-bdb8-c8bc8da4a49c'
     Author = 'Neil Bird, Microsoft'
@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.30 improves evidence wording, labels, setup ergonomics, and housekeeping classification without changing VM verdict logic: material Replica measurement concerns name their typed breached measurements; HRL-only investigations do not claim measurements exceed their effective limits; event and Analytic-channel labels distinguish zero, contextual, enabled, and skipped states; parentless base VHD rows show n/a (base); ownerless AVHDX files retain the Unattached differencing disk candidate category inside VM-associated folders; ownerless base disks remain Unattached base disk candidates inside shared generated Azure Local Storage Paths; placement inconsistency is reserved for authoritative owner/folder mismatches; ownerless housekeeping findings use the immediate parent Storage Path as Scope; setup discovers an adjacent release ZIP before TEMP; and PassThru preserves abnormal CSV file-system reasons under RunData.StorageHealth.CsvRedirected.'
+            ReleaseNotes = 'Version 0.2.31 strengthens evidence completeness and fleet performance: VHD file-metadata failures make chain evidence incomplete instead of silently suppressing stale-layer timestamps; every attempted VM receives a schema-consistent Events CSV marker even when collection terminates early; per-VM event CSV rows include the audited VM name and ID; cached node events are indexed by structured identity and reuse precomputed recovery dispositions; and a clustered role whose VM is absent on its recorded owner is checked across all cluster nodes and reported as a stale-role candidate, owner mismatch, or incomplete verification.'
         }
     }
 }
