@@ -99,7 +99,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.31'
+    value: '0.9.32'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -246,14 +246,17 @@ stages:
           $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
               $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
           )
+            $transcriptStarted = $false
           if ($diagnosticsEnabled) {
               $VerbosePreference = 'Continue'
               $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
               New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
               Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $transcriptStarted = $true
               $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
               Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
           }
+              try {
           $params = @{
               Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
               IncludeUpdateRuns      = ($env:INPUT_INCLUDE_UPDATE_RUNS -ne 'false')
@@ -264,7 +267,10 @@ stages:
           Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 20 -StepName 'Collect fleet update status' -ScriptBlock {
             Export-AzLocalFleetUpdateStatusReport @params
           }
-          if ($diagnosticsEnabled) { Stop-Transcript }
+          }
+          finally {
+            if ($transcriptStarted) { Stop-Transcript | Out-Null }
+          }
 
     - task: PublishPipelineArtifact@1
       displayName: 'Publish pipeline performance diagnostics'

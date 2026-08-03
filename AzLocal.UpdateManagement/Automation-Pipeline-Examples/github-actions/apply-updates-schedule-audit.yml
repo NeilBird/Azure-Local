@@ -128,7 +128,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.31'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.32'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
@@ -309,15 +309,18 @@ jobs:
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
 
+        $transcriptStarted = $false
         if ($env:DEBUG_VERBOSE -eq 'true') {
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
             Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
+          $transcriptStarted = $true
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
 
+        try {
         $params = @{
             PipelineYamlPath        = $env:INPUT_PIPELINE_PATH
             LeadTimeMinutes         = [int]$env:INPUT_LEAD_TIME_MINUTES
@@ -344,6 +347,10 @@ jobs:
 
         Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates-schedule-audit' -StepNumber 20 -StepName 'Run schedule coverage audit' -ScriptBlock {
           Export-AzLocalApplyUpdatesScheduleAudit @params
+        }
+        }
+        finally {
+          if ($transcriptStarted) { Stop-Transcript | Out-Null }
         }
 
     - name: Upload pipeline performance diagnostics

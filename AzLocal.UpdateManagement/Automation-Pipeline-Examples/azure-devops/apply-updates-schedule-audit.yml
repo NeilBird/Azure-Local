@@ -123,7 +123,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.31'
+    value: '0.9.32'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -283,15 +283,18 @@ stages:
                 $env:DIAGNOSTICS_PARAM -eq 'true' -or $env:LEGACY_DEBUG_PARAM -eq 'true'
               )
             )
+            $transcriptStarted = $false
             if ($diagnosticsEnabled) {
               $VerbosePreference = 'Continue'
               $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
               New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
               Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $transcriptStarted = $true
               $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
               Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
           }
 
+          try {
           $params = @{
               PipelineYamlPath        = $env:INPUT_PIPELINE_PATH
               LeadTimeMinutes         = [int]$env:INPUT_LEAD_TIME_MINUTES
@@ -318,6 +321,10 @@ stages:
 
           Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates-schedule-audit' -StepNumber 20 -StepName 'Run schedule coverage audit' -ScriptBlock {
             Export-AzLocalApplyUpdatesScheduleAudit @params
+          }
+          }
+          finally {
+            if ($transcriptStarted) { Stop-Transcript | Out-Null }
           }
 
     - task: PublishPipelineArtifact@1

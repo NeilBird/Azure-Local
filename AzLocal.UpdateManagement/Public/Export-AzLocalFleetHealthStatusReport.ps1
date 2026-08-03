@@ -289,7 +289,8 @@ function Export-AzLocalFleetHealthStatusReport {
     $detail = Get-AzLocalFleetHealthFailures -View Detail @argSplat -ExportPath $detailCsv -PassThru
     if ($null -eq $detail) { $detail = @() }
     if (-not $detail) { $detail = @() }
-    $detail | ConvertTo-Json -Depth 6 | Out-File -FilePath $detailJson -Encoding utf8
+    $detailJsonContent = if ($detail.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($detail) -Depth 6 }
+    $detailJsonContent | Out-File -FilePath $detailJson -Encoding utf8
     Write-Host "Found $($detail.Count) failing health-check entry/entries." -ForegroundColor Green
 
     # ---- Step 2: in-process SUMMARY view ----------------------------------
@@ -326,7 +327,8 @@ function Export-AzLocalFleetHealthStatusReport {
         )
     }
     $summary | Export-Csv -Path $summaryCsv -NoTypeInformation -Force
-    $summary | ConvertTo-Json -Depth 6 | Out-File -FilePath $summaryJson -Encoding utf8
+    $summaryJsonContent = if ($summary.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($summary) -Depth 6 }
+    $summaryJsonContent | Out-File -FilePath $summaryJson -Encoding utf8
 
     # ---- Step 3: OVERVIEW (one row per cluster) ---------------------------
     Write-Host "Step 2: Collecting fleet health overview rows (one per cluster)..." -ForegroundColor Yellow
@@ -337,7 +339,8 @@ function Export-AzLocalFleetHealthStatusReport {
     $overview = Get-AzLocalFleetHealthOverview @overviewArgs -ExportPath $overviewCsv -PassThru
     if ($null -eq $overview) { $overview = @() }
     if (-not $overview) { $overview = @() }
-    $overview | ConvertTo-Json -Depth 6 | Out-File -FilePath $overviewJson -Encoding utf8
+    $overviewJsonContent = if ($overview.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($overview) -Depth 6 }
+    $overviewJsonContent | Out-File -FilePath $overviewJson -Encoding utf8
     Write-Host "Overview rows: $($overview.Count)." -ForegroundColor Green
 
     # ---- Step 4: bucket counts -------------------------------------------

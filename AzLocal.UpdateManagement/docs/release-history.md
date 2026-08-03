@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.31 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0931) `What's New in v0.9.31` section.
+> **For v0.9.32 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0932) `What's New in v0.9.32` section.
 
 ---
+
+### What's New in v0.9.32
+
+**Diagnostic artifacts now close deterministically, and empty collection JSON is always parseable.** Every bundled GitHub Actions and Azure DevOps principal workload closes each successfully started transcript from a `finally` block, including failed workloads and Apply Updates' independent primary/retry sessions. Fleet Connectivity, Fleet Health, authentication, inventory, apply, and retry collection artifacts write `[]` instead of zero-byte JSON, including legitimate early-return paths. Live certification adds Config 1 inventory and JSON parsing, an eight-shard bounded PowerShell job runner, and an offline drift gate requiring every bundled pipeline cmdlet call to have a reviewed coverage classification. No public function or export-count change (73); pipeline pins are updated to `0.9.32`. See [CHANGELOG.md](../CHANGELOG.md#0932---2026-08-03) for full details.
 
 ### What's New in v0.9.31
 

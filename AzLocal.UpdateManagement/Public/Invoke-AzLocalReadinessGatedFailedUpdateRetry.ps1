@@ -206,7 +206,7 @@ function Invoke-AzLocalReadinessGatedFailedUpdateRetry {
     if ($failedResourceIds.Count -eq 0) {
         & $emitCounters 0 0 0 0
         $summaryPath = & $renderSummary @() 0 0 0 0
-        @() | ConvertTo-Json -Depth 4 | Out-File -FilePath $retryJsonPath -Encoding utf8 -Force
+        '[]' | Out-File -FilePath $retryJsonPath -Encoding utf8 -Force -WhatIf:$false
         if ($PassThru) {
             return [pscustomobject]@{
                 RetryStarted          = 0
@@ -269,9 +269,9 @@ function Invoke-AzLocalReadinessGatedFailedUpdateRetry {
 
     & $emitCounters $retryStarted $retryAlready $retrySkipped $retryFailed
 
-    @($results) | Select-Object ClusterName, Status, UpdateName, Duration, Message |
-        ConvertTo-Json -Depth 4 |
-        Out-File -FilePath $retryJsonPath -Encoding utf8 -Force
+    $projectedResults = @($results | Select-Object ClusterName, Status, UpdateName, Duration, Message)
+    $retryJsonContent = if ($projectedResults.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject $projectedResults -Depth 4 }
+    $retryJsonContent | Out-File -FilePath $retryJsonPath -Encoding utf8 -Force -WhatIf:$false
     Write-Host "Wrote per-cluster retry results to $retryJsonPath"
 
     $summaryPath = & $renderSummary $results $retryStarted $retryAlready $retrySkipped $retryFailed

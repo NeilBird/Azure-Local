@@ -14,6 +14,7 @@
     To opt in:
 
         .\Tests\Invoke-Tests.ps1 -IncludeLive
+        .\Tests\Invoke-LiveTestsParallel.ps1 -ThrottleLimit 3
         # or
         Invoke-Pester -Path .\Tests\Live-Integration.Tests.ps1 -Tag Live
 
@@ -127,7 +128,7 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
-Describe 'Live-Integration: Authentication and ARG transport pre-conditions' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Authentication and ARG transport pre-conditions' -Tag 'Live', 'LiveFoundation' -Skip:$SkipLive {
 
     It 'az CLI is logged in and points at the expected subscription' {
         $expected = 'fbaf508b-cb61-4383-9cda-a42bfa0c7bc9'
@@ -153,7 +154,7 @@ Describe 'Live-Integration: Authentication and ARG transport pre-conditions' -Ta
     }
 }
 
-Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live', 'LiveFoundation' -Skip:$SkipLive {
 
     It 'Bundled starter is inert and preserves implicit subscription scope' {
         $starterPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\fleet-settings.example.yml'
@@ -191,7 +192,7 @@ itsm:
     }
 }
 
-Describe 'Live-Integration: Get-AzLocalFleetHealthOverview' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Get-AzLocalFleetHealthOverview' -Tag 'Live', 'LiveHealth' -Skip:$SkipLive {
 
     It 'Returns at least one cluster row' {
         $rows = @() + (Get-AzLocalFleetHealthOverview -PassThru -ErrorAction Stop)
@@ -246,7 +247,7 @@ Describe 'Live-Integration: Get-AzLocalFleetHealthOverview' -Tag 'Live' -Skip:$S
     }
 }
 
-Describe 'Live-Integration: Get-AzLocalFleetHealthFailures' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Get-AzLocalFleetHealthFailures' -Tag 'Live', 'LiveHealth' -Skip:$SkipLive {
 
     It 'Detail view returns rows (fleet has known unresolved failures)' {
         $detail = @() + (Get-AzLocalFleetHealthFailures -View Detail -PassThru -ErrorAction Stop)
@@ -285,7 +286,7 @@ Describe 'Live-Integration: Get-AzLocalFleetHealthFailures' -Tag 'Live' -Skip:$S
     }
 }
 
-Describe 'Live-Integration: Get-AzLocalUpdateRunFailures' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Get-AzLocalUpdateRunFailures' -Tag 'Live', 'LiveUpdates' -Skip:$SkipLive {
 
     It 'Returns at least one Failed unresolved row (fleet has known unresolved runs)' {
         $rows = @() + (Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved -Since (Get-Date).ToUniversalTime().AddDays(-30) -ErrorAction Stop)
@@ -330,7 +331,7 @@ Describe 'Live-Integration: Get-AzLocalUpdateRunFailures' -Tag 'Live' -Skip:$Ski
     }
 }
 
-Describe 'Live-Integration: Get-AzLocalFleetConnectivityStatus' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Get-AzLocalFleetConnectivityStatus' -Tag 'Live', 'LiveConnectivity' -Skip:$SkipLive {
     # v0.7.79: End-to-end validation of the new module cmdlet that replaced Step.4's
     # inline ARG queries. Validates that all 7 output properties are present, schemas
     # are correct, and ArcSummary is grouped client-side (not via KQL summarize).
@@ -445,6 +446,13 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
     BeforeAll {
         $script:liveExportRoot = Join-Path (Get-Item -LiteralPath $env:TEMP).FullName "azlocal-live-exp-$([guid]::NewGuid().Guid.Substring(0,8))"
         New-Item -ItemType Directory -Path $script:liveExportRoot -Force | Out-Null
+        $script:assertLiveJsonArtifact = {
+            param([string]$Path)
+            Test-Path -LiteralPath $Path -PathType Leaf | Should -BeTrue
+            $raw = Get-Content -LiteralPath $Path -Raw
+            $raw.Trim().Length | Should -BeGreaterThan 0
+            { $raw | ConvertFrom-Json -ErrorAction Stop } | Should -Not -Throw
+        }
     }
 
     AfterAll {
@@ -453,7 +461,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         }
     }
 
-    It '[Step.0] Export-AzLocalAuthValidationReport emits JSON + CSV + JUnit XML and PassThru exposes documented properties' {
+    It '[Step.0] Export-AzLocalAuthValidationReport emits JSON + CSV + JUnit XML and PassThru exposes documented properties' -Tag 'LiveReportConfig' {
         $outDir = Join-Path $script:liveExportRoot "s0-$([guid]::NewGuid().Guid.Substring(0,8))"
         $r = Export-AzLocalAuthValidationReport -ReportDirectory $outDir -PassThru -ErrorAction Stop
         $r | Should -Not -BeNullOrEmpty
@@ -465,9 +473,22 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         Test-Path -LiteralPath $r.SubscriptionsCsvPath  | Should -BeTrue -Because 'Step.0 must emit the subscriptions CSV'
         (Get-Item -LiteralPath $r.JUnitXmlPath).Length          | Should -BeGreaterThan 0
         (Get-Item -LiteralPath $r.SubscriptionsJsonPath).Length | Should -BeGreaterThan 0
+        & $script:assertLiveJsonArtifact $r.SubscriptionsJsonPath
     }
 
-    It '[Step.3] Export-AzLocalApplyUpdatesScheduleAudit emits audit + matrix CSV, recommend MD, JUnit XML and PassThru exposes counts' {
+    It '[Step.1] Invoke-AzLocalClusterInventory emits parseable JSON, CSV, canonical CSV, and operator README' -Tag 'LiveReportConfig' {
+        $outDir = Join-Path $script:liveExportRoot "s1-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Invoke-AzLocalClusterInventory -OutputDirectory $outDir -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.ClusterCount | Should -BeGreaterThan 0
+        Test-Path -LiteralPath $r.CsvPath          | Should -BeTrue
+        Test-Path -LiteralPath $r.CanonicalCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $r.ReadmePath       | Should -BeTrue
+        & $script:assertLiveJsonArtifact $r.JsonPath
+        @($r.Clusters).Count | Should -Be $r.ClusterCount
+    }
+
+    It '[Step.3] Export-AzLocalApplyUpdatesScheduleAudit emits audit + matrix CSV, recommend MD, JUnit XML and PassThru exposes counts' -Tag 'LiveReportSchedule' {
         $modRoot = Split-Path -Path (Get-Module AzLocal.UpdateManagement | Select-Object -First 1).Path -Parent
         $schedule = Join-Path $modRoot 'Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
         $pipelineYml = Join-Path $modRoot 'Automation-Pipeline-Examples\github-actions\apply-updates-schedule-audit.yml'
@@ -490,7 +511,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         (Get-Item -LiteralPath $r.AuditCsvPath).Length | Should -BeGreaterThan 0
     }
 
-    It '[Step.4] Export-AzLocalFleetConnectivityStatusReport emits artifacts and PassThru exposes counts + rollups' {
+    It '[Step.4] Export-AzLocalFleetConnectivityStatusReport emits artifacts and PassThru exposes counts + rollups' -Tag 'LiveReportFleet' {
         $outDir = Join-Path $script:liveExportRoot "s4-$([guid]::NewGuid().Guid.Substring(0,8))"
         $r = Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $outDir -PassThru -ErrorAction Stop
         $r | Should -Not -BeNullOrEmpty
@@ -500,9 +521,12 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         $r.PSObject.Properties.Name | Should -Contain 'JUnitXmlPath'
         Test-Path -LiteralPath $r.JUnitXmlPath | Should -BeTrue
         Test-Path -LiteralPath $r.SummaryPath  | Should -BeTrue
+        $jsonPaths = @(Get-ChildItem -LiteralPath $outDir -Filter '*.json' -File | Select-Object -ExpandProperty FullName)
+        $jsonPaths.Count | Should -Be 7
+        foreach ($jsonPath in $jsonPaths) { & $script:assertLiveJsonArtifact $jsonPath }
     }
 
-    It '[Step.5] Export-AzLocalClusterUpdateReadinessReport emits readiness + health artifacts and PassThru exposes counts' {
+    It '[Step.5] Export-AzLocalClusterUpdateReadinessReport emits readiness + health artifacts and PassThru exposes counts' -Tag 'LiveReportUpdates' {
         $outDir = Join-Path $script:liveExportRoot "s5-$([guid]::NewGuid().Guid.Substring(0,8))"
         $r = Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $outDir -Scope all -PassThru -ErrorAction Stop
         $r | Should -Not -BeNullOrEmpty
@@ -517,7 +541,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
             }).Count
     }
 
-    It '[Step.6] Export-AzLocalClusterReadinessGateReport short-circuits cleanly when -UpdateRing is empty (no-op, read-only)' {
+    It '[Step.6] Export-AzLocalClusterReadinessGateReport short-circuits cleanly when -UpdateRing is empty (no-op, read-only)' -Tag 'LiveReportSchedule' {
         # Empty -UpdateRing is the documented short-circuit. The cmdlet does
         # NOT call Get-AzLocalClusterUpdateReadiness and does NOT trigger any
         # update; it just emits zero counts. This is the only safe Live test
@@ -534,7 +558,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         $r.Results       | Should -BeNullOrEmpty
     }
 
-    It '[Step.7] Export-AzLocalUpdateRunMonitorReport emits CSV + JUnit XML and PassThru exposes the in-flight + failure counts' {
+    It '[Step.7] Export-AzLocalUpdateRunMonitorReport emits CSV + JUnit XML and PassThru exposes the in-flight + failure counts' -Tag 'LiveReportUpdates' {
         $outDir = Join-Path $script:liveExportRoot "s7-$([guid]::NewGuid().Guid.Substring(0,8))"
         $r = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $outDir -Scope all -PassThru -ErrorAction Stop
         $r | Should -Not -BeNullOrEmpty
@@ -546,7 +570,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         Test-Path -LiteralPath $r.XmlPath | Should -BeTrue
     }
 
-    It '[Step.8] Export-AzLocalFleetUpdateStatusReport emits inventory + readiness + run-history artifacts and PassThru exposes version-distribution counts' {
+    It '[Step.8] Export-AzLocalFleetUpdateStatusReport emits inventory + readiness + run-history artifacts and PassThru exposes version-distribution counts' -Tag 'LiveReportUpdates' {
         $outDir = Join-Path $script:liveExportRoot "s8-$([guid]::NewGuid().Guid.Substring(0,8))"
         $r = Export-AzLocalFleetUpdateStatusReport -OutputDirectory $outDir -Scope all -PassThru -ErrorAction Stop
         $r | Should -Not -BeNullOrEmpty
@@ -561,7 +585,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         (Get-Item -LiteralPath $r.InventoryCsvPath).Length | Should -BeGreaterThan 0
     }
 
-    It '[Step.9] Export-AzLocalFleetHealthStatusReport emits overview + detail + summary artifacts and PassThru exposes failure counts' {
+    It '[Step.9] Export-AzLocalFleetHealthStatusReport emits overview + detail + summary artifacts and PassThru exposes failure counts' -Tag 'LiveReportFleet' {
         $outDir = Join-Path $script:liveExportRoot "s9-$([guid]::NewGuid().Guid.Substring(0,8))"
         $r = Export-AzLocalFleetHealthStatusReport -OutputDirectory $outDir -Scope all -Severity All -PassThru -ErrorAction Stop
         $r | Should -Not -BeNullOrEmpty
@@ -575,10 +599,13 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Ta
         Test-Path -LiteralPath $r.OverviewJsonPath | Should -BeTrue
         Test-Path -LiteralPath $r.XmlPath          | Should -BeTrue
         (Get-Item -LiteralPath $r.OverviewCsvPath).Length | Should -BeGreaterThan 0
+        foreach ($jsonPath in @($r.DetailJsonPath, $r.SummaryJsonPath, $r.OverviewJsonPath)) {
+            & $script:assertLiveJsonArtifact $jsonPath
+        }
     }
 }
 
-Describe 'Live-Integration: checkUpdates provider-operations catalog tripwire' -Tag 'Live' -Skip:$SkipCatalog {
+Describe 'Live-Integration: checkUpdates provider-operations catalog tripwire' -Tag 'Live', 'LiveFoundation' -Skip:$SkipCatalog {
     # v0.8.92: LIVE companion to the OFFLINE tripwire in
     # AzLocal.UpdateManagement.Tests.ps1 ('v0.8.92 RBAC checkUpdates action ...').
     #
