@@ -31,8 +31,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $moduleName = 'Get-HyperVVMCheckpointHealth'
-$version = '0.2.30'
-$expectedSha256 = '41d805143a3fe73b402b5de8adaeb969c256a53352a8c8dc46d37a14bbac488c'
+$version = '0.2.31'
+$expectedSha256 = 'ad68f6abd039cab5ab1cf473864a8d64342272739400aaabafa2d2134f84f30b'
 $expectedAssetName = "$moduleName-$version.zip"
 
 if (-not $ZipPath) {

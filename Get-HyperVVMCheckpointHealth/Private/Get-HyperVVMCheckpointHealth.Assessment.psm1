@@ -80,7 +80,8 @@ function Get-HyperVEventCsvDisposition {
     param(
         [Parameter(Mandatory)][object]$Event,
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Events,
-        [Parameter(Mandatory)][object]$Policy
+        [Parameter(Mandatory)][object]$Policy,
+        [AllowEmptyCollection()][object[]]$CompletionEvents
     )
 
     $eventId = [int]$Event.Id
@@ -93,7 +94,9 @@ function Get-HyperVEventCsvDisposition {
         }
     }
     if ($Policy.OperationFailureIds -contains $eventId) {
-        $completionEvents = @($Events | Where-Object { $Policy.MergeSuccessIds -contains [int]$_.Id })
+        if (-not $PSBoundParameters.ContainsKey('CompletionEvents')) {
+            $CompletionEvents = @($Events | Where-Object { $Policy.MergeSuccessIds -contains [int]$_.Id })
+        }
         $recovery = Resolve-HyperVOperationRecovery -Events (@($Event) + $completionEvents) `
             -FailureIds $Policy.OperationFailureIds -CompletionIds $Policy.MergeSuccessIds
         $verdictDriver = ($recovery.Status -eq 'Unresolved')
@@ -168,6 +171,8 @@ function ConvertTo-HyperVEventCsvRows {
         $scope = if ($eventRow.PSObject.Properties['EvidenceScope'] -and $eventRow.EvidenceScope) { [string]$eventRow.EvidenceScope } else { $DefaultEvidenceScope }
         $row = [pscustomobject][ordered]@{
             'Time (UTC)' = $timeUtc
+            AuditedVMName = $VMName
+            AuditedVMId = $VMId
             Node = $node
             Id = [int]$eventRow.Id
             Level = if ($eventRow.PSObject.Properties['Level']) { [string]$eventRow.Level } else { '' }
@@ -188,11 +193,20 @@ function ConvertTo-HyperVEventCsvRows {
             DispositionReason = ''
             FullMessage = $fullMessage
         }
-        $disposition = Get-HyperVEventCsvDisposition -Event $row -Events $Events -Policy $Policy
-        $row.EventClassification = [string]$disposition.EventClassification
-        $row.VerdictDriver = [bool]$disposition.VerdictDriver
-        $row.RecoveryDisposition = [string]$disposition.RecoveryDisposition
-        $row.DispositionReason = [string]$disposition.DispositionReason
+        $hasDisposition = $eventRow.PSObject.Properties['EventClassification'] -and $eventRow.EventClassification -and
+            $eventRow.PSObject.Properties['RecoveryDisposition'] -and $eventRow.RecoveryDisposition
+        if ($hasDisposition) {
+            $row.EventClassification = [string]$eventRow.EventClassification
+            $row.VerdictDriver = [bool]$eventRow.VerdictDriver
+            $row.RecoveryDisposition = [string]$eventRow.RecoveryDisposition
+            $row.DispositionReason = [string]$eventRow.DispositionReason
+        } else {
+            $disposition = Get-HyperVEventCsvDisposition -Event $row -Events $Events -Policy $Policy
+            $row.EventClassification = [string]$disposition.EventClassification
+            $row.VerdictDriver = [bool]$disposition.VerdictDriver
+            $row.RecoveryDisposition = [string]$disposition.RecoveryDisposition
+            $row.DispositionReason = [string]$disposition.DispositionReason
+        }
         [void]$projected.Add($row)
     }
     $projected.ToArray()
@@ -351,6 +365,90 @@ function Resolve-HyperVEventAttribution {
     $fallbackAttributed = $false
     if ($VMName) { $boundedNamePattern = '(?i)(?<![\p{L}\p{N}_\\/-])' + [regex]::Escape($VMName) + '(?![\p{L}\p{N}_\\/-])'; $fallbackAttributed = [regex]::IsMatch($Message, $boundedNamePattern) }
     [pscustomobject]@{ Attributed = $fallbackAttributed; Method = 'BoundedNameFallback'; Confidence = if ($fallbackAttributed) { 'Low' } else { 'None' }; StructuredIdentifierPresent = $false }
+}
+
+function New-HyperVEventIdentityIndex {
+    [OutputType([pscustomobject])]
+    param([AllowEmptyCollection()][object[]]$Events = @())
+
+    $byGuid = @{}
+    $byName = @{}
+    $unstructured = [System.Collections.Generic.List[object]]::new()
+    $guidPattern = '(?i)(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])'
+    $namePattern = '(?i)\b(?:virtual\s+machine|vm)\s+(?:name\s*[:=]?\s*)?[''\"](?<Name>[^''\"]+)[''\"]'
+    foreach ($eventRow in @($Events)) {
+        if (-not $eventRow) { continue }
+        $message = if ($eventRow.PSObject.Properties['FullMessage']) { [string]$eventRow.FullMessage } else { [string]$eventRow.Message }
+        $guidKeys = @([regex]::Matches($message, $guidPattern) | ForEach-Object { $_.Value.ToLowerInvariant() } | Sort-Object -Unique)
+        if ($guidKeys.Count -gt 0) {
+            foreach ($key in $guidKeys) {
+                if (-not $byGuid.ContainsKey($key)) { $byGuid[$key] = [System.Collections.Generic.List[object]]::new() }
+                [void]$byGuid[$key].Add($eventRow)
+            }
+            continue
+        }
+        $nameKeys = @([regex]::Matches($message, $namePattern) | ForEach-Object { $_.Groups['Name'].Value.ToLowerInvariant() } | Sort-Object -Unique)
+        if ($nameKeys.Count -gt 0) {
+            foreach ($key in $nameKeys) {
+                if (-not $byName.ContainsKey($key)) { $byName[$key] = [System.Collections.Generic.List[object]]::new() }
+                [void]$byName[$key].Add($eventRow)
+            }
+            continue
+        }
+        [void]$unstructured.Add($eventRow)
+    }
+    [pscustomobject]@{ ByGuid = $byGuid; ByName = $byName; Unstructured = $unstructured.ToArray(); TotalCount = @($Events).Count }
+}
+
+function Select-HyperVEventsForVM {
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory)][object]$Index,
+        [AllowEmptyString()][string]$VMName,
+        [AllowEmptyString()][string]$VMId
+    )
+
+    $selected = [System.Collections.Generic.List[object]]::new()
+    $normalizedId = $VMId.Trim().Trim('{', '}', '(', ')').ToLowerInvariant()
+    $normalizedName = $VMName.ToLowerInvariant()
+    if ($normalizedId -and $Index.ByGuid.ContainsKey($normalizedId)) {
+        foreach ($eventRow in $Index.ByGuid[$normalizedId]) { [void]$selected.Add($eventRow) }
+    }
+    if ($normalizedName -and $Index.ByName.ContainsKey($normalizedName)) {
+        foreach ($eventRow in $Index.ByName[$normalizedName]) { [void]$selected.Add($eventRow) }
+    }
+    foreach ($eventRow in @($Index.Unstructured)) {
+        $message = if ($eventRow.PSObject.Properties['FullMessage']) { [string]$eventRow.FullMessage } else { [string]$eventRow.Message }
+        $attribution = Resolve-HyperVEventAttribution -Message $message -VMName $VMName -VMId $VMId
+        if ($attribution.Attributed) { [void]$selected.Add($eventRow) }
+    }
+    $selected.ToArray()
+}
+
+function Get-ClusterRoleVMAbsenceAssessment {
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$RoleOwner,
+        [AllowEmptyString()][string]$FoundNode,
+        [ValidateRange(0, 1024)][int]$FailedNodeCount = 0
+    )
+
+    if ($FoundNode) {
+        return [pscustomobject]@{
+            Category = 'OwnerMismatch'
+            Detail = "The cluster role records owner '$RoleOwner', but the Hyper-V VM was found on '$FoundNode'. The role ownership and Hyper-V inventory are inconsistent; verify the clustered role and VM resources."
+        }
+    }
+    if ($FailedNodeCount -gt 0) {
+        return [pscustomobject]@{
+            Category = 'VerificationIncomplete'
+            Detail = "The cluster role exists and records owner '$RoleOwner', but the Hyper-V VM was not found there. Cluster-wide verification was incomplete because $FailedNodeCount node(s) could not be queried."
+        }
+    }
+    [pscustomobject]@{
+        Category = 'StaleClusterRoleCandidate'
+        Detail = "The cluster role exists and records owner '$RoleOwner', but no Hyper-V VM with this name was found on any cluster node. This can occur when a VM is deleted in Hyper-V but its Failover Clustering role is not removed; verify the role and its resources."
+    }
 }
 
 function Resolve-EventCoverage {
@@ -577,4 +675,4 @@ function Complete-CheckpointHealthPassThruResult {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, ConvertTo-HyperVEventCsvRows, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, ConvertTo-HyperVEventCsvRows, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, New-HyperVEventIdentityIndex, Select-HyperVEventsForVM, Get-ClusterRoleVMAbsenceAssessment, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
