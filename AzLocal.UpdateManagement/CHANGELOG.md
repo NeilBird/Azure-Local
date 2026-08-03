@@ -5,6 +5,21 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.31] - 2026-07-31
+
+### Added
+
+- Long-running GitHub Actions workloads can repair an expired OIDC-backed Azure CLI session. The shared ARM and Azure Resource Graph transports request a fresh runner assertion, repeat the federated login, restore the configured default Azure CLI subscription, and retry the interrupted request once. Non-GitHub and incompletely configured hosts retain their existing behavior.
+- Monitor: 3 exposes `supplementary_data_complete` and `incomplete_supplementary_data` pipeline outputs plus matching `-PassThru` properties. Its new `-FailOnIncompleteSupplementaryData` switch writes the primary reports, available artifacts, and markdown warning before failing the workload.
+
+### Changed
+
+- Explicit fleets above 200 cluster resource IDs now query Azure Resource Graph through represented subscriptions in bounded groups of 40, then enforce the exact admitted resource-ID set client-side. Readiness cluster discovery, update summaries, available updates, and update runs share this path; smaller fleets retain command-line-safe 40-ID KQL batching.
+- Monitor: 3 and Update: 4 call `Get-AzLocalUpdateRuns -SkipSideloadedReset`, keeping reporting paths read-only and removing one sideload-tag ARM check per cluster. Tag reconciliation remains in update execution paths.
+- Bundled GitHub workflows provide the metadata required for on-demand OIDC renewal. `AZURE_SUBSCRIPTION_ID` is documented as the default Azure CLI account selected after login, not as fleet scope; Resource Graph still follows configured management-group, explicit subscription, exclusion, and cluster admission controls.
+- Monitor: 3 removes stale supplementary files before collection, treats a missing current-run export as incomplete data, and preserves report uploads on failure on both GitHub Actions and Azure DevOps. Legitimate zero-update states still produce exports and remain successful.
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.31`.
+
 ## [0.9.30] - 2026-07-31
 
 ### Added

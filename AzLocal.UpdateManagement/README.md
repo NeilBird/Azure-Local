@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.30 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.30)
+**Latest Version:** v0.9.31 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.31)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.30](#whats-new-in-v0930)
+- [What's New in v0.9.31](#whats-new-in-v0931)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,15 +78,15 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.30
+## What's New in v0.9.31
 
-**Config: 1 now distinguishes desired-state drift from active operator holds and runs daily at 15:37 UTC.** Blank optional `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, and `UpdateAuthAccountId` source CSV cells mean preserve/unmanaged, matching Config: 2 reconciliation behavior; explicit values, including `UpdateExcluded=False`, still detect drift. Live `UpdateExcluded=True` / `1` tags remain prominent as separate advisories with named clusters and remediation, including when no source CSV is configured. GitHub summaries also include a direct inventory-artifact download link.
+**Long-running fleet workflows now recover expired GitHub OIDC authentication and large fleet reads scale by subscription rather than cluster count.** Shared ARM and Resource Graph transports can obtain a fresh GitHub runner assertion, repeat the federated Azure CLI login, restore the configured default CLI subscription, and retry once. For explicit fleets above 200 cluster IDs, readiness, update-summary, available-update, and update-run reads query represented subscriptions in bounded groups of 40 and exact-filter admitted resource IDs client-side; smaller fleets keep the existing 40-ID KQL batches.
 
-**Bundled GitHub workflows now use the Node.js 24 artifact runtime.** Diagnostics uploads move from `actions/upload-artifact@v5` to `@v6`, removing the Node.js 20 deprecation warning. No public function or export-count change (73); all bundled pipeline pins are `0.9.30`.
+**Monitor: 3 is explicitly read-only and no longer hides incomplete supplementary datasets.** Reporting paths skip sideload-tag reset checks, removing one ARM tag request per cluster. Monitor: 3 records supplementary completeness in pipeline outputs and `-PassThru`, writes all available reports first, and then fails when a requested current-run export is missing; artifact uploads still run so operators retain the evidence. `AZURE_SUBSCRIPTION_ID` is clarified as the Azure CLI default account context after login, not fleet scope. No public function or export-count change (73); all bundled pipeline pins are `0.9.31`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.29`](docs/release-history.md#whats-new-in-v0929) for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.30`](docs/release-history.md#whats-new-in-v0930) for the previous release.
 
 ## Files
 
@@ -586,7 +586,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.30** stay above under [`What's New in v0.9.30`](#whats-new-in-v0930).
+The most recent release notes for **v0.9.31** stay above under [`What's New in v0.9.31`](#whats-new-in-v0931).
+
+### What's New in v0.9.30
+
+**Config: 1 now distinguishes desired-state drift from active operator holds and runs daily at 15:37 UTC.** Blank optional source CSV fields mean preserve/unmanaged, while explicit values continue to participate in drift detection. Live `UpdateExcluded=True` / `1` tags remain visible as separate advisories with named clusters and remediation, even when no source CSV is configured. GitHub summaries add a direct inventory-artifact download link, and all bundled GitHub diagnostics uploads move from `actions/upload-artifact@v5` to the Node.js 24-based `@v6`. No public function or export-count change (73); pipeline pins are updated to `0.9.30`. See [CHANGELOG.md](CHANGELOG.md#0930---2026-07-31) for full details.
 
 ### What's New in v0.9.29
 

@@ -339,7 +339,7 @@ function Get-AzLocalAvailableUpdates {
     $updateVersionCounts = @{}
 
     # v0.7.68: Replaced per-cluster ARM REST fan-out (parallel + serial paths
-    # via Invoke-FleetJobsInParallel) with a SINGLE Azure Resource Graph query
+    # via Invoke-FleetJobsInParallel) with batched Azure Resource Graph queries
     # against the `extensibilityresources` namespace
     # (microsoft.azurestackhci/clusters/updates). One round-trip returns every
     # available-update record across the entire cluster list - typically
@@ -350,13 +350,16 @@ function Get-AzLocalAvailableUpdates {
     # minor field gap: ARG snapshots do not expose `description`, so we fall
     # back to `displayName` when description is unavailable.
 
-    $idListKql = ($clustersToProcess | ForEach-Object { "'$($_.ResourceId.ToLower())'" }) -join ','
-    $updatesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ($idListKql) | project id, name, type, location, properties, ClusterName_, ClusterResourceId_, UpdateName_"
+    $updatesQueryTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ({0}) | project id, name, type, location, properties, ClusterName_, ClusterResourceId_, UpdateName_"
 
     try {
-        $argParams = @{ Query = $updatesKql }
-        if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-        $allUpdatesRaw = Invoke-AzResourceGraphQuery @argParams
+        $batchParams = @{
+            Value                   = @($clustersToProcess | ForEach-Object { $_.ResourceId })
+            QueryTemplate           = $updatesQueryTemplate
+            ExactResourceIdProperty = 'ClusterResourceId_'
+        }
+        if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+        $allUpdatesRaw = Invoke-AzLocalResourceGraphValueBatches @batchParams
     }
     catch {
         Write-Log -Message "Azure Resource Graph query for available updates failed: $($_.Exception.Message)" -Level Error

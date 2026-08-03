@@ -214,9 +214,9 @@ function Get-AzLocalClusterUpdateReadiness {
         # lookup so we can pick up tags and properties (status / connectivityStatus)
         # in one round trip, mirroring the ByTag projection.
         $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
-        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where tolower(id) in~ ({0}) | project id, name, resourceGroup, subscriptionId, tags, properties"
+        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | extend ClusterResourceId_ = tolower(id) | where ClusterResourceId_ in~ ({0}) | project id, name, resourceGroup, subscriptionId, tags, properties, ClusterResourceId_"
         try {
-            $batchParams = @{ Value = $ClusterResourceIds; QueryTemplate = $argQueryTemplate }
+            $batchParams = @{ Value = $ClusterResourceIds; QueryTemplate = $argQueryTemplate; ExactResourceIdProperty = 'ClusterResourceId_' }
             if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
             $clusterRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
         }
@@ -330,7 +330,7 @@ function Get-AzLocalClusterUpdateReadiness {
     # batch helper keeps each generated KQL command below az.cmd's Windows limit.
     $summariesKqlTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | where ClusterResourceId_ in~ ({0}) | project id, name, properties, ClusterResourceId_"
     try {
-        $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $summariesKqlTemplate }
+        $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $summariesKqlTemplate; ExactResourceIdProperty = 'ClusterResourceId_' }
         if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
         $summaryRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
     }
@@ -343,7 +343,7 @@ function Get-AzLocalClusterUpdateReadiness {
     # ARG #2: available updates for only the resolved target clusters.
     $updatesKqlTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ({0}) | project name, properties, ClusterResourceId_, UpdateName_"
     try {
-        $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $updatesKqlTemplate }
+        $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $updatesKqlTemplate; ExactResourceIdProperty = 'ClusterResourceId_' }
         if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
         $updateRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
     }

@@ -113,7 +113,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.30'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.31'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -263,6 +263,12 @@ jobs:
         INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
         INPUT_INCLUDE_UPDATE_RUNS: ${{ github.event.inputs.include_update_runs || 'true' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
+        # Used only to renew an expired GitHub OIDC-backed Azure CLI session.
+        # The subscription id restores the CLI default account after login; it
+        # does not scope ARG queries or limit the fleet to that subscription.
+        AZLOCAL_OIDC_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+        AZLOCAL_OIDC_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+        AZLOCAL_OIDC_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
@@ -278,6 +284,7 @@ jobs:
             Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
             IncludeUpdateRuns      = ($env:INPUT_INCLUDE_UPDATE_RUNS -ne 'false')
             InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
+          FailOnIncompleteSupplementaryData = $true
         }
         if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
         Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 20 -StepName 'Collect fleet update status' -ScriptBlock {
@@ -319,6 +326,7 @@ jobs:
         Write-Host "Artifact timestamp: $stamp"
 
     - name: Upload Fleet Status Reports
+      if: always()
       uses: actions/upload-artifact@v6
       with:
         name: azlocal-fleet-update-status-report_${{ steps.artifact-stamp.outputs.timestamp }}

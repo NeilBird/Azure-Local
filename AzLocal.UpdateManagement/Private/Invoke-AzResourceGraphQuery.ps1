@@ -300,6 +300,7 @@ function Invoke-AzResourceGraphQuery {
     $skipToken = $null
     $pages = 0
     $effectiveFirst = $First
+    $authenticationRepairAttempted = $false
 
     # Force Azure CLI (Python) to write UTF-8 to stdout/stderr regardless of the
     # host console code page. Without this, any non-cp1252 character in an ARG
@@ -366,6 +367,15 @@ function Invoke-AzResourceGraphQuery {
                 $errText = ((($stderrLines + $stdoutLines) | Out-String).Trim())
                 $isPayloadTooLarge = $errText -match '(?i)(ResponsePayloadTooLarge|response payload size.*exceed(?:ed|s).*limit|payload.*too large)'
                 $isThrottle = $errText -match '(?i)(rate.?limit|throttl|\b429\b|too many requests)'
+                $isAuthenticationExpired = $errText -match '(?i)(\b401\b|ExpiredAuthenticationToken|InvalidAuthenticationToken|AuthenticationFailed|AADSTS700024|assertion is not within its valid time range)'
+
+                if ($isAuthenticationExpired -and -not $authenticationRepairAttempted) {
+                    $authenticationRepairAttempted = $true
+                    if (Repair-AzLocalAzureCliAuthentication) {
+                        Write-Warning "Invoke-AzResourceGraphQuery: Azure CLI authentication expired on page $pages; renewed through GitHub OIDC and retrying once."
+                        continue
+                    }
+                }
 
                 # v0.8.95: transient network / connection-reset classifier.
                 # ARG calls over the public endpoint occasionally have the TCP
