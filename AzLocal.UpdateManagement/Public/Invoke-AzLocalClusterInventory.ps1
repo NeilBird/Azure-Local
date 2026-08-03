@@ -195,7 +195,8 @@ function Invoke-AzLocalClusterInventory {
     $inventory = @($inventory)
 
     # Serialise the same in-memory inventory to JSON next to the CSV.
-    $inventory | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
+    $inventoryJsonContent = if ($inventory.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject $inventory -Depth 10 }
+    $inventoryJsonContent | Set-Content -LiteralPath $jsonPath -Encoding UTF8
 
     if (Test-Path -LiteralPath $csvPath) {
         Copy-Item -LiteralPath $csvPath -Destination $canonicalCsvPath -Force

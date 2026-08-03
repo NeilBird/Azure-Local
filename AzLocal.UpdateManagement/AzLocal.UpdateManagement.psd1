@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.31'
+    ModuleVersion = '0.9.32'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -388,6 +388,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.32 - Diagnostic transcripts now close deterministically in finally blocks across every bundled GitHub Actions and Azure DevOps workload, including failed runs and Apply Updates retry sessions. Empty collection JSON artifacts contain [] instead of zero-byte content across Fleet Connectivity, Fleet Health, authentication, inventory, apply, and retry workflows, including early-return paths. No export change (73).
+
 ## Version 0.9.31 - Long-running GitHub workflows can renew expired OIDC-backed Azure CLI authentication. Large explicit fleet scopes use bounded subscription batches with exact client-side resource-ID filtering. Monitor: 3 is read-only and fails late when requested supplementary exports are incomplete, preserving available reports. The default Azure CLI subscription is clarified as authentication context, not fleet scope. No export change (73).
 
 ## Version 0.9.30 - Config: 1 treats blank optional CSV fields as unmanaged, highlights active UpdateExcluded holds, links directly to the inventory artifact, and runs daily at 15:37 UTC. GitHub artifact uploads use Node 24. No export change (73).

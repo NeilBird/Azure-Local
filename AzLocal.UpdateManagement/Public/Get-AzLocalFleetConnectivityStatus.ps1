@@ -469,7 +469,8 @@ extensibilityresources
         )
         foreach ($export in $exports) {
             $export.Rows | Export-Csv  -Path (Join-Path $ExportPath "$($export.Name).csv")  -NoTypeInformation -Force
-            $export.Rows | ConvertTo-Json -Depth 20 | Out-File -FilePath (Join-Path $ExportPath "$($export.Name).json") -Encoding utf8
+            $jsonContent = if ($export.Rows.Count -eq 0) { '[]' } else { $export.Rows | ConvertTo-Json -Depth 20 }
+            $jsonContent | Out-File -FilePath (Join-Path $ExportPath "$($export.Name).json") -Encoding utf8
         }
         Write-Log -Message "  Exported 7 scopes (CSV + JSON) to: $ExportPath" -Level Info
     }

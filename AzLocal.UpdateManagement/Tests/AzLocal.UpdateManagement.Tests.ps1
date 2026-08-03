@@ -429,8 +429,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.31' {
-            $script:ModuleInfo.Version | Should -Be '0.9.31'
+        It 'Should have version 0.9.32' {
+            $script:ModuleInfo.Version | Should -Be '0.9.32'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -591,6 +591,10 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 $content | Should -Match "(?ms)^\s{6}diagnostics:\s*.*?default:\s*'false'.*?options:\s*.*?'false'.*?'true'" -Because "$($yaml.Name) diagnostics must default off"
                 $content | Should -Match "DEBUG_VERBOSE:\s*\`$\{\{\s*vars\.DEBUG_VERBOSE\s*==\s*'true'\s*\|\|\s*\(github\.event_name\s*==\s*'workflow_dispatch'" -Because "$($yaml.Name) must let the repository variable enable scheduled runs while gating the input to workflow_dispatch"
                 $content | Should -Match 'Start-Transcript' -Because "$($yaml.Name) must capture the principal workload log"
+                $startCount = ([regex]::Matches($content, '(?m)^\s*Start-Transcript\b')).Count
+                $stopCount = ([regex]::Matches($content, '(?m)^\s*if \(\$transcriptStarted\) \{ Stop-Transcript \| Out-Null \}\s*$')).Count
+                $stopCount | Should -Be $startCount -Because "$($yaml.Name) must close every transcript session with the state guard"
+                ([regex]::Matches($content, '(?ms)finally\s*\{\s*if \(\$transcriptStarted\) \{ Stop-Transcript \| Out-Null \}\s*\}')).Count | Should -Be $startCount -Because "$($yaml.Name) must finalize every transcript even when its workload throws"
                 $content | Should -Match 'Invoke-AzLocalPipelineTimedOperation' -Because "$($yaml.Name) must time its principal workload"
                 $content | Should -Match 'pipeline-transcript\.log' -Because "$($yaml.Name) must use the stable opt-in transcript filename"
                 $content | Should -Match 'pipeline-timings\.json' -Because "$($yaml.Name) must publish the always-on timing report"
@@ -612,6 +616,10 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 $content | Should -Match 'DEBUG_VERBOSE_SETTING:\s*\$\(DEBUG_VERBOSE\)' -Because "$($yaml.Name) must consume the shared DEBUG_VERBOSE setting"
                 $content | Should -Match "DEBUG_VERBOSE_SETTING\s*-eq\s*'true'\s*-or\s*\([\s\S]{0,180}?BUILD_REASON\s*-eq\s*'Manual'" -Because "$($yaml.Name) must let DEBUG_VERBOSE enable schedules while gating the parameter to manual runs"
                 $content | Should -Match 'Start-Transcript' -Because "$($yaml.Name) must capture the principal workload log"
+                $startCount = ([regex]::Matches($content, '(?m)^\s*Start-Transcript\b')).Count
+                $stopCount = ([regex]::Matches($content, '(?m)^\s*if \(\$transcriptStarted\) \{ Stop-Transcript \| Out-Null \}\s*$')).Count
+                $stopCount | Should -Be $startCount -Because "$($yaml.Name) must close every transcript session with the state guard"
+                ([regex]::Matches($content, '(?ms)finally\s*\{\s*if \(\$transcriptStarted\) \{ Stop-Transcript \| Out-Null \}\s*\}')).Count | Should -Be $startCount -Because "$($yaml.Name) must finalize every transcript even when its workload throws"
                 $content | Should -Match 'Invoke-AzLocalPipelineTimedOperation' -Because "$($yaml.Name) must time its principal workload"
                 $content | Should -Match 'DIAGNOSTICS_LOG_PATH:\s*\$\(Build\.ArtifactStagingDirectory\)/diagnostics/pipeline-transcript\.log' -Because "$($yaml.Name) must use the stable opt-in transcript filename"
                 $content | Should -Match 'AZLOCAL_PIPELINE_TIMING_PATH:\s*\$\(Build\.ArtifactStagingDirectory\)/diagnostics/pipeline-timings\.json' -Because "$($yaml.Name) must write timings outside the diagnostic flag"
@@ -5489,7 +5497,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.31'
+            $report.moduleVersion | Should -Match '^0\.9\.32'
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw
@@ -15550,6 +15558,26 @@ Describe 'Function: Get-AzLocalFleetConnectivityStatus (v0.7.79)' {
         It 'ArbRows is not null when no ARB resources exist' {
             $script:emptyResult.PSObject.Properties.Name | Should -Contain 'ArbRows'
         }
+
+        It 'Writes valid empty arrays to every JSON export when all queries return empty' {
+            $exportPath = Join-Path -Path $TestDrive -ChildPath 'empty-connectivity-exports'
+            $null = Get-AzLocalFleetConnectivityStatus -ExportPath $exportPath -PassThru
+            $jsonNames = @(
+                'fleet-cluster-connectivity.json'
+                'fleet-arc-status-summary.json'
+                'fleet-arc-non-connected-machines.json'
+                'fleet-physical-nics.json'
+                'fleet-physical-nic-all.json'
+                'fleet-physical-nic-stats.json'
+                'fleet-arb-status.json'
+            )
+
+            foreach ($jsonName in $jsonNames) {
+                $jsonPath = Join-Path -Path $exportPath -ChildPath $jsonName
+                Test-Path -LiteralPath $jsonPath | Should -BeTrue
+                (Get-Content -LiteralPath $jsonPath -Raw).Trim() | Should -Be '[]'
+            }
+        }
     }
 }
 
@@ -17985,6 +18013,7 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs @() -Clusters $script:_avr_clusters -RoleRows @()
         $result.SubscriptionCount | Should -Be 0
         $result.AuthValid         | Should -BeFalse
+        (Get-Content -LiteralPath $result.SubscriptionsJsonPath -Raw).Trim() | Should -Be '[]'
         $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
         # Subscription Scope suite has exactly one testcase (the count row).
         $xml | Should -Match 'Subscription Scope \(count=0\).*tests="1"'
@@ -18174,6 +18203,8 @@ Describe 'Thin-YAML Step.1: Invoke-AzLocalClusterInventory' {
         }
         $result.ClusterCount | Should -Be 0
         Test-Path -LiteralPath $result.CanonicalCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $result.JsonPath | Should -BeTrue
+        (Get-Content -LiteralPath $result.JsonPath -Raw).Trim() | Should -Be '[]'
         $canonical = Get-Content -LiteralPath $result.CanonicalCsvPath -Raw
         $canonical | Should -Match 'ClusterName,ResourceGroup,SubscriptionId'
         # No data rows beyond the header.
@@ -20438,6 +20469,10 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $result.DistinctReasons | Should -Be 0
         $result.OverviewRows    | Should -Be 0
         Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        foreach ($jsonPath in @($result.DetailJsonPath, $result.SummaryJsonPath, $result.OverviewJsonPath)) {
+            Test-Path -LiteralPath $jsonPath | Should -BeTrue
+            (Get-Content -LiteralPath $jsonPath -Raw).Trim() | Should -Be '[]'
+        }
         $xml = [System.IO.File]::ReadAllText($result.XmlPath)
         $xml | Should -Match '<testsuites name="AzureLocalFleetHealthStatus"'
         $xml | Should -Match 'No Critical or Warning health-check failures'
@@ -22877,6 +22912,7 @@ foo,/subscriptions/x/resourceGroups/y/providers/Microsoft.AzureStackHCI/clusters
             foreach ($n in 'SUCCEEDED','SKIPPED','FAILED','HEALTH_BLOCKED','SCHEDULE_BLOCKED','SIDELOADED_BLOCKED','EXCLUDED_BY_TAG') {
                 $outFile | Should -Match "$n=0"
             }
+            (Get-Content -LiteralPath (Join-Path $outDir 'apply-results.json') -Raw).Trim() | Should -Be '[]'
         }
     }
 
@@ -25160,6 +25196,20 @@ Describe 'v0.8.95: Invoke-AzLocalReadinessGatedFailedUpdateRetry (source contrac
         $script:srcWrap | Should -Match 'RetryAlreadyAttempted\s*=\s*\$retryAlready'
         $script:srcWrap | Should -Match 'RetrySkipped\s*=\s*\$retrySkipped'
         $script:srcWrap | Should -Match 'RetryFailed\s*=\s*\$retryFailed'
+    }
+    It 'Writes a valid empty JSON array when no failed update is eligible for retry' {
+        $outDir = Join-Path -Path $TestDrive -ChildPath 'empty-retry-results'
+        New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+        $csvPath = Join-Path -Path $outDir -ChildPath 'readiness-report.csv'
+        @'
+ClusterName,ClusterResourceId,ReadyForUpdate,UpdateState
+alpha,/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha,False,UpToDate
+'@ | Out-File -FilePath $csvPath -Encoding utf8 -Force
+
+        $result = Invoke-AzLocalReadinessGatedFailedUpdateRetry -ReadinessCsvPath $csvPath -OutputDirectory $outDir -PassThru
+
+        Test-Path -LiteralPath $result.RetryResultsJsonPath | Should -BeTrue
+        (Get-Content -LiteralPath $result.RetryResultsJsonPath -Raw).Trim() | Should -Be '[]'
     }
 }
 

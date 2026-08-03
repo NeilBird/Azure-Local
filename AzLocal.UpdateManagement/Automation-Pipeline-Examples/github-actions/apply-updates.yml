@@ -156,7 +156,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.31'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.32'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -535,14 +535,17 @@ jobs:
         INPUT_ALLOWED_UPDATE_VERSIONS: ${{ needs.check-readiness.outputs.resolved_allowed_update_versions }}
       run: |
         Import-Module AzLocal.UpdateManagement -Force
+        $transcriptStarted = $false
         if ($env:DEBUG_VERBOSE -eq 'true') {
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
             Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
+            $transcriptStarted = $true
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
+          try {
         $params = @{
             ReadinessCsvPath      = './artifacts/readiness-report.csv'
             UpdateRing            = $env:INPUT_UPDATE_RING
@@ -554,6 +557,10 @@ jobs:
         if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
         Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
           Invoke-AzLocalReadinessGatedClusterUpdate @params
+        }
+        }
+        finally {
+          if ($transcriptStarted) { Stop-Transcript | Out-Null }
         }
 
     # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
@@ -578,14 +585,17 @@ jobs:
         INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
       run: |
         Import-Module AzLocal.UpdateManagement -Force
+        $transcriptStarted = $false
         if ($env:DEBUG_VERBOSE -eq 'true') {
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
             New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
             Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Append
+            $transcriptStarted = $true
             $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
+          try {
         $params = @{
             ReadinessCsvPath = './artifacts/readiness-report.csv'
             UpdateRing       = $env:INPUT_UPDATE_RING
@@ -594,6 +604,10 @@ jobs:
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
         Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 30 -StepName 'Retry failed updates' -ScriptBlock {
           Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+        }
+        }
+        finally {
+          if ($transcriptStarted) { Stop-Transcript | Out-Null }
         }
 
     - name: Upload pipeline performance diagnostics

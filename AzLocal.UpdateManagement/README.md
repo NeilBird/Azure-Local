@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.31 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.31)
+**Latest Version:** v0.9.32 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.32)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.31](#whats-new-in-v0931)
+- [What's New in v0.9.32](#whats-new-in-v0932)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,15 +78,15 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.31
+## What's New in v0.9.32
 
-**Long-running fleet workflows now recover expired GitHub OIDC authentication and large fleet reads scale by subscription rather than cluster count.** Shared ARM and Resource Graph transports can obtain a fresh GitHub runner assertion, repeat the federated Azure CLI login, restore the configured default CLI subscription, and retry once. For explicit fleets above 200 cluster IDs, readiness, update-summary, available-update, and update-run reads query represented subscriptions in bounded groups of 40 and exact-filter admitted resource IDs client-side; smaller fleets keep the existing 40-ID KQL batches.
+**Diagnostic artifacts now have deterministic, machine-consumable boundaries.** Every bundled GitHub Actions and Azure DevOps principal workload tracks whether transcript startup succeeded and closes that session from `finally`, so successful and failed diagnostic runs receive a complete transcript footer instead of relying on PowerShell process shutdown. Apply Updates finalizes its primary and optional retry sessions independently while continuing to append both sessions to one artifact.
 
-**Monitor: 3 is explicitly read-only and no longer hides incomplete supplementary datasets.** Reporting paths skip sideload-tag reset checks, removing one ARM tag request per cluster. Monitor: 3 records supplementary completeness in pipeline outputs and `-PassThru`, writes all available reports first, and then fails when a requested current-run export is missing; artifact uploads still run so operators retain the evidence. `AZURE_SUBSCRIPTION_ID` is clarified as the Azure CLI default account context after login, not fleet scope. No public function or export-count change (73); all bundled pipeline pins are `0.9.31`.
+**Empty pipeline collection exports are valid JSON.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, readiness-gated apply, and failed-update retry workflows now write `[]` rather than a zero-byte `.json` file. Declared apply artifacts are also created on legitimate early-return paths, preserving successful empty states while allowing downstream parsers to consume every declared JSON artifact consistently. No public function or export-count change (73); all bundled pipeline pins are `0.9.32`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.30`](docs/release-history.md#whats-new-in-v0930) for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.31`](docs/release-history.md#whats-new-in-v0931) for the previous release.
 
 ## Files
 
@@ -586,7 +586,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.31** stay above under [`What's New in v0.9.31`](#whats-new-in-v0931).
+The most recent release notes for **v0.9.32** stay above under [`What's New in v0.9.32`](#whats-new-in-v0932).
+
+### What's New in v0.9.31
+
+**Long-running GitHub workflows can renew expired OIDC-backed Azure CLI authentication, large explicit fleet reads scale by represented subscription, and Monitor: 3 reports incomplete data honestly.** Shared ARM and Resource Graph transports obtain a fresh GitHub runner assertion, repeat federated login, restore the configured default CLI subscription, and retry once when authentication has expired. Explicit fleets above 200 cluster IDs use bounded 40-subscription ARG groups with exact client-side resource-ID filtering for readiness, summaries, available updates, and update runs; smaller fleets retain 40-ID KQL batches. Monitor: 3 and Update: 4 skip sideload-tag reset checks so reporting remains read-only. Monitor: 3 records supplementary completeness, removes stale exports, writes available evidence, and fails late when a requested current-run export is missing. `AZURE_SUBSCRIPTION_ID` is the post-login CLI default context, not fleet scope. No public function or export-count change (73); pipeline pins are updated to `0.9.31`. See [CHANGELOG.md](CHANGELOG.md#0931---2026-07-31) for full details.
 
 ### What's New in v0.9.30
 

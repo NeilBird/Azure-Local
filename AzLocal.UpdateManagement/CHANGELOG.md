@@ -5,6 +5,17 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.32] - 2026-08-03
+
+### Fixed
+
+- Every bundled GitHub Actions and Azure DevOps workload now tracks successful transcript startup and closes the session from a `finally` block. Diagnostic artifacts therefore receive a complete transcript footer on both successful and failed workloads instead of depending on PowerShell process shutdown. Apply Updates finalizes its primary and optional retry transcript sessions independently while retaining one appended artifact.
+- Empty collection artifacts now contain valid JSON arrays instead of zero-byte files across Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, readiness-gated apply, and failed-update retry workflows. Empty datasets remain successful, declared artifacts are still created on early-return paths, and downstream JSON consumers consistently receive `[]`.
+
+### Changed
+
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.32`.
+
 ## [0.9.31] - 2026-07-31
 
 ### Added

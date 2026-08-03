@@ -192,6 +192,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
             default       { Write-Warning "Readiness CSV reports zero clusters with ReadyForUpdate=True - nothing to apply." }
         }
         & $emitCounters 0 0 0 0 0 0 0
+        '[]' | Out-File -FilePath $applyJsonPath -Encoding utf8 -Force -WhatIf:$false
         if ($PassThru) {
             return [pscustomobject]@{
                 Succeeded             = 0
@@ -272,9 +273,9 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     & $emitCounters $succeeded $skipped $failed $healthBlocked $scheduleBlocked $sideloadedBlocked $excludedByTag
 
     # Persist per-cluster apply results to JSON for the downstream Summary step.
-    @($results) | Select-Object ClusterName, Status, UpdateName, Duration, Message |
-        ConvertTo-Json -Depth 4 |
-        Out-File -FilePath $applyJsonPath -Encoding utf8 -Force
+    $projectedResults = @($results | Select-Object ClusterName, Status, UpdateName, Duration, Message)
+    $applyJsonContent = if ($projectedResults.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject $projectedResults -Depth 4 }
+    $applyJsonContent | Out-File -FilePath $applyJsonPath -Encoding utf8 -Force -WhatIf:$false
     Write-Host "Wrote per-cluster apply results to $applyJsonPath"
 
     # ADO-only: per-bucket warning/error log lines (preserves CI surface).

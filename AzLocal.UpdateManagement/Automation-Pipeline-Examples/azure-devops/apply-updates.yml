@@ -134,7 +134,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.31'
+    value: '0.9.32'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -528,14 +528,17 @@ stages:
                 $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
                     $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
                 )
+                $transcriptStarted = $false
                 if ($diagnosticsEnabled) {
                     $VerbosePreference = 'Continue'
                     $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
                     New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
                     Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+                    $transcriptStarted = $true
                     $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
                     Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
                 }
+                  try {
                 $params = @{
                     ReadinessCsvPath      = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                     UpdateRing            = $env:RESOLVED_UPDATE_RING
@@ -554,6 +557,10 @@ stages:
                 }
                 Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
                   Invoke-AzLocalReadinessGatedClusterUpdate @params
+                }
+                }
+                finally {
+                  if ($transcriptStarted) { Stop-Transcript | Out-Null }
                 }
 
           # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
@@ -589,14 +596,17 @@ stages:
                 $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
                     $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
                 )
+                $transcriptStarted = $false
                 if ($diagnosticsEnabled) {
                     $VerbosePreference = 'Continue'
                     $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
                     New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
                     Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Append
+                    $transcriptStarted = $true
                     $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
                     Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
                 }
+                  try {
                 $params = @{
                     ReadinessCsvPath = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                     UpdateRing       = $env:RESOLVED_UPDATE_RING
@@ -605,6 +615,10 @@ stages:
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
                 Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 30 -StepName 'Retry failed updates' -ScriptBlock {
                   Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+                }
+                }
+                finally {
+                  if ($transcriptStarted) { Stop-Transcript | Out-Null }
                 }
 
           - task: PublishPipelineArtifact@1
