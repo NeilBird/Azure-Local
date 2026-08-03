@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Live release validation now includes the read-only Config 1 inventory adapter and parses generated JSON artifacts. `Tests\Invoke-LiveTestsParallel.ps1` runs eight isolated live-Azure shards with bounded PowerShell jobs (default throttle 3), while an offline release gate requires every command called by a bundled pipeline to be live-tested, transitively covered, hermetically covered, or explicitly excluded for destructive behavior.
 - No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.32`.
 
 ## [0.9.31] - 2026-07-31

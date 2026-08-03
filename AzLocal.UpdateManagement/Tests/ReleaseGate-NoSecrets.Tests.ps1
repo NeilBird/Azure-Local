@@ -129,4 +129,11 @@ Describe 'Release gate: no secrets or PII in shippable content' -Tag 'ReleaseGat
         $report = ($allOffenders -join "`n")
         $allOffenders.Count | Should -Be 0 -Because "secret material must never be committed. Offenders:`n$report"
     }
+
+    It 'does not track generated test-result artifacts that may contain live environment data' {
+        $repoRoot = Split-Path -Path $script:ModuleRoot -Parent
+        $trackedResults = @(& git -C $repoRoot ls-files -- 'AzLocal.UpdateManagement/Tests/TestResults/**')
+        $LASTEXITCODE | Should -Be 0
+        $trackedResults | Should -BeNullOrEmpty -Because 'live logs and reports can contain resource names and identifiers and must remain ignored'
+    }
 }

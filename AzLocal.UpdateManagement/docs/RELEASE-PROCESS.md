@@ -4,12 +4,12 @@ This document is the maintainer-facing release checklist. Consumers do not need 
 
 The module ships through a **staged unlisted-release flow** that allows end-to-end validation against the real PowerShell Gallery resolver before the candidate becomes the default install. The flow is intentional - leaving `REQUIRED_MODULE_VERSION` empty in pipeline YAMLs installs the latest **listed** version, so an unlisted candidate is invisible to the default install path. Pinning the unlisted candidate explicitly is how the maintainer reproduces what consumers will see once the version is listed.
 
-In the steps below, `<candidate>` is the version being released (for example `1.2.3`).
+In the steps below, `<candidate>` is the version being released (for example `1.2.3`). Release pull requests must be created through `Tools\New-AzLocalReleasePullRequest.ps1`. That command runs the complete hermetic suite and every live-Azure shard before it invokes `gh pr create`; there is no supported release path that creates the PR first.
 
 ## Staged unlisted-release flow
 
 ```text
- 1. Land all work for the candidate version on a feature branch / PR.
+ 1. Complete all work for the candidate version on a release branch.
  2. Bump ModuleVersion in AzLocal.UpdateManagement.psd1.
  3. Bump GENERATED_AGAINST_MODULE_VERSION in every production pipeline YAML
     under Automation-Pipeline-Examples/ to match the new module version.
@@ -30,22 +30,39 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     Skipping this step ships consumer-visible stale docs that can only be
     corrected by a follow-up republish - see the v0.7.97 release entry
     for the case study.
- 5. Run the full Pester suite. Must be green before publish.
- 6. Publish to PowerShell Gallery: .\Publish-Module.ps1
+ 5. Commit and push the complete release candidate. The certification gate
+    rejects uncommitted module or repository-policy changes because its result
+    must describe the exact commit that will enter the PR.
+ 6. Create the release PR only through the mandatory wrapper:
+        .\Tools\New-AzLocalReleasePullRequest.ps1 `
+            -Title 'Release AzLocal.UpdateManagement v<candidate>' `
+            -BodyFile <path-to-pr-body.md> `
+            -ThrottleLimit 3
+    Before calling `gh pr create`, the wrapper runs:
+      - the complete hermetic Pester suite with Live excluded; and
+      - all eight read-only live-Azure shards against the approved maintainer
+        subscription through Tests\Invoke-LiveTestsParallel.ps1.
+    A failed, skipped, or inconclusive live test blocks PR creation. Success
+    writes a local receipt under `.git\azlocal-release-gates\<commit>.json`
+    containing the exact commit, module version, UTC timestamp, and counts.
+    Do not create an AzLocal.UpdateManagement release PR directly with
+    `gh pr create`, the GitHub UI, or another client.
+ 7. After the PR is approved and merged, publish to PowerShell Gallery:
+        .\Publish-Module.ps1
    The script immediately unlists the exact published version by default.
    Use -List only when intentionally publishing a version that must become
    the default Gallery install immediately, without staged validation.
- 7. Verify the candidate is unlisted in PowerShell Gallery. The version remains
+ 8. Verify the candidate is unlisted in PowerShell Gallery. The version remains
    resolvable by exact pin (-RequiredVersion), but is invisible to Find-Module
    without -AllVersions / -RequiredVersion. If automatic unlisting failed,
    stop and unlist it in Manage Package before continuing.
- 8. Verify exact-pin lookup resolves on a clean runner:
+ 9. Verify exact-pin lookup resolves on a clean runner:
         Find-Module    -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Repository PSGallery
         Install-Module -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Scope CurrentUser -Force
- 9. Copy the bundled pipelines into a separate test repo:
+10. Copy the bundled pipelines into a separate test repo:
         Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub      -Update
         Copy-AzLocalPipelineExample -Destination .\.azure-pipelines  -Platform AzureDevOps -Update
-10. From the test repo root, run the helper dropped by Copy/Update:
+11. From the test repo root, run the helper dropped by Copy/Update:
     .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate>
   Follow the full [development-channel testing runbook](../Automation-Pipeline-Examples/docs/development-channel-testing.md)
   for the enable, validation, disable, and recovery procedure.
@@ -60,7 +77,7 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     drift warning emitted by the YAML preamble (the
     "installed module older than YAML generated-against" guard) will
     flag this if it slips through.
-11. Run the full validation matrix in the test repo:
+12. Run the full validation matrix in the test repo:
       - auth-smoke-test               (OIDC + Service Principal paths)
       - inventory-clusters            (read-only ARG)
       - manage-updatering-tags        (dry-run AND committed write)
@@ -69,9 +86,9 @@ In the steps below, `<candidate>` is the version being released (for example `1.
       - fleet-update-status           (read-only summary)
       - fleet-health-status           (read-only summary)
       - apply-updates-schedule-audit  (read-only schedule advisor)
-12. Inspect every JUnit XML and step summary. Failing testcases must
+13. Inspect every JUnit XML and step summary. Failing testcases must
     be triaged before listing.
-13. Once validation is clean, LIST the candidate version in PowerShell
+14. Once validation is clean, LIST the candidate version in PowerShell
     Gallery (Manage Package -> Re-list). The version is now the default
     install for consumers with empty REQUIRED_MODULE_VERSION.
   Remove the test-repo development channel so future runs exercise
@@ -81,12 +98,20 @@ In the steps below, `<candidate>` is the version being released (for example `1.
   the runtime pin. Do not manually remove the pin first.
   For GitHub the helper deletes the repository variable. For Azure DevOps it
   prints the variable-group delete command; run that command.
-14. Tag the git commit (e.g. git tag v<candidate>) and push the tag.
+15. Tag the merged release commit (e.g. `git tag v<candidate>`) and push the tag.
+16. Create the public GitHub Release from the pushed tag:
+    gh release create v<candidate> `
+      --verify-tag `
+      --title 'AzLocal.UpdateManagement v<candidate>' `
+      --generate-notes
+  Review the generated notes before publishing and ensure they contain no
+  customer names, resource names, email addresses, or other PII. Confirm the
+  release targets the same merged commit that was tagged in step 15.
 ```
 
 ## Verification commands
 
-During step 8 (post-unlist, pre-validation):
+During step 9 (post-unlist, pre-validation):
 
 ```powershell
 # Exact-pin lookup must resolve to <candidate>.
@@ -101,7 +126,7 @@ Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery
 .\Update-Module-And-Pipelines.ps1 -RequiredVersion <candidate> -NoPush
 ```
 
-After step 13 (post-relist):
+After step 14 (post-relist):
 
 ```powershell
 # Default lookup must now resolve to <candidate>.
@@ -165,7 +190,8 @@ staging step.
 
 ## After release
 
-- Tag and push the release commit (step 14 above).
+- Tag and push the release commit (step 15 above).
+- Create and review the GitHub Release from that tag (step 16 above).
 - Open the tracking issue / feature branch for the next release.
 - Confirm the listed version on PSGallery matches `<candidate>` and that
   `Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery`

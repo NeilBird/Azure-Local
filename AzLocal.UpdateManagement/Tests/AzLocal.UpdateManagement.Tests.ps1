@@ -14661,8 +14661,8 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
                         [PSCustomObject]@{
                             ClusterName          = 'cluster-example-01'
                             ResourceGroup        = 'rg-example-01'
-                            SubscriptionId       = 'fbaf508b-cb61-4383-9cda-a42bfa0c7bc9'
-                            ClusterResourceId    = '/subscriptions/fbaf508b-cb61-4383-9cda-a42bfa0c7bc9/resourceGroups/rg-example-01/providers/Microsoft.AzureStackHCI/clusters/cluster-example-01'
+                            SubscriptionId       = '00000000-0000-0000-0000-000000000000'
+                            ClusterResourceId    = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-example-01/providers/Microsoft.AzureStackHCI/clusters/cluster-example-01'
                             UpdateName           = 'Solution12.2604.1003.1005'
                             RunId                = 'add1f87d-4174-4997-ae39-d9d41088be27'
                             State                = 'Failed'
@@ -15668,8 +15668,8 @@ Describe 'Regression v0.7.84: Get-AzLocalFleetConnectivityStatus correctness fix
                     return @(
                         [PSCustomObject]@{
                             name = 'Mobile'
-                            id   = '/subscriptions/sub1/resourceGroups/acx-mobile-azl/providers/Microsoft.AzureStackHCI/clusters/Mobile'
-                            resourceGroup  = 'acx-mobile-azl'
+                            id   = '/subscriptions/sub1/resourceGroups/rg-mobile-lab/providers/Microsoft.AzureStackHCI/clusters/Mobile'
+                            resourceGroup  = 'rg-mobile-lab'
                             subscriptionId = 'sub1'
                             location       = 'eastus'
                             properties     = [PSCustomObject]@{
@@ -15692,15 +15692,15 @@ Describe 'Regression v0.7.84: Get-AzLocalFleetConnectivityStatus correctness fix
                     return @(
                         [PSCustomObject]@{
                             name = 'Mobile-A'
-                            id   = '/subscriptions/sub1/resourceGroups/acx-mobile-azl/providers/Microsoft.HybridCompute/machines/Mobile-A'
-                            resourceGroup  = 'acx-mobile-azl'
+                            id   = '/subscriptions/sub1/resourceGroups/rg-mobile-lab/providers/Microsoft.HybridCompute/machines/Mobile-A'
+                            resourceGroup  = 'rg-mobile-lab'
                             subscriptionId = 'sub1'
                             properties     = [PSCustomObject]@{
                                 status                  = 'Disconnected'
                                 cloudMetadata           = [PSCustomObject]@{ provider = 'AzSHCI' }
                                 # Bug B repro: real ARM ID with cluster name 'Mobile' as last segment.
                                 # Pre-fix code would have returned 'e' (last char of 'Mobile').
-                                parentClusterResourceId = '/subscriptions/sub1/resourceGroups/acx-mobile-azl/providers/Microsoft.AzureStackHCI/clusters/Mobile'
+                                parentClusterResourceId = '/subscriptions/sub1/resourceGroups/rg-mobile-lab/providers/Microsoft.AzureStackHCI/clusters/Mobile'
                                 agentVersion            = '1.40.0'
                                 osSku                   = 'Azure Stack HCI'
                                 osVersion               = '10.0.26100.32522'
@@ -15718,8 +15718,8 @@ Describe 'Regression v0.7.84: Get-AzLocalFleetConnectivityStatus correctness fix
                     return @(
                         [PSCustomObject]@{
                             name           = 'Mobile-arcbridge'
-                            id             = '/subscriptions/sub1/resourceGroups/acx-mobile-azl/providers/Microsoft.ResourceConnector/appliances/Mobile-arcbridge'
-                            resourceGroup  = 'acx-mobile-azl'
+                            id             = '/subscriptions/sub1/resourceGroups/rg-mobile-lab/providers/Microsoft.ResourceConnector/appliances/Mobile-arcbridge'
+                            resourceGroup  = 'rg-mobile-lab'
                             subscriptionId = 'sub1'
                             properties     = [PSCustomObject]@{ status = 'Offline' }
                             systemData     = [PSCustomObject]@{ lastModifiedAt = $script:offlineArbStamp }

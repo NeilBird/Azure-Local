@@ -84,6 +84,8 @@ If you are new to this module, work through these in order from a regular PowerS
 
 **Empty pipeline collection exports are valid JSON.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, readiness-gated apply, and failed-update retry workflows now write `[]` rather than a zero-byte `.json` file. Declared apply artifacts are also created on legitimate early-return paths, preserving successful empty states while allowing downstream parsers to consume every declared JSON artifact consistently. No public function or export-count change (73); all bundled pipeline pins are `0.9.32`.
 
+**Live release validation stays aligned with the pipeline surface.** The live-Azure suite now covers the read-only Config 1 inventory adapter, parses generated JSON, and can run as eight isolated PowerShell job shards with `Tests\Invoke-LiveTestsParallel.ps1 -ThrottleLimit 3`. An offline release gate fails when a bundled pipeline introduces an unclassified cmdlet call, requiring live, transitive, hermetic, or documented destructive-exclusion coverage.
+
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.31`](docs/release-history.md#whats-new-in-v0931) for the previous release.

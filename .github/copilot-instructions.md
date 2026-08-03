@@ -63,6 +63,13 @@ This repository contains PowerShell automation tools for deploying and managing 
 - Tests located in each module's `Tests/` folder
 - Test invocation: `.\Tests\Invoke-Tests.ps1` from the module directory
 
+### AzLocal.UpdateManagement release pull requests
+
+- Never create an `AzLocal.UpdateManagement` release PR directly with `gh pr create` or another GitHub client.
+- Commit and push the complete release candidate first, then use `AzLocal.UpdateManagement\Tools\New-AzLocalReleasePullRequest.ps1`.
+- The wrapper must complete the hermetic suite and all live-Azure shards with zero live failures, skips, or inconclusive tests before PR creation.
+- Do not bypass, mock, suppress, or reorder the pre-PR gate. See `AzLocal.UpdateManagement\docs\RELEASE-PROCESS.md`.
+
 ### CRITICAL: Running Pester tests from Copilot/AI terminals
 - Pester output (ANSI colors, verbose test results) overwhelms VS Code's terminal renderer
 - This has caused repeated VS Code "window not responding" crashes

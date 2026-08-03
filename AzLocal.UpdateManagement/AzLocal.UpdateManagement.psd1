@@ -388,7 +388,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.32 - Diagnostic transcripts now close deterministically in finally blocks across every bundled GitHub Actions and Azure DevOps workload, including failed runs and Apply Updates retry sessions. Empty collection JSON artifacts contain [] instead of zero-byte content across Fleet Connectivity, Fleet Health, authentication, inventory, apply, and retry workflows, including early-return paths. No export change (73).
+## Version 0.9.32 - Diagnostic transcripts close deterministically in finally blocks across every bundled workload, including failed runs and Apply Updates retry sessions. Empty collection JSON artifacts contain [] across connectivity, health, authentication, inventory, apply, and retry workflows. Live certification adds Config 1 inventory and JSON parsing, bounded eight-shard PowerShell job execution, and a pipeline-command coverage drift gate. No export change (73).
 
 ## Version 0.9.31 - Long-running GitHub workflows can renew expired OIDC-backed Azure CLI authentication. Large explicit fleet scopes use bounded subscription batches with exact client-side resource-ID filtering. Monitor: 3 is read-only and fails late when requested supplementary exports are incomplete, preserving available reports. The default Azure CLI subscription is clarified as authentication context, not fleet scope. No export change (73).
 
