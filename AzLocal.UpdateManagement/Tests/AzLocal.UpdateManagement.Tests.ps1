@@ -398,6 +398,28 @@ scope:
             } -Times 6 -Exactly
         }
     }
+
+    It 'preserves a single represented subscription as one complete subscription ID' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:capturedSubscriptionIds = $null
+            Mock Invoke-AzResourceGraphQuery {
+                $script:capturedSubscriptionIds = @($SubscriptionId)
+                return @()
+            }
+
+            $subscriptionId = '11111111-1111-1111-1111-111111111111'
+            $values = 1..201 | ForEach-Object {
+                "/subscriptions/$subscriptionId/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+            }
+            $template = "resources | extend ClusterResourceId_ = tolower(id) | where ClusterResourceId_ in~ ({0}) | project ClusterResourceId_"
+
+            Invoke-AzLocalResourceGraphValueBatches -Value $values -QueryTemplate $template -ExactResourceIdProperty 'ClusterResourceId_' -BatchSize 40
+
+            $script:capturedSubscriptionIds.Count | Should -Be 1
+            $script:capturedSubscriptionIds[0] | Should -Be $subscriptionId
+            Assert-MockCalled Invoke-AzResourceGraphQuery -Times 1 -Exactly
+        }
+    }
 }
 
 Describe 'Module: AzLocal.UpdateManagement' {

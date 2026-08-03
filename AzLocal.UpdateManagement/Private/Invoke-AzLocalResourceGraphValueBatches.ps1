@@ -51,12 +51,12 @@ function Invoke-AzLocalResourceGraphValueBatches {
                 $derivedSubscriptionIds.Add($Matches[1]) | Out-Null
             }
         }
-        $querySubscriptionIds = if ($SubscriptionId) {
-            @($SubscriptionId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { ([string]$_).Trim() } | Select-Object -Unique)
+        $querySubscriptionIds = @(if ($SubscriptionId) {
+            $SubscriptionId | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { ([string]$_).Trim() } | Select-Object -Unique
         }
         else {
-            @($derivedSubscriptionIds | Select-Object -Unique)
-        }
+            $derivedSubscriptionIds | Select-Object -Unique
+        })
         if ($querySubscriptionIds.Count -eq 0) {
             throw 'Invoke-AzLocalResourceGraphValueBatches: no subscription IDs could be resolved for the large-fleet query.'
         }
