@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-08-03
-- Version: 0.2.31
+- Version: 0.2.32
 
 ## TL;DR
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.31 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.32 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,15 +133,15 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.31 release asset is `Get-HyperVVMCheckpointHealth-0.2.31.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.32 release asset is `Get-HyperVVMCheckpointHealth-0.2.32.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). When `-ZipPath` is omitted, it looks for the versioned ZIP beside the setup script first and then in `$env:TEMP`. It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-ZipPath` to select another location, `-InstallRoot` to choose another parent directory, and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.31/Get-HyperVVMCheckpointHealth-0.2.31.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.31.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.31/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.32/Get-HyperVVMCheckpointHealth-0.2.32.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.32.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.32/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 ```
 
@@ -538,7 +538,7 @@ Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** after all VM audit
 | `StaleAttachedLayerCount` | int | Count of attached differencing layers at/beyond `-StaleHours`, independent of named snapshot metadata. |
 | `SnapshotLayerMismatch` | bool | Snapshot and attached-layer representations disagree; treated as inconclusive evidence requiring investigation. |
 | `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events **attributable to this VM** (the message names this VM or its VM ID). Node-wide concern events that reference other VMs are reported as context and are **not** counted here. |
-| `AssessmentConfidence` | string | Top-level automation field: `Complete` only when required chain, inventory, event, historic, state-consistency, and VSS evidence is complete; otherwise `Incomplete`. It remains present for `NOT FOUND` and `ERROR`. |
+| `AssessmentConfidence` | string | Top-level automation field using `High`, `Moderate`, or `Low`. Only `High` means all required chain, inventory, event, historic, state-consistency, VSS, and artifact evidence is complete. `NOT FOUND` and `ERROR` rows use `Low`. |
 | `CollectionStatus` | object | Top-level, consistently shaped status for outcome, chain, virtual-disk, event, historic, state-consistency, and VSS collection. Sources that were not reached on `NOT FOUND` / `ERROR` rows report `NotCollected`. |
 | `ReportFile` | string | Path to this VM's `.txt` report (`$null` when `-OutputPath` omitted). |
 | `Detail` | string | Concise outcome context. For `INVESTIGATE`, this is the same driver-specific assessment text used by the TXT/HTML findings; for `NOT FOUND` / `ERROR`, it describes the collection outcome. It is normally empty for `OK` / `HOLD STATE`, whose complete evidence remains in `ReportData`. |
@@ -630,7 +630,7 @@ These observations describe two anonymized v0.2.22 field runs and are historical
 
 The larger run audited roughly three times as many VMs but took approximately 1.4 times as long. In these observations, runtime correlated more strongly with owning-node count and cluster inventory cardinality than with VM count alone.
 
-Since v0.2.23, bounded diagnostic prefetch overlaps collection across up to four independent owner nodes; event collection and VSS collection remain sequential within each node to limit node-local pressure. Transient reads are retried up to three times, missing fan-out results retry sequentially, coordinator setup failures fall back to lazy per-node collection, and partial failures remain explicit. Version 0.2.24 retains this scheduling model.
+Since v0.2.23, bounded diagnostic prefetch overlaps collection across independent owner nodes; v0.2.32 raises the coordinator ceiling from four to eight nodes. Event collection and VSS collection remain sequential within each node to limit node-local pressure. Transient reads are retried up to three times, missing fan-out results retry sequentially, coordinator setup failures fall back to lazy per-node collection, and partial failures remain explicit. Historic cross-node event correlation also uses one bounded remote fan-out and records its execution mode, merged-window count, planned query count, failed-node count, and duration.
 
 Applying the v0.2.23 schedule to the earlier component timings modeled opportunities of approximately 12.0 minutes for the ~20-VM run and 16.5 minutes for the ~60-VM run. Those figures are historical estimates, not measured post-change savings. Actual runtime depends on owner-node count, cluster inventory cardinality, event volume, WinRM startup, event-log service contention, CPU, storage, and VSS latency. Use the performance-telemetry JSON from representative runs in your own environment when evaluating operational impact or scheduling recurring audits; parent and child durations overlap and must not be summed.
 
@@ -646,11 +646,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.31.zip
-release\Get-HyperVVMCheckpointHealth-0.2.31.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.32.zip
+release\Get-HyperVVMCheckpointHealth-0.2.32.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.31` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.32` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -659,6 +659,16 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.31` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.32
+
+- Treats nonzero `vssadmin` exits and output without parseable writer blocks as incomplete evidence instead of a healthy empty result.
+- Uses structured VM GUID/name attribution for historic events, preventing prefix-overlapping VM names from receiving another VM's evidence.
+- Preserves event `RecordId` in per-VM and node CSVs, always emits explicit successful-empty or unavailable node artifacts, and aligns `ReportData.VmEvents` across standard and historic evidence.
+- Records TXT artifact completion in the returned contract; a write failure clears `ReportFile`, records the error, and lowers assessment confidence.
+- Standardizes `AssessmentConfidence` on `High`, `Moderate`, and `Low`; only `High` contributes to fully-assessed fleet totals.
+- Raises bounded node diagnostic prefetch to eight workers and fans historic remote scans out concurrently with execution-mode, window/query, failed-node, and duration telemetry.
+- Hardens the Pester runner so NUnit-recorded failures cannot return a successful process exit code.
 
 ### Version 0.2.31
 

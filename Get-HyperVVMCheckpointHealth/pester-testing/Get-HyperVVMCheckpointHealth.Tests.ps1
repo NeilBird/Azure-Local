@@ -95,7 +95,7 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match 'function Get-NodeDiagnosticSnapshot'
         $script:Source | Should -Match 'function Invoke-NodeDiagnosticPrefetch'
         $script:Source | Should -Match 'function Initialize-NodeDiagnosticPrefetch'
-        $script:Source | Should -Match '-ThrottleLimit 4 -SkipEvents:\$SkipEvents'
+        $script:Source | Should -Match '-ThrottleLimit 8 -SkipEvents:\$SkipEvents'
         $script:Source | Should -Match '\$initialDiagnosticNodes[\s\S]*?Initialize-NodeDiagnosticPrefetch[\s\S]*?foreach \(\$name in \$script:PendingVMNames\)'
         $script:Source | Should -Match '\$discoveredDiagnosticNodes[\s\S]*?Initialize-NodeDiagnosticPrefetch[\s\S]*?foreach \(\$dv in \$toAudit\)'
         $script:Source | Should -Match "Add-TelemetryEntry -Step '1\.08\.10' -Phase 'Node diagnostic prefetch coordination'"
@@ -174,12 +174,16 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     It 'finalizes complete PassThru automation rows only after run artifacts exist' {
         $script:Source | Should -Not -Match 'if \(\$PassThru\) \{ \$vmSummary \}'
         $script:Source | Should -Not -Match 'if \(\$PassThru\) \{ \$s \}'
-        $script:Source | Should -Match 'VmEvents\s*=\s*@\(\$workerEvents\s*\|\s*Where-Object\s*\{\s*\$_\.VmAttributed\s*\}'
+        $script:Source | Should -Match 'VmEvents\s*=\s*\$reportVmEvents'
+        $script:Source | Should -Match '\$reportVmEventEvidence\.Add\(\$eventRow\)'
         $script:Source | Should -Match '\$runData\s*=\s*\[pscustomobject\]\[ordered\]@\{'
         $script:Source | Should -Match 'HousekeepingFindings\s*=\s*\$script:HousekeepingFindings\.ToArray\(\)'
         $script:Source | Should -Match 'StorageHealth\s*=\s*\$script:ClusterStorageHealth'
         $script:Source | Should -Match 'NodeEventContext\s*=\s*\$nodeEventContext'
         $script:Source | Should -Match 'Complete-CheckpointHealthPassThruResult\s+-Result\s+\$auditResult\s+-RunData\s+\$runData'
+        $script:Source | Should -Match '\$auditSummary\.ReportFile\s*=\s*\$null'
+        $script:Source | Should -Match 'CollectionStatus\.Artifacts\.Status\s*=\s*''Incomplete'''
+        $script:Source | Should -Match 'ReportData\.AssessmentConfidence\s*=\s*''Low'''
         $script:Source | Should -Match 'VMsProcessed\s*=\s*\$script:AllAuditResults\.Count'
         $script:Source | Should -Match 'VMsFullyAssessed\s*=\s*@\(\$script:AllAuditResults\s*\|\s*Where-Object'
         $script:Source | Should -Match 'Processed\s*=\s*\$script:AllAuditResults\.Count'
@@ -446,7 +450,7 @@ Describe 'Per-VM event marker CSV contract' {
         $row = Import-Csv -LiteralPath (Join-Path $TestDrive $csvName)
 
         @($row.PSObject.Properties.Name) | Should -Be @(
-            'Time (UTC)', 'AuditedVMName', 'AuditedVMId', 'Node', 'Id', 'Level', 'Log', 'Concern', 'CollectedAsConcern', 'VmAttributed',
+            'Time (UTC)', 'AuditedVMName', 'AuditedVMId', 'Node', 'RecordId', 'Id', 'Level', 'Log', 'Concern', 'CollectedAsConcern', 'VmAttributed',
             'AttributionMethod', 'AttributionConfidence', 'EvidenceScope', 'CorrelationAnchor',
             'CorrelationWindowStartUtc', 'CorrelationWindowEndUtc', 'EventClassification',
             'VerdictDriver', 'IsConfirmingFork', 'RecoveryDisposition', 'DispositionReason', 'FullMessage'
@@ -507,6 +511,7 @@ Describe 'Structured historic event evidence contract' {
         $rows[0].AuditedVMName | Should -Be 'ContosoVM01'
         $rows[0].AuditedVMId | Should -Be '11111111-1111-1111-1111-111111111111'
         $rows[0].Node | Should -Be 'Node01'
+        $rows[0].RecordId | Should -Be 42
         $rows[0].VmAttributed | Should -BeTrue
         $rows[0].AttributionMethod | Should -Be 'StructuredGuid'
         $rows[0].AttributionConfidence | Should -Be 'High'
@@ -820,6 +825,7 @@ Describe 'PassThru automation result contract' {
             HistoricEvents = [pscustomobject]@{ Status = 'NotRequired' }
             StateConsistency = [pscustomobject]@{ Status = 'Stable' }
             VssWriters = [pscustomobject]@{ Status = 'Healthy' }
+            Artifacts = [pscustomobject]@{ Status = 'Complete'; TextReport = 'C:\Temp\TEST-VM.txt'; Error = '' }
         }
         $reportData = [pscustomobject]@{ AssessmentConfidence = 'Complete'; CollectionStatus = $nestedStatus }
         $runData = [pscustomobject]@{ Cluster = 'TEST-CLUSTER'; HousekeepingFindings = @() }
@@ -835,8 +841,9 @@ Describe 'PassThru automation result contract' {
 
         @($result.PSObject.Properties.Name) | Should -Be $script:ExpectedPassThruProperties
         $result.Source | Should -Be 'Discovered'
-        $result.AssessmentConfidence | Should -Be 'Complete'
+        $result.AssessmentConfidence | Should -Be 'High'
         $result.CollectionStatus.EventLogs.Status | Should -Be 'Success'
+        $result.CollectionStatus.Artifacts.Status | Should -Be 'Complete'
         $result.CollectionStatus.Outcome.Status | Should -Be 'OK'
         [object]::ReferenceEquals($result.RunData, $runData) | Should -BeTrue
     }
@@ -901,7 +908,7 @@ Describe 'PassThru automation result contract' {
         $results.Count | Should -Be 2
         foreach ($result in $results) {
             @($result.PSObject.Properties.Name) | Should -Be $script:ExpectedPassThruProperties
-            $result.AssessmentConfidence | Should -Be 'Incomplete'
+            $result.AssessmentConfidence | Should -Be 'Low'
             $result.CollectionStatus.VhdChains.Status | Should -Be 'NotCollected'
             $result.CollectionStatus.Outcome.Status | Should -Be $result.Recommendation
             $result.CollectionStatus.Outcome.Detail | Should -Be $result.Detail
@@ -920,8 +927,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.31 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.31'
+    It 'imports a valid 0.2.32 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.32'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -1025,7 +1032,7 @@ Describe 'Module distribution contracts' {
     It 'documents the complete PassThru automation contract and correct nesting' {
         $readme = Get-Content -LiteralPath (Join-Path $script:ModuleRoot 'README.md') -Raw
         $readme | Should -Match '\| `Source` \| string \|'
-        $readme | Should -Match '\| `AssessmentConfidence` \| string \| Top-level automation field:'
+        $readme | Should -Match '\| `AssessmentConfidence` \| string \| Top-level automation field using `High`, `Moderate`, or `Low`\.'
         $readme | Should -Match '\| `CollectionStatus` \| object \| Top-level, consistently shaped status'
         $readme | Should -Match '\| `RunData` \| object \| Shared final run snapshot'
         $readme | Should -Match 'ReportData\.VmEvents'
@@ -1482,6 +1489,21 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
         $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed\.'
         $script:CleanRenderedHtml | Should -Match '<strong>1 input \+ 0 automatically discovered = 1 processed</strong>; <strong>1 was fully assessed</strong>; <strong>0 were incomplete</strong>'
+    }
+
+    It 'counts a low-confidence non-error result as incomplete' {
+        $lowConfidenceData = $normalReportData.PSObject.Copy()
+        Add-Member -InputObject $lowConfidenceData -NotePropertyName AssessmentConfidence -NotePropertyValue 'Low'
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM-LOW'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $lowConfidenceData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
+            -GeneratedUtc '2026-01-01 00:00:00' -DiscoveredVMs @() `
+            -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false `
+            -ScriptVersion '0.2.32' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+
+        $html | Should -Match '1 processed VM &nbsp;&bull;&nbsp; 0 fully assessed'
+        $html | Should -Match '<strong>0 were fully assessed</strong>; <strong>1 was incomplete</strong>'
     }
 
     It 'distinguishes no attributed events from low-signal events and reports a checked Analytic channel precisely' {
@@ -2674,6 +2696,53 @@ Describe 'Historic event correlation coverage aggregation' {
         @($result.Coverage | Where-Object Status -eq 'Wrapped').Count | Should -Be 0
         $result.LogsWrappedPastWindow | Should -BeFalse
     }
+
+    It 'rejects a prefix-overlapping historic event with a different structured VM identity' {
+        Mock Get-WinEvent {
+            if ($ListLog) { return [pscustomobject]@{ IsEnabled = $true } }
+            if ($Oldest) { return [pscustomobject]@{ TimeCreated = [datetime]'2026-07-01T00:00:00Z' } }
+            [pscustomobject]@{
+                TimeCreated = [datetime]'2026-07-10T12:00:00Z'; RecordId = 42; Id = 3216
+                LevelDisplayName = 'Error'
+                Message = "Virtual machine 'APP010' failed checkpoint commit. (Virtual machine ID 11111111-1111-1111-1111-111111111111)"
+            }
+        }
+
+        $result = Get-HistoricVMEventCorrelation -VMName 'APP01' -VMId '00000000-0000-0000-0000-000000000000' `
+            -Nodes @($env:COMPUTERNAME) -Timestamps @([datetime]'2026-07-10T12:00:00Z') -WindowMinutes 120 `
+            -SignatureIds @(3216) -SignatureRx '0x80048102'
+
+        $result.MatchCount | Should -Be 0
+        @($result.Matches).Count | Should -Be 0
+    }
+
+    It 'fans multiple remote historic scans out through one bounded invocation' {
+        Mock Invoke-Command {
+            foreach ($computer in @($ComputerName)) {
+                [pscustomobject]@{
+                    Node = $computer
+                    Matches = @()
+                    Coverage = @(
+                        [pscustomobject]@{ Node = $computer; Channel = 'Worker'; QuerySucceeded = $true; IsEnabled = $true; OldestAvailable = [datetime]'2026-07-01T00:00:00Z'; Error = '' }
+                        [pscustomobject]@{ Node = $computer; Channel = 'VMMS'; QuerySucceeded = $true; IsEnabled = $true; OldestAvailable = [datetime]'2026-07-01T00:00:00Z'; Error = '' }
+                    )
+                }
+            }
+        }
+
+        $result = Get-HistoricVMEventCorrelation -VMName 'APP01' -VMId '00000000-0000-0000-0000-000000000000' `
+            -Nodes @('REMOTE-NODE-A', 'REMOTE-NODE-B') -Timestamps @([datetime]'2026-07-10T12:00:00Z') `
+            -WindowMinutes 120 -SignatureIds @(3216) -SignatureRx '0x80048102'
+
+        $result.ExecutionMode | Should -Be 'ConcurrentRemote'
+        $result.MergedWindowCount | Should -Be 1
+        $result.PlannedEventQueries | Should -Be 4
+        $result.FailedNodeCount | Should -Be 0
+        $result.DurationMs | Should -BeGreaterOrEqual 0
+        Should -Invoke Invoke-Command -Times 1 -Exactly -ParameterFilter {
+            @($ComputerName).Count -eq 2 -and $ThrottleLimit -eq 2
+        }
+    }
 }
 
 Describe 'Typed Hyper-V replication assessment' {
@@ -3341,7 +3410,7 @@ Describe 'Node diagnostic prefetch runtime' {
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
-        foreach ($functionName in @('Get-NodeDiagnosticSnapshot', 'Invoke-NodeDiagnosticPrefetch', 'Initialize-NodeDiagnosticPrefetch')) {
+        foreach ($functionName in @('Get-NodeDiagnosticSnapshot', 'Invoke-NodeDiagnosticPrefetch', 'Initialize-NodeDiagnosticPrefetch', 'Write-NodeEventsCsvArtifact')) {
             $functionAst = $ast.FindAll({
                 param($node)
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -3437,6 +3506,34 @@ Describe 'Node diagnostic prefetch runtime' {
         $result.Errors[0].Operation | Should -Be 'Event'
     }
 
+    It 'marks VSS unavailable when vssadmin exits with a nonzero native code' {
+        Mock Get-WinEvent { @() }
+        Mock vssadmin {
+            $global:LASTEXITCODE = 5
+            @()
+        }
+
+        $result = Get-NodeDiagnosticSnapshot -LookbackHours 168 -ConcernIds @() `
+            -ContextIds @() -CodePatterns @() -MaxAttempts 1 -DelayMs 0
+
+        $result.Complete | Should -BeFalse
+        $result.VssStatus | Should -Be 'Unavailable'
+        $result.VssError | Should -Match 'exited with code 5'
+        $result.Errors.Operation | Should -Contain 'VSS'
+    }
+
+    It 'marks VSS unavailable when output contains no parseable writers' {
+        Mock Get-WinEvent { @() }
+        Mock vssadmin { @('Localized or malformed output') }
+
+        $result = Get-NodeDiagnosticSnapshot -LookbackHours 168 -ConcernIds @() `
+            -ContextIds @() -CodePatterns @() -MaxAttempts 1 -DelayMs 0
+
+        $result.Complete | Should -BeFalse
+        $result.VssStatus | Should -Be 'Unavailable'
+        $result.VssError | Should -Match 'did not contain any parseable VSS writers'
+    }
+
     It 'fans remote nodes out with a bounded throttle while collecting the local node' {
         $localNode = $env:COMPUTERNAME
         $remoteNodes = @('REMOTE-NODE-B', 'REMOTE-NODE-A')
@@ -3451,7 +3548,11 @@ Describe 'Node diagnostic prefetch runtime' {
         Mock Remove-Job { }
         Mock Wait-Job { $Job }
         Mock Get-WinEvent { [void]$script:PrefetchOrder.Add('LocalEvent'); @() }
-        Mock vssadmin { @() }
+        Mock vssadmin {
+            "Writer name: 'Test Writer'"
+            '   State: [1] Stable'
+            '   Last error: No error'
+        }
         Mock Receive-Job {
             foreach ($remoteNode in $remoteNodes) {
                 $remoteResult = New-TestNodeDiagnosticSnapshot -Node $remoteNode
@@ -3525,7 +3626,11 @@ Describe 'Node diagnostic prefetch runtime' {
         }
         Mock Remove-PSSession { }
         Mock Get-WinEvent { @() }
-        Mock vssadmin { @() }
+        Mock vssadmin {
+            "Writer name: 'Test Writer'"
+            '   State: [1] Stable'
+            '   Last error: No error'
+        }
         Mock Invoke-Command { & $ScriptBlock @ArgumentList }
 
         $result = Invoke-NodeDiagnosticPrefetch `
@@ -3559,7 +3664,7 @@ Describe 'Node diagnostic prefetch runtime' {
     It 'merges prefetched event and VSS evidence and writes the node CSV once' {
         $node = 'REMOTE-NODE-A'
         $eventRow = [pscustomobject]@{
-            'Time (UTC)' = '2026-07-23 12:00:00'; Id = 19100; Level = 'Error'; Log = 'VMMS'
+            'Time (UTC)' = '2026-07-23 12:00:00'; RecordId = 42L; Id = 19100; Level = 'Error'; Log = 'VMMS'
             Concern = 'YES'; Message = 'Merge failed'; FullMessage = 'Merge failed'
         }
         $snapshot = New-TestNodeDiagnosticSnapshot -Node $node
@@ -3584,7 +3689,25 @@ Describe 'Node diagnostic prefetch runtime' {
         @($script:NodeEventCache["$node|168"].Rows).Count | Should -Be 1
         @($script:VssByNode[$node]).Count | Should -Be 1
         $script:NodeCsvNameByNode[$node] | Should -Not -BeNullOrEmpty
-        Test-Path -LiteralPath (Join-Path $TestDrive $script:NodeCsvNameByNode[$node]) | Should -BeTrue
+        $nodeCsvPath = Join-Path $TestDrive $script:NodeCsvNameByNode[$node]
+        Test-Path -LiteralPath $nodeCsvPath | Should -BeTrue
+        $csvRow = Import-Csv -LiteralPath $nodeCsvPath
+        @($csvRow.PSObject.Properties.Name) | Should -Be @('Time (UTC)', 'Node', 'RecordId', 'Id', 'Level', 'Log', 'Concern', 'CollectionStatus', 'FullMessage')
+        $csvRow.RecordId | Should -Be '42'
+        $csvRow.CollectionStatus | Should -Be 'Success'
+    }
+
+    It 'writes distinct marker artifacts for successful-empty and unavailable node scans' {
+        $successName = Write-NodeEventsCsvArtifact -Node 'EMPTY-NODE' -OutputPath $TestDrive -Status 'Success' -Rows @()
+        $unavailableName = Write-NodeEventsCsvArtifact -Node 'FAILED-NODE' -OutputPath $TestDrive `
+            -Status 'Unavailable' -Rows @() -ErrorMessage 'Synthetic event service failure.'
+
+        $successRow = Import-Csv -LiteralPath (Join-Path $TestDrive $successName)
+        $unavailableRow = Import-Csv -LiteralPath (Join-Path $TestDrive $unavailableName)
+        $successRow.CollectionStatus | Should -Be 'Success'
+        $successRow.FullMessage | Should -Match 'no selected events were returned'
+        $unavailableRow.CollectionStatus | Should -Be 'Unavailable'
+        $unavailableRow.FullMessage | Should -Match 'Synthetic event service failure'
     }
 }
 

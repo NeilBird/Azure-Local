@@ -7,7 +7,7 @@
         'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
         'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
     )
-    ModuleVersion = '0.2.31'
+    ModuleVersion = '0.2.32'
     CompatiblePSEditions = @('Desktop')
     GUID = '8b35df55-2975-48f8-bdb8-c8bc8da4a49c'
     Author = 'Neil Bird, Microsoft'
@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.31 strengthens evidence completeness and fleet performance: VHD file-metadata failures make chain evidence incomplete instead of silently suppressing stale-layer timestamps; every attempted VM receives a schema-consistent Events CSV marker even when collection terminates early; per-VM event CSV rows include the audited VM name and ID; cached node events are indexed by structured identity and reuse precomputed recovery dispositions; and a clustered role whose VM is absent on its recorded owner is checked across all cluster nodes and reported as a stale-role candidate, owner mismatch, or incomplete verification.'
+            ReleaseNotes = 'Version 0.2.32 strengthens evidence integrity and fleet performance: VSS native failures and malformed output are incomplete evidence; historic attribution uses structured VM identity; event CSVs preserve RecordId and explicit empty/unavailable states; standard and historic event evidence share one automation projection; artifact failures lower confidence; fleet coverage uses High/Moderate/Low confidence; node prefetch scales to eight workers; and historic cross-node scans use bounded fan-out with query, failure, and duration telemetry.'
         }
     }
 }

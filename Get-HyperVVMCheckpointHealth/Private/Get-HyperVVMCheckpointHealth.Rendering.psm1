@@ -163,8 +163,16 @@ function ConvertTo-VMCheckpointAuditHtml {
     $countNotFound = @($rows | Where-Object { $_.Recommendation -eq 'NOT FOUND' }).Count
     $countError = @($rows | Where-Object { $_.Recommendation -eq 'ERROR' }).Count
     $notFoundNames = @($rows | Where-Object { $_.Recommendation -eq 'NOT FOUND' } | ForEach-Object { [string]$_.VMName } | Where-Object { $_ } | Sort-Object -Unique)
-    $countIncomplete = $countNotFound + $countError
-    $countAssessed = $countAll - $countIncomplete
+    $countAssessed = @($rows | Where-Object {
+        if ($_.Recommendation -in @('NOT FOUND', 'ERROR')) { return $false }
+        $confidence = if ($_.PSObject.Properties['AssessmentConfidence'] -and $_.AssessmentConfidence) {
+            [string]$_.AssessmentConfidence
+        } elseif ($_.ReportData -and $_.ReportData.PSObject.Properties['AssessmentConfidence']) {
+            [string]$_.ReportData.AssessmentConfidence
+        } else { 'High' }
+        $confidence -eq 'High'
+    }).Count
+    $countIncomplete = $countAll - $countAssessed
     $assessedVerb = if ($countAssessed -eq 1) { 'was' } else { 'were' }
     $incompleteVerb = if ($countIncomplete -eq 1) { 'was' } else { 'were' }
     $staleSnapshotTotal = (@($rows | ForEach-Object { [int]$_.StaleCheckpointCount }) | Measure-Object -Sum).Sum
@@ -635,11 +643,6 @@ $eventFloodExecSummaryLi
 </div>
 "@)
                 } else {
-                        $housekeepingSummary = if ($null -ne $HousekeepingFindings -and $HousekeepingFindings.Count -gt 0) {
-                                'Review the separate cluster / storage housekeeping observations below; they do not change the VM health verdict and do not authorize file modification.'
-                        } else {
-                                'No cluster / storage housekeeping observations were produced by the checks performed in this run.'
-                        }
                         [void]$sb.Append(@"
 <div class="callout ok">
     <strong>Exec Summary - no VM health action required:</strong> no VM is in HOLD STATE or INVESTIGATE, and no historic rollback evidence was found.
