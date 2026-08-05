@@ -27,5 +27,11 @@ $config.TestResult.OutputFormat = 'NUnitXml'
 $config.TestResult.OutputPath = Join-Path $OutputPath 'pester-results.xml'
 
 $result = Invoke-Pester -Configuration $config
-if ($result.FailedCount -gt 0) { exit 1 }
+$resultXmlPath = [string]$config.TestResult.OutputPath.Value
+$nunitFailureCount = 0
+if (Test-Path -LiteralPath $resultXmlPath) {
+    [xml]$resultXml = Get-Content -LiteralPath $resultXmlPath -Raw
+    $nunitFailureCount = [int]$resultXml.DocumentElement.failures + [int]$resultXml.DocumentElement.errors
+}
+if ([int]$result.FailedCount -gt 0 -or $nunitFailureCount -gt 0) { exit 1 }
 exit 0

@@ -174,6 +174,7 @@ function ConvertTo-HyperVEventCsvRows {
             AuditedVMName = $VMName
             AuditedVMId = $VMId
             Node = $node
+            RecordId = $recordId
             Id = [int]$eventRow.Id
             Level = if ($eventRow.PSObject.Properties['Level']) { [string]$eventRow.Level } else { '' }
             Log = [string]$eventRow.Log
@@ -634,10 +635,13 @@ function Complete-CheckpointHealthPassThruResult {
             $detail = [string]$reportData.InvestigationDrivers.AssessmentText
         }
         $assessmentConfidence = if ($reportData -and $reportData.PSObject.Properties['AssessmentConfidence']) {
-            [string]$reportData.AssessmentConfidence
-        } else {
-            'Incomplete'
-        }
+            switch ([string]$reportData.AssessmentConfidence) {
+                'High' { 'High' }
+                'Moderate' { 'Moderate' }
+                'Complete' { 'High' }
+                default { 'Low' }
+            }
+        } else { 'Low' }
         $nestedStatus = if ($reportData -and $reportData.PSObject.Properties['CollectionStatus']) { $reportData.CollectionStatus } else { $null }
         $notCollected = [pscustomobject]@{ Status = 'NotCollected' }
         $collectionStatus = [pscustomobject][ordered]@{
@@ -648,6 +652,7 @@ function Complete-CheckpointHealthPassThruResult {
             HistoricEvents = if ($nestedStatus -and $nestedStatus.PSObject.Properties['HistoricEvents']) { $nestedStatus.HistoricEvents } else { $notCollected }
             StateConsistency = if ($nestedStatus -and $nestedStatus.PSObject.Properties['StateConsistency']) { $nestedStatus.StateConsistency } else { $notCollected }
             VssWriters = if ($nestedStatus -and $nestedStatus.PSObject.Properties['VssWriters']) { $nestedStatus.VssWriters } else { $notCollected }
+            Artifacts = if ($nestedStatus -and $nestedStatus.PSObject.Properties['Artifacts']) { $nestedStatus.Artifacts } else { $notCollected }
         }
 
         [pscustomobject][ordered]@{
