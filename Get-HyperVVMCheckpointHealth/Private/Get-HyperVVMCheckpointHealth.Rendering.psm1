@@ -173,6 +173,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         $confidence -eq 'High'
     }).Count
     $countIncomplete = $countAll - $countAssessed
+    $countEvidenceIncomplete = [math]::Max(0, $countIncomplete - $countNotFound - $countError)
     $assessedVerb = if ($countAssessed -eq 1) { 'was' } else { 'were' }
     $incompleteVerb = if ($countIncomplete -eq 1) { 'was' } else { 'were' }
     $staleSnapshotTotal = (@($rows | ForEach-Object { [int]$_.StaleCheckpointCount }) | Measure-Object -Sum).Sum
@@ -469,7 +470,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($countIncomplete -gt 0) {
         [void]$sb.Append(@"
 <div class="callout warn">
-    <strong>Assessment incomplete:</strong> $countIncomplete VM(s) were not fully assessed ($countNotFound not found; $countError collection error). For <strong>NOT FOUND</strong>, verify the VM name and cluster. For <strong>ERROR</strong>, review permissions, connectivity, and the debug log, then rerun the audit. Do not treat these VMs as healthy based on this report.$(if ($notFoundNames.Count -gt 0) { " Input VM name(s) not found on this cluster: <strong>$(ConvertTo-HtmlText ($notFoundNames -join ', '))</strong>." } else { '' })
+    <strong>Assessment incomplete:</strong> $countIncomplete VM(s) were not fully assessed ($countNotFound not found; $countError collection error; $countEvidenceIncomplete evidence incomplete). For <strong>NOT FOUND</strong>, verify the VM name and cluster. For <strong>ERROR</strong>, review permissions, connectivity, and the debug log. For <strong>EVIDENCE INCOMPLETE</strong>, review collection warnings and evidence coverage, then rerun the audit. Do not treat these VMs as healthy based on this report.$(if ($notFoundNames.Count -gt 0) { " Input VM name(s) not found on this cluster: <strong>$(ConvertTo-HtmlText ($notFoundNames -join ', '))</strong>." } else { '' })
 </div>
 "@)
                 if ($DebugLogAvailable) {
@@ -631,10 +632,10 @@ $eventFloodExecSummaryLi
                 } elseif ($countIncomplete -gt 0) {
                         [void]$sb.Append(@"
 <div class="callout warn">
-    <strong>Exec Summary - assessment incomplete:</strong> no fully assessed VM is in HOLD STATE or INVESTIGATE, but $countIncomplete VM(s) could not be fully assessed ($countNotFound not found; $countError error).
+    <strong>Exec Summary - assessment incomplete:</strong> no fully assessed VM is in HOLD STATE or INVESTIGATE, but $countIncomplete VM(s) could not be fully assessed ($countNotFound not found; $countError collection error; $countEvidenceIncomplete evidence incomplete).
     <ul>
         <li>Do not treat the incomplete VM(s) as healthy based on this report.</li>
-        <li>Resolve the NOT FOUND / ERROR items in Recommended next steps, then re-run the audit.</li>
+        <li>Resolve the incomplete assessment items in Recommended next steps, then re-run the audit.</li>
         <li>$execTriageLi</li>
     $housekeepingExecSummaryLi
     $storageExecSummaryLi

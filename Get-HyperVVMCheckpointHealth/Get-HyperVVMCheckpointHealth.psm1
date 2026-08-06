@@ -117,8 +117,8 @@ function Get-HyperVVMCheckpointHealth {
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-29
-    Version : 0.2.32
+    Updated : 2026-08-06
+    Version : 0.2.33
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,8 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.32'
+$script:ScriptVersion = '0.2.33'
+$script:HistoricCorrelationDeadlineSeconds = 1800
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -1865,9 +1866,27 @@ function Get-HistoricVMEventCorrelation {
     }
     if ($remoteNodes.Count -gt 0) {
         $remoteErrors = @()
-        $remoteResults = @(Invoke-Command -ComputerName $remoteNodes -ScriptBlock $scan `
-            -ArgumentList $VMName, $VMId, $ranges, $SignatureIds, $SignatureRx, $EvidenceScope `
-            -ThrottleLimit ([math]::Min(8, $remoteNodes.Count)) -ErrorAction SilentlyContinue -ErrorVariable remoteErrors)
+        $remoteResults = @()
+        $remoteFanoutJob = $null
+        $historicTimeout = $false
+        try {
+            $remoteFanoutJob = Invoke-Command -ComputerName $remoteNodes -ScriptBlock $scan `
+                -ArgumentList $VMName, $VMId, $ranges, $SignatureIds, $SignatureRx, $EvidenceScope `
+                -ThrottleLimit ([math]::Min(8, $remoteNodes.Count)) -AsJob -ErrorAction Stop
+            Wait-Job -Job $remoteFanoutJob -Timeout $script:HistoricCorrelationDeadlineSeconds -ErrorAction Stop | Out-Null
+            $historicTimeout = $remoteFanoutJob.State -notin @('Completed', 'Failed', 'Stopped')
+            if ($historicTimeout) { Stop-Job -Job $remoteFanoutJob -ErrorAction SilentlyContinue }
+            $remoteResults = @(Receive-Job -Job $remoteFanoutJob -ErrorAction SilentlyContinue -ErrorVariable remoteErrors)
+        } catch {
+            $remoteErrors += $_
+        } finally {
+            if ($remoteFanoutJob) {
+                if ($remoteFanoutJob.State -notin @('Completed', 'Failed', 'Stopped')) {
+                    Stop-Job -Job $remoteFanoutJob -ErrorAction SilentlyContinue
+                }
+                Remove-Job -Job $remoteFanoutJob -Force -ErrorAction SilentlyContinue
+            }
+        }
         foreach ($remoteResult in $remoteResults) { [void]$perNodeResults.Add($remoteResult) }
         foreach ($node in $remoteNodes) {
             $nodeShort = $node.Split('.')[0]
@@ -1875,7 +1894,11 @@ function Get-HistoricVMEventCorrelation {
                 $_.Node -and $_.Node.Split('.')[0].Equals($nodeShort, [StringComparison]::OrdinalIgnoreCase)
             }).Count -gt 0
             if (-not $hasResult) {
-                $remoteErrorText = @($remoteErrors | ForEach-Object { $_.Exception.Message } | Where-Object { $_ } | Sort-Object -Unique) -join ' | '
+                $remoteErrorText = if ($historicTimeout) {
+                    "Historic event correlation timed out after $($script:HistoricCorrelationDeadlineSeconds) seconds."
+                } else {
+                    @($remoteErrors | ForEach-Object { $_.Exception.Message } | Where-Object { $_ } | Sort-Object -Unique) -join ' | '
+                }
                 if (-not $remoteErrorText) { $remoteErrorText = 'Historic event correlation returned no result for this node.' }
                 [void]$perNodeResults.Add([pscustomobject]@{
                     Node = $node; Matches = @(); Coverage = @(

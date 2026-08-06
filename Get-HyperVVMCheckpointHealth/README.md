@@ -5,8 +5,8 @@
 ## Latest version:
 
 - Module: `Get-HyperVVMCheckpointHealth`
-- Updated: 2026-08-03
-- Version: 0.2.32
+- Updated: 2026-08-06
+- Version: 0.2.33
 
 ## TL;DR
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.32 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.33 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,15 +133,15 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.32 release asset is `Get-HyperVVMCheckpointHealth-0.2.32.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.33 release asset is `Get-HyperVVMCheckpointHealth-0.2.33.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). When `-ZipPath` is omitted, it looks for the versioned ZIP beside the setup script first and then in `$env:TEMP`. It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-ZipPath` to select another location, `-InstallRoot` to choose another parent directory, and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.32/Get-HyperVVMCheckpointHealth-0.2.32.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.32.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.32/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.33/Get-HyperVVMCheckpointHealth-0.2.33.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.33.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.33/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 ```
 
@@ -261,7 +261,7 @@ Without `-PolicyPath`, the command does not search the current directory, module
 | Policy setting | Built-in value | Effect |
 |---|---|---|
 | `schemaVersion` | `1` | Identifies the supported YAML contract. A supplied policy must contain `schemaVersion: 1`. |
-| `storage.imageLibraryPathPatterns` | `(?i)[\\/](?:image|images|imagestore|template|templates|library|gallery|golden)(?:[\\/]|$)` | Excludes matching VHD, VHDX, and AVHDX paths from cluster/storage housekeeping findings. Exact `ImageStore` path segments and versioned `linux-cblmariner-x.x.x.x.vhdx` ARB appliance images are always excluded, including when a supplied policy uses `[]`; add patterns for other known image repositories. This affects housekeeping observations only and never changes VM health verdicts. |
+| `storage.imageLibraryPathPatterns` | `(?i)[\\/](?:image|images|imagestore|template|templates|library|gallery|golden)(?:[\\/]|$)` | Excludes matching virtual-disk paths from cluster/storage housekeeping findings. An ownerless AVHDX inside a detected VM-associated folder remains an **Unattached differencing disk candidate** when ownership and file coverage are complete; stronger orphan evidence takes precedence over repository matching. Exact `ImageStore` path segments and versioned `linux-cblmariner-x.x.x.x.vhdx` ARB appliance images are otherwise automatic exclusions, including when a supplied policy uses `[]`. This affects housekeeping observations only and never changes VM health verdicts. |
 | `orphan.liveMountPathPatterns` | `(?i)rubriklivemount`, `(?i)_temp_` | Classifies matching orphan AVHDX paths as backup live-mount/instant-recovery evidence. |
 | `orphan.classifyZeroByteAsLiveMount` | `true` | Also classifies a zero-byte orphan AVHDX as live-mount evidence. |
 | `csvFreeSpace.enabled` | `false` | CSV free-space policy does not affect the verdict unless explicitly enabled. |
@@ -272,9 +272,9 @@ Without `-PolicyPath`, the command does not search the current directory, module
 | `replication.hrl.minimumStaleMinutes` | `15` | Sets the minimum HRL age threshold. Effective threshold: `max(15 minutes, FrequencySec / 60 x 10)`. |
 | `replication.hrl.requireReplicationConcern` | `true` | Prevents HRL age alone from escalating a healthy or idle Replica relationship. Typed Replica health or measurement concern must corroborate it. |
 
-When `-PolicyPath` is supplied, the loader starts with these built-in values and overlays only the keys present in the YAML file. Omitted sections and properties retain their built-in values. A supplied `imageLibraryPathPatterns` or `liveMountPathPatterns` array replaces the complete configurable built-in array; it is not appended. Use `[]` to intentionally configure no additional patterns for that category. Exact `ImageStore` segments and versioned `linux-cblmariner-x.x.x.x.vhdx` ARB appliance image names remain automatic housekeeping exclusions even when `imageLibraryPathPatterns: []` is supplied.
+When `-PolicyPath` is supplied, the loader starts with these built-in values and overlays only the keys present in the YAML file. Omitted sections and properties retain their built-in values. A supplied `imageLibraryPathPatterns` or `liveMountPathPatterns` array replaces the complete configurable built-in array; it is not appended. Use `[]` to intentionally configure no additional patterns for that category. Exact `ImageStore` segments and versioned `linux-cblmariner-x.x.x.x.vhdx` ARB appliance image names remain automatic housekeeping exclusions even when `imageLibraryPathPatterns: []` is supplied, except for a VM-associated ownerless AVHDX proven under complete coverage.
 
-The **Cluster / storage housekeeping to review** table omits virtual disks whose full paths match the automatic `ImageStore` exclusion, whose file name matches the versioned ARB appliance image form `linux-cblmariner-x.x.x.x.vhdx` (numeric components), or whose path matches a configured `storage.imageLibraryPathPatterns` expression. For another known image repository, create a policy file and pass it explicitly:
+The **Cluster / storage housekeeping to review** table omits virtual disks whose full paths match the automatic `ImageStore` exclusion, whose file name matches the versioned ARB appliance image form `linux-cblmariner-x.x.x.x.vhdx` (numeric components), or whose path matches a configured `storage.imageLibraryPathPatterns` expression. It does not omit an ownerless AVHDX inside a detected VM-associated folder when complete inventory proves no VM or snapshot chain references it. For another known image repository, create a policy file and pass it explicitly:
 
 ```yaml
 schemaVersion: 1
@@ -301,7 +301,7 @@ When at least one candidate is selected, a **Persistent VM image policy settings
 2. For an existing policy, choose **Copy policy settings**, then copy only the generated `- '(?i)^...$'` entries into its existing `storage.imageLibraryPathPatterns` array. Preserve its current entries and do not create duplicate `schemaVersion`, `storage`, or `imageLibraryPathPatterns` keys.
 3. Save the YAML file and repeat the original audit command with `-PolicyPath '.\checkpoint-health-policy.yml'`. Confirm that the new report omits the selected files and shows the expected policy source.
 
-`storage.imageLibraryPathPatterns` is a replacement array. A supplied array replaces the configurable built-in repository regex rather than appending to it. If a new policy should retain that general repository matching as well as the generated exact paths, include the built-in expression from the policy table above as another array entry. Automatic exact `ImageStore` segment and versioned ARB appliance-image exclusions remain active regardless.
+`storage.imageLibraryPathPatterns` is a replacement array. A supplied array replaces the configurable built-in repository regex rather than appending to it. If a new policy should retain that general repository matching as well as the generated exact paths, include the built-in expression from the policy table above as another array entry. Automatic exact `ImageStore` segment and versioned ARB appliance-image exclusions remain active except when complete inventory proves that a VM-associated AVHDX is unreferenced.
 
 The policy is loaded once before cluster collection using the module's strict built-in parser; no gallery download or additional PowerShell module is required. The parser accepts the documented schema's nested mappings, comments, booleans, numbers, empty arrays, and single-quoted regex list entries. It stops the run for unsupported YAML syntax or properties, a missing/empty file, unsupported schema version, invalid regex, `minimumFreePercent` outside `0..100`, negative `minimumFreeGB`, `cadenceMultiplier` below `1`, or `minimumStaleMinutes` below `1`. The HTML and `-PassThru` `ReportData.PolicySource` value show `BuiltInDefaults` or the full loaded policy path so an operator can confirm which source was active.
 
@@ -594,7 +594,9 @@ $r | Where-Object Recommendation -ne 'OK' |
 $r | ForEach-Object {
     $vmResult = $_
     $vmResult.ReportData.VmEvents |
-        Select-Object @{n='VM';e={$vmResult.VMName}}, TimeUtc, Id, SignalRole, FullMessage
+        Select-Object @{n='VM';e={$vmResult.VMName}},
+            @{n='TimeUtc';e={$_.'Time (UTC)'}}, Id,
+            @{n='SignalRole';e={$_.EventClassification}}, FullMessage
 }
 
 # RunData is the same object on every row; read it once
@@ -646,11 +648,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.32.zip
-release\Get-HyperVVMCheckpointHealth-0.2.32.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.33.zip
+release\Get-HyperVVMCheckpointHealth-0.2.33.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.32` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.33` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -659,6 +661,13 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.32` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.33
+
+- Prevents historic cross-node event checks from waiting indefinitely. The check stops after 30 minutes, keeps any evidence already collected, and clearly marks nodes whose evidence is incomplete.
+- Makes incomplete fleet totals easier to understand by separating VMs that were not found, collection errors, and assessments with incomplete evidence.
+- Corrects the pass-through event example so automation users receive the event time and classification fields shown by the module.
+- Reports a VM-associated ownerless AVHDX as an **Unattached differencing disk candidate** under complete coverage even when its path is inside `ImageStore`, keeping cluster housekeeping aligned with per-VM orphan evidence.
 
 ### Version 0.2.32
 
