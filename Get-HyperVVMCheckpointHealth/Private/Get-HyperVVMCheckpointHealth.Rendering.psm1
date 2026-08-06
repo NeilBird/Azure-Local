@@ -1077,6 +1077,11 @@ $eventFloodExecSummaryLi
             'Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected'
         }
         $stateConsistencyHtml = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Inconclusive') { "<span class='warnval'>$(ConvertTo-HtmlText $stateConsistencyText)</span>" } else { ConvertTo-HtmlText $stateConsistencyText }
+        $attachedDiskTotalSizeText = if ($rd.PSObject.Properties['AttachedDiskTotalSizeGB']) {
+            '{0:N2} GB' -f [double]$rd.AttachedDiskTotalSizeGB
+        } else {
+            'Unavailable'
+        }
         [void]$sb.Append(@"
   <div class="kv">
         <div class="k">VM name</div><div><code>$(ConvertTo-HtmlText $r.VMName)</code></div>
@@ -1086,6 +1091,7 @@ $eventFloodExecSummaryLi
     <div class="k">Config version</div><div>$(ConvertTo-HtmlText $rd.Version) (cluster max $(ConvertTo-HtmlText $rd.HostMaxVersion))</div>
     <div class="k">Uptime</div><div>$(ConvertTo-HtmlText $rd.Uptime)</div>
     <div class="k">Attached disks</div><div>$($rd.AttachedDiskCount)</div>
+    <div class="k">Total size of all disks</div><div>$attachedDiskTotalSizeText</div>
     <div class="k">Checkpoints (Get-VMSnapshot)</div><div>$ckptCount</div>
     <div class="k">Differencing (.avhdx) files</div><div>$(if ([int]$rd.CheckpointLayers -gt 0) { "$($rd.CheckpointLayers) (= checkpoints &times; disks)" } else { '0 (no checkpoints)' })</div>
     <div class="k">VHD chain completeness</div><div>$chainCompleteHtml</div>

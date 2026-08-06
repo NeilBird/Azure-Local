@@ -20,7 +20,7 @@ Import-Module $renderingModulePath -Force -ErrorAction Stop
 $baseReportData = [pscustomobject]@{
     State = 'Running'; Status = 'Operating normally'; Version = '12.0'; HostMaxVersion = '12.0'
     VmVerOlder = $false; Uptime = '12.08:34:21'; CheckpointType = 'Production'
-    AutomaticCheckpoints = $false; AttachedDiskCount = 2; CheckpointLayers = 0
+    AutomaticCheckpoints = $false; AttachedDiskCount = 2; AttachedDiskTotalSizeGB = 192; CheckpointLayers = 0
     Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
     StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
     ChainComplete = $true; IncompleteChainCount = 0; StateConsistencyStatus = 'Stable'
@@ -99,6 +99,7 @@ $results = @(
     foreach ($vmNumber in 2..20) {
         $healthyReportData = $baseReportData.PSObject.Copy()
         $healthyReportData.AttachedDiskCount = if (($vmNumber % 4) -eq 0) { 2 } else { 1 }
+        $healthyReportData.AttachedDiskTotalSizeGB = if ($healthyReportData.AttachedDiskCount -eq 2) { 192 } else { 128 }
         $healthyReportData.Uptime = '{0}.{1:d2}:{2:d2}:{3:d2}' -f `
             (6 + $vmNumber), ($vmNumber % 24), (($vmNumber * 3) % 60), (($vmNumber * 7) % 60)
         $recommendation = 'OK'
