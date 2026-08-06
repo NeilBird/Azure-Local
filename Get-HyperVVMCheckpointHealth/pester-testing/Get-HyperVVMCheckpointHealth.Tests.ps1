@@ -927,8 +927,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.32 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.32'
+    It 'imports a valid 0.2.33 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.33'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -1495,15 +1495,20 @@ Describe 'HTML fleet report usability' {
         $lowConfidenceData = $normalReportData.PSObject.Copy()
         Add-Member -InputObject $lowConfidenceData -NotePropertyName AssessmentConfidence -NotePropertyValue 'Low'
         $html = ConvertTo-VMCheckpointAuditHtml -Results @(
-            [pscustomobject]@{ VMName = 'TEST-VM-LOW'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $lowConfidenceData; Detail = '' }
+            [pscustomobject]@{ VMName = 'TEST-VM-LOW'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $lowConfidenceData; Detail = '' }
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-01-01 00:00:00' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
             -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false `
-            -ScriptVersion '0.2.32' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+            -ScriptVersion '0.2.33' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
 
         $html | Should -Match '1 processed VM &nbsp;&bull;&nbsp; 0 fully assessed'
         $html | Should -Match '<strong>0 were fully assessed</strong>; <strong>1 was incomplete</strong>'
+        $html | Should -Match '1 VM\(s\) were not fully assessed \(0 not found; 0 collection error; 1 evidence incomplete\)'
+        $html | Should -Match 'For <strong>EVIDENCE INCOMPLETE</strong>, review collection warnings and evidence coverage'
+        $html | Should -Match '1 VM\(s\) could not be fully assessed \(0 not found; 0 collection error; 1 evidence incomplete\)'
+        $html | Should -Match 'Resolve the incomplete assessment items in Recommended next steps'
+        $html | Should -Not -Match 'Resolve the NOT FOUND / ERROR items'
     }
 
     It 'distinguishes no attributed events from low-signal events and reports a checked Analytic channel precisely' {
@@ -2664,6 +2669,7 @@ Describe 'Historic event coverage assessment' {
 
 Describe 'Historic event correlation coverage aggregation' {
     BeforeAll {
+        $script:HistoricCorrelationDeadlineSeconds = 1800
         $toolRoot = Split-Path $PSScriptRoot -Parent
         Import-Module (Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1') -Force
         $modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
@@ -2717,8 +2723,12 @@ Describe 'Historic event correlation coverage aggregation' {
     }
 
     It 'fans multiple remote historic scans out through one bounded invocation' {
-        Mock Invoke-Command {
-            foreach ($computer in @($ComputerName)) {
+        $script:HistoricFanoutJob = Start-Job -ScriptBlock { }
+        Microsoft.PowerShell.Core\Wait-Job -Job $script:HistoricFanoutJob | Out-Null
+        Mock Invoke-Command { $script:HistoricFanoutJob }
+        Mock Wait-Job { $Job }
+        Mock Receive-Job {
+            foreach ($computer in @('REMOTE-NODE-A', 'REMOTE-NODE-B')) {
                 [pscustomobject]@{
                     Node = $computer
                     Matches = @()
@@ -2729,6 +2739,7 @@ Describe 'Historic event correlation coverage aggregation' {
                 }
             }
         }
+        Mock Remove-Job { }
 
         $result = Get-HistoricVMEventCorrelation -VMName 'APP01' -VMId '00000000-0000-0000-0000-000000000000' `
             -Nodes @('REMOTE-NODE-A', 'REMOTE-NODE-B') -Timestamps @([datetime]'2026-07-10T12:00:00Z') `
@@ -2740,8 +2751,31 @@ Describe 'Historic event correlation coverage aggregation' {
         $result.FailedNodeCount | Should -Be 0
         $result.DurationMs | Should -BeGreaterOrEqual 0
         Should -Invoke Invoke-Command -Times 1 -Exactly -ParameterFilter {
-            @($ComputerName).Count -eq 2 -and $ThrottleLimit -eq 2
+            @($ComputerName).Count -eq 2 -and $ThrottleLimit -eq 2 -and $AsJob
         }
+        Should -Invoke Wait-Job -Times 1 -Exactly -ParameterFilter { $Timeout -eq 1800 }
+        Should -Invoke Receive-Job -Times 1 -Exactly
+        Should -Invoke Remove-Job -Times 1 -Exactly
+        Microsoft.PowerShell.Core\Remove-Job -Job $script:HistoricFanoutJob -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'stops timed-out historic scans and marks missing node coverage incomplete' {
+        $script:HistoricTimeoutJob = Start-Job -ScriptBlock { Wait-Event }
+        Mock Invoke-Command { $script:HistoricTimeoutJob }
+        Mock Wait-Job { $null }
+        Mock Receive-Job { @() }
+        Mock Remove-Job { }
+
+        $result = Get-HistoricVMEventCorrelation -VMName 'APP01' -VMId '00000000-0000-0000-0000-000000000000' `
+            -Nodes @('REMOTE-NODE-A') -Timestamps @([datetime]'2026-07-10T12:00:00Z') `
+            -WindowMinutes 120 -SignatureIds @(3216) -SignatureRx '0x80048102'
+
+        $result.CoverageComplete | Should -BeFalse
+        $result.FailedNodeCount | Should -Be 1
+        @($result.Coverage | Where-Object { $_.Error -match 'timed out after 1800 seconds' }).Count | Should -Be 2
+        $script:HistoricTimeoutJob.State | Should -Be 'Stopped'
+        Should -Invoke Remove-Job -Times 1 -Exactly
+        Microsoft.PowerShell.Core\Remove-Job -Job $script:HistoricTimeoutJob -Force -ErrorAction SilentlyContinue
     }
 }
 

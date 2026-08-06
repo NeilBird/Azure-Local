@@ -5,8 +5,8 @@
 ## Latest version:
 
 - Module: `Get-HyperVVMCheckpointHealth`
-- Updated: 2026-08-03
-- Version: 0.2.32
+- Updated: 2026-08-06
+- Version: 0.2.33
 
 ## TL;DR
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.32 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.33 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,15 +133,15 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.32 release asset is `Get-HyperVVMCheckpointHealth-0.2.32.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.33 release asset is `Get-HyperVVMCheckpointHealth-0.2.33.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). When `-ZipPath` is omitted, it looks for the versioned ZIP beside the setup script first and then in `$env:TEMP`. It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-ZipPath` to select another location, `-InstallRoot` to choose another parent directory, and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.32/Get-HyperVVMCheckpointHealth-0.2.32.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.32.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.32/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.33/Get-HyperVVMCheckpointHealth-0.2.33.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.33.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.33/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 ```
 
@@ -594,7 +594,9 @@ $r | Where-Object Recommendation -ne 'OK' |
 $r | ForEach-Object {
     $vmResult = $_
     $vmResult.ReportData.VmEvents |
-        Select-Object @{n='VM';e={$vmResult.VMName}}, TimeUtc, Id, SignalRole, FullMessage
+        Select-Object @{n='VM';e={$vmResult.VMName}},
+            @{n='TimeUtc';e={$_.'Time (UTC)'}}, Id,
+            @{n='SignalRole';e={$_.EventClassification}}, FullMessage
 }
 
 # RunData is the same object on every row; read it once
@@ -646,11 +648,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.32.zip
-release\Get-HyperVVMCheckpointHealth-0.2.32.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.33.zip
+release\Get-HyperVVMCheckpointHealth-0.2.33.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.32` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.33` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -659,6 +661,12 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.32` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.33
+
+- Prevents historic cross-node event checks from waiting indefinitely. The check stops after 30 minutes, keeps any evidence already collected, and clearly marks nodes whose evidence is incomplete.
+- Makes incomplete fleet totals easier to understand by separating VMs that were not found, collection errors, and assessments with incomplete evidence.
+- Corrects the pass-through event example so automation users receive the event time and classification fields shown by the module.
 
 ### Version 0.2.32
 
