@@ -3887,19 +3887,35 @@ Describe 'Virtual disk housekeeping classification' {
         $result.MatchedImageSegment | Should -Be 'Images'
     }
 
-    It 'always excludes ImageStore VHDX and AVHDX paths before placement checks' {
-        foreach ($path in @(
-            'C:\TEST\CSV01\ImageStore\base-os.vhdx',
-            'C:\TEST\CSV01\ImageStore\temporary-layer.avhdx'
-        )) {
-            $result = Get-VirtualDiskHousekeepingClassification `
-                -Path $path -Owners @() `
-                -VMAssociatedFolders @([pscustomobject]@{ VMName = 'TEST-VM-01'; Path = 'C:\TEST\CSV01' }) `
-                -CoverageComplete $true -ImageLibraryPathPatterns @()
+    It 'always excludes an unreferenced ImageStore base disk before placement checks' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\ImageStore\base-os.vhdx' -Owners @() `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'TEST-VM-01'; Path = 'C:\TEST\CSV01' }) `
+            -CoverageComplete $true -ImageLibraryPathPatterns @()
 
-            $result.Classification | Should -Be 'ExcludedImageLibraryAsset'
-            $result.MatchedImageSegment | Should -Be 'ImageStore'
-        }
+        $result.Classification | Should -Be 'ExcludedImageLibraryAsset'
+        $result.MatchedImageSegment | Should -Be 'ImageStore'
+    }
+
+    It 'reports an unreferenced ImageStore AVHDX as an unattached differencing candidate' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\ClusterStorage\Infrastructure_1\Shares\SU1_Infrastructure_1\MocArb\WorkingDirectory\ImageStore\vm-osdisk_temp.avhdx' `
+            -Owners @() -VMAssociatedFolders @([pscustomobject]@{
+                VMName = 'TEST-VM-01'
+                Path = 'C:\ClusterStorage\Infrastructure_1\Shares\SU1_Infrastructure_1\MocArb\WorkingDirectory\ImageStore'
+            }) -CoverageComplete $true -ImageLibraryPathPatterns @()
+
+        $result.Classification | Should -Be 'UnattachedDifferencingCandidate'
+        $result.MatchedImageSegment | Should -Be 'ImageStore'
+    }
+
+    It 'keeps an unassociated ImageStore AVHDX excluded from housekeeping' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\ImageStore\unassociated-layer.avhdx' -Owners @() `
+            -VMAssociatedFolders @() -CoverageComplete $true -ImageLibraryPathPatterns @()
+
+        $result.Classification | Should -Be 'ExcludedImageLibraryAsset'
+        $result.MatchedImageSegment | Should -Be 'ImageStore'
     }
 
     It 'always excludes versioned ARB CBL-Mariner appliance image VHDX files' {

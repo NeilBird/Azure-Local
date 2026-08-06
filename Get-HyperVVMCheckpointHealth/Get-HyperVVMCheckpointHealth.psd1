@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.33 prevents historic cross-node event checks from waiting indefinitely, clearly explains when a VM assessment is incomplete because evidence was unavailable, and corrects the pass-through event example for automation users.'
+            ReleaseNotes = 'Version 0.2.33 bounds historic cross-node event checks, explains incomplete VM assessments, corrects the pass-through event example, and reports verified VM-associated orphan AVHDX files in cluster housekeeping even when they are stored under ImageStore.'
         }
     }
 }

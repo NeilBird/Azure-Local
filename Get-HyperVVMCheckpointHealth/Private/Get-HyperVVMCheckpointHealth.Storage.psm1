@@ -268,8 +268,8 @@ function Get-VirtualDiskHousekeepingClassification {
     foreach ($owner in @($Owners)) { if ($owner) { [void]$ownerSet.Add($owner) } }
     $associatedOwnerMatch = @($associatedRows | Where-Object { $_.VMName -and $ownerSet.Contains([string]$_.VMName) }).Count -gt 0
     $folderOwnerMismatch = $ownerSet.Count -gt 0 -and $associatedRows.Count -gt 0 -and -not $associatedOwnerMatch
-    # Azure Local ImageStore paths and versioned ARB appliance images are always excluded from
-    # housekeeping, even when policy replaces the configurable pattern list with an empty array.
+    # Azure Local ImageStore paths and versioned ARB appliance images are excluded from
+    # housekeeping unless complete inventory proves an ownerless AVHDX is in a VM-associated folder.
     $automaticImageStorePattern = '(?i)[\\/]imagestore(?:[\\/]|$)'
     $automaticArbImagePattern = '(?i)(?:^|[\\/])linux-cblmariner-[0-9]+(?:\.[0-9]+){3}\.vhdx$'
     $effectiveImagePatterns = @($automaticImageStorePattern, $automaticArbImagePattern) + @($ImageLibraryPathPatterns)
@@ -287,14 +287,16 @@ function Get-VirtualDiskHousekeepingClassification {
 
     $classification = if (-not $CoverageComplete) {
         'OwnershipAmbiguous'
-    } elseif ($matchedImagePattern.Count -gt 0) {
-        'ExcludedImageLibraryAsset'
     } elseif ($extension -eq '.avhdx' -and $ownerSet.Count -eq 0 -and $vhdSetManagedFolder.Count -gt 0) {
         'VhdSetManagedAsset'
     } elseif ($folderOwnerMismatch) {
         'PlacementInconsistency'
     } elseif ($ownerSet.Count -gt 0) {
         'AttachedVirtualDisk'
+    } elseif ($extension -eq '.avhdx' -and $associatedRows.Count -gt 0) {
+        'UnattachedDifferencingCandidate'
+    } elseif ($matchedImagePattern.Count -gt 0) {
+        'ExcludedImageLibraryAsset'
     } elseif ($extension -eq '.avhdx') {
         'UnattachedDifferencingCandidate'
     } elseif ($extension -eq '.vhds') {
