@@ -1193,7 +1193,7 @@ Describe 'HTML fleet report usability' {
         $normalReportData = [pscustomobject]@{
             State = 'Running'; Status = 'Operating normally'; Version = '12.0'; HostMaxVersion = '12.0'
             VmVerOlder = $false; Uptime = '1.00:00:00'; CheckpointType = 'Production'
-            AutomaticCheckpoints = $false; AttachedDiskCount = 1; CheckpointLayers = 0
+            AutomaticCheckpoints = $false; AttachedDiskCount = 2; AttachedDiskTotalSizeGB = 129.75; CheckpointLayers = 0
             Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
             StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
             AttachedVhdLayers = @()
@@ -1655,6 +1655,13 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '<h3><span class="vm-label">VM Name:</span> <code>TEST-VM-MISSING</code>'
         $script:RenderedHtml | Should -Match '<div class="k">VM name</div><div><code>TEST-VM-NORMAL</code></div>\s*<div class="k">Source</div>'
         $script:RenderedHtml | Should -Match "<div class='kv'><div class='k'>VM name</div><div><code>TEST-VM-MISSING</code></div></div>"
+    }
+
+    It 'shows total attached disk chain size directly below the attached disk count' {
+        $script:RenderedHtml | Should -Match '<div class="k">Attached disks</div><div>2</div>\s*<div class="k">Total size of all disks</div><div>129\.75 GB</div>'
+        $rootSource = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+        $rootSource | Should -Match 'AttachedDiskTotalSizeGB\s*=\s*\[math\]::Round'
+        $rootSource | Should -Match 'Measure-Object -Property SizeGB -Sum'
     }
 
     It 'collapses OK per-VM cards and keeps non-OK cards open by default' {

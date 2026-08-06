@@ -4638,6 +4638,7 @@ function Invoke-VMCheckpointAudit {
         CheckpointType       = [string]$vm.CheckpointType
         AutomaticCheckpoints = [bool]$vm.AutomaticCheckpointsEnabled
         AttachedDiskCount    = $diskReports.Count
+        AttachedDiskTotalSizeGB = [math]::Round((@($diskReports | Where-Object { $null -ne $_.SizeGB } | Measure-Object -Property SizeGB -Sum).Sum), 2)
         CheckpointLayers     = [int]$totalCheckpoints
         StaleAttachedLayerCount = $staleAttachedLayerCount
         StaleSnapshotCount   = $staleCheckpoints.Count
