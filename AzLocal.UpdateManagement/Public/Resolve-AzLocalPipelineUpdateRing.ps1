@@ -160,6 +160,8 @@ function Resolve-AzLocalPipelineUpdateRing {
     $resolveAt = [datetime]::UtcNow
     $decision = $null
     $allowListSource = 'None'
+    $resolvedPrepareOnlyFirst = $false
+    $resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow = $true
 
     if ($isManual -and -not $UseScheduleFile) {
         # Back-compat path: manual ring verbatim, schedule file ignored.
@@ -244,7 +246,11 @@ function Resolve-AzLocalPipelineUpdateRing {
 
         $cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath
         $decision = Resolve-AzLocalCurrentUpdateRing -Schedule $cfg -Now $resolveAt
+        $resolvedPrepareOnlyFirst = [bool]$decision.PrepareOnlyFirst
+        $resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow = [bool]$decision.AllowPrepareOnlyOutsideOfUpdateStartWindow
         Write-Host "Resolver decision: $($decision.Reason)"
+        Write-Host "Resolved PrepareOnlyFirst='$resolvedPrepareOnlyFirst' (source=$($decision.PrepareOnlyFirstSource))."
+        Write-Host "Resolved AllowPrepareOnlyOutsideOfUpdateStartWindow='$resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow' (source=$($decision.AllowPrepareOnlyOutsideOfUpdateStartWindowSource))."
 
         if ($decision.Rings -and $decision.Rings.Count -gt 0) {
             $resolved = $decision.UpdateRingValue
@@ -272,6 +278,8 @@ function Resolve-AzLocalPipelineUpdateRing {
     # Bridge: cross-job step outputs (GitHub: GITHUB_OUTPUT; ADO: isOutput=true).
     Set-AzLocalPipelineOutput -Name 'RESOLVED_UPDATE_RING'              -Value $resolved      -CrossJob
     Set-AzLocalPipelineOutput -Name 'RESOLVED_ALLOWED_UPDATE_VERSIONS'  -Value $resolvedAllow -CrossJob
+    Set-AzLocalPipelineOutput -Name 'RESOLVED_PREPARE_ONLY_FIRST'       -Value $resolvedPrepareOnlyFirst.ToString().ToLowerInvariant() -CrossJob
+    Set-AzLocalPipelineOutput -Name 'RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW' -Value $resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow.ToString().ToLowerInvariant() -CrossJob
 
     # GitHub-only: ALSO append to GITHUB_ENV so same-job downstream steps can
     # read via $env:RESOLVED_*. Azure DevOps already achieves this via the
@@ -279,12 +287,16 @@ function Resolve-AzLocalPipelineUpdateRing {
     if ($pipelineHost -eq 'GitHub' -and $env:GITHUB_ENV) {
         "RESOLVED_UPDATE_RING=$resolved"                | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "RESOLVED_ALLOWED_UPDATE_VERSIONS=$resolvedAllow" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "RESOLVED_PREPARE_ONLY_FIRST=$($resolvedPrepareOnlyFirst.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW=$($resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
     }
 
     if ($PassThru) {
         return [pscustomobject]@{
             ResolvedUpdateRing            = $resolved
             ResolvedAllowedUpdateVersions = $resolvedAllow
+            ResolvedPrepareOnlyFirst      = $resolvedPrepareOnlyFirst
+            ResolvedAllowPrepareOnlyOutsideOfUpdateStartWindow = $resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow
             IsManual                      = $isManual
             UseScheduleFile               = [bool]$UseScheduleFile
             ForceImmediateUpdate          = [bool]$ForceImmediateUpdate

@@ -75,7 +75,7 @@ function Convert-AzLocalUpdateWindowToCron {
         [string]$UpdateStartWindow,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(0, 60)]
+        [ValidateRange(0, 1440)]
         [int]$LeadTimeMinutes = 7,
 
         [Parameter(Mandatory = $false)]

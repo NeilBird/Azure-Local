@@ -396,6 +396,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HasPrerequisiteUpdates = ''
                     SBEDependency          = ''
                     RecommendedUpdate      = ''
+                    RecommendedUpdateState = ''
                     HealthCheckFailures    = ''
                     BlockingReasons        = ''
                     UpdateStartWindow           = ''
@@ -550,6 +551,7 @@ function Get-AzLocalClusterUpdateReadiness {
             }
 
             $recommendedUpdate = ''
+            $recommendedUpdateState = ''
             $counted = $null
             $isUpToDateState = $updateState -in @('UpToDate', 'AppliedSuccessfully')
             $allInstalled = ($availableUpdates.Count -gt 0) -and `
@@ -557,6 +559,7 @@ function Get-AzLocalClusterUpdateReadiness {
             if ($readyUpdates.Count -gt 0) {
                 $latestReady = Get-LatestUpdateByYYMM -Updates (& $wrapForLatest $readyUpdates)
                 $recommendedUpdate = $latestReady.name
+                $recommendedUpdateState = if ($latestReady.properties -and $latestReady.properties.state) { [string]$latestReady.properties.state } else { '' }
                 $counted = $recommendedUpdate
             }
             elseif (-not $isUpToDateState -and -not $allInstalled -and -not $scheduleSuppressedReady -and $availableUpdates.Count -gt 0) {
@@ -564,6 +567,7 @@ function Get-AzLocalClusterUpdateReadiness {
                 if ($nonInstalled.Count -gt 0) {
                     $latestAvailable = Get-LatestUpdateByYYMM -Updates (& $wrapForLatest $nonInstalled)
                     $recommendedUpdate = $latestAvailable.name
+                    $recommendedUpdateState = if ($latestAvailable.properties -and $latestAvailable.properties.state) { [string]$latestAvailable.properties.state } else { '' }
                 }
             }
 
@@ -703,6 +707,9 @@ function Get-AzLocalClusterUpdateReadiness {
             elseif ($updateState -eq 'UpdateInProgress') {
                 Write-Host ' Update In Progress' -ForegroundColor Yellow
             }
+            elseif ($recommendedUpdateState -replace '[^a-zA-Z]', '' -ieq 'PendingOEMValidation') {
+                Write-Host ' Pending OEM Validation' -ForegroundColor Yellow
+            }
             elseif ($readyUpdates.Count -eq 0 -and $availableUpdates.Count -gt 0) {
                 Write-Host ' Updates Downloading' -ForegroundColor Yellow
             }
@@ -745,6 +752,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HasPrerequisiteUpdates = $prereqUpdateNames
                     SBEDependency          = $sbeDependencyInfo
                     RecommendedUpdate      = $recommendedUpdate
+                    RecommendedUpdateState = $recommendedUpdateState
                     HealthCheckFailures    = $healthCheckFailures
                     BlockingReasons        = ($blockingReasons -join '; ')
                     UpdateStartWindow      = if ($uw) { $uw } else { '' }
@@ -777,6 +785,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HasPrerequisiteUpdates = ''
                     SBEDependency          = ''
                     RecommendedUpdate      = ''
+                    RecommendedUpdateState = ''
                     HealthCheckFailures    = $_.Exception.Message
                     BlockingReasons        = ''
                     UpdateStartWindow      = ''
@@ -879,15 +888,13 @@ function Get-AzLocalClusterUpdateReadiness {
     Write-Log -Message "Detailed Results:" -Level Header
     $results | Format-Table ClusterName, ResourceGroup, CurrentVersion, UpdateState, HealthState, ReadyForUpdate, RecommendedUpdate -AutoSize | Out-Host
 
-    # v0.9.14: allow-list mismatch callout. A cluster that reports 'Up to Date'
-    # while Azure DOES have Ready updates (ReadyUpdates non-empty) can ONLY be in
-    # that state because an active allowedUpdateVersions allow-list filtered every
-    # Ready update out. That is indistinguishable from a genuinely up-to-date
-    # cluster in the table above, so surface the excluded updates explicitly -
-    # the operator can copy the exact name/version straight into the YML.
+    # Surface only updates that the readiness calculation actually suppressed.
+    # An unconstrained 'Latest' row can report AppliedSuccessfully while Azure's
+    # child update records already contain Ready updates; that is stale summary
+    # state, not an allow-list mismatch.
     $allowListSuppressed = @($results | Where-Object {
-            $_.PSObject.Properties['AllowListSource'] -and $_.AllowListSource -and $_.AllowListSource -ne 'None' -and
-            $_.PSObject.Properties['ReadyUpdates'] -and $_.ReadyUpdates -and ([string]$_.ReadyUpdates).Trim() -ne '' -and
+            $_.PSObject.Properties['AllowListSuppressedUpdates'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$_.AllowListSuppressedUpdates) -and
             (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate'
         })
     if ($allowListSuppressed.Count -gt 0) {
@@ -896,7 +903,7 @@ function Get-AzLocalClusterUpdateReadiness {
         Write-Log -Message "  These clusters report 'Up to Date' ONLY because their allowedUpdateVersions filtered out every Ready update. Add one of the listed name/version values to the YML to let them proceed." -Level Warning
         foreach ($suppressed in $allowListSuppressed) {
             $effectiveAllow = if ($suppressed.PSObject.Properties['AllowedUpdateVersions'] -and $suppressed.AllowedUpdateVersions) { [string]$suppressed.AllowedUpdateVersions } else { '(none)' }
-            Write-Log -Message "  $($suppressed.ClusterName): allow-list [$effectiveAllow] excluded available Ready update(s): $($suppressed.ReadyUpdates)" -Level Warning
+            Write-Log -Message "  $($suppressed.ClusterName): allow-list [$effectiveAllow] excluded available Ready update(s): $($suppressed.AllowListSuppressedUpdates)" -Level Warning
         }
     }
 

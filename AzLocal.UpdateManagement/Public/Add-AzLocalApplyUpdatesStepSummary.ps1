@@ -49,6 +49,10 @@ function Add-AzLocalApplyUpdatesStepSummary {
         table omits the row. (v0.8.78)
     .PARAMETER Succeeded
         Apply succeeded count.
+    .PARAMETER Prepared
+        Prepare-only started or already-prepared count.
+    .PARAMETER PrepareOnly
+        Render preparation-specific headings and result labels.
     .PARAMETER Skipped
         Apply skipped count.
     .PARAMETER Failed
@@ -92,6 +96,8 @@ function Add-AzLocalApplyUpdatesStepSummary {
 
         [switch]$DryRun,
 
+        [switch]$PrepareOnly,
+
         [Parameter(Mandatory = $false)] [object]$TotalCount        = 0,
         [Parameter(Mandatory = $false)] [object]$ReadyCount        = 0,
         # v0.8.78: optional readiness-gate breakdown so operators see the full
@@ -100,6 +106,7 @@ function Add-AzLocalApplyUpdatesStepSummary {
         [Parameter(Mandatory = $false)] [object]$UpToDateCount     = -1,
         [Parameter(Mandatory = $false)] [object]$NotReadyCount     = -1,
         [Parameter(Mandatory = $false)] [object]$Succeeded         = 0,
+        [Parameter(Mandatory = $false)] [object]$Prepared          = 0,
         [Parameter(Mandatory = $false)] [object]$Skipped           = 0,
         [Parameter(Mandatory = $false)] [object]$Failed            = 0,
         [Parameter(Mandatory = $false)] [object]$HealthBlocked     = 0,
@@ -167,6 +174,7 @@ function Add-AzLocalApplyUpdatesStepSummary {
     $upToDateInt        = & $parseOptional $UpToDateCount
     $notReadyInt        = & $parseOptional $NotReadyCount
     $succeededInt       = [int]([string]$Succeeded)
+    $preparedInt        = [int]([string]$Prepared)
     $skippedInt         = [int]([string]$Skipped)
     $failedInt          = [int]([string]$Failed)
     $healthBlockedInt   = [int]([string]$HealthBlocked)
@@ -176,7 +184,8 @@ function Add-AzLocalApplyUpdatesStepSummary {
 
     $sb = New-Object System.Text.StringBuilder
 
-    [void]$sb.AppendLine("$headingLevel Update Application Summary")
+    $summaryTitle = if ($PrepareOnly) { 'Update Preparation Summary' } else { 'Update Application Summary' }
+    [void]$sb.AppendLine("$headingLevel $summaryTitle")
     [void]$sb.AppendLine()
     [void]$sb.AppendLine("**Target UpdateRing:** $UpdateRing")
     [void]$sb.AppendLine()
@@ -191,7 +200,8 @@ function Add-AzLocalApplyUpdatesStepSummary {
     }
 
     if ($DryRun) {
-        [void]$sb.AppendLine("**This was a dry run. No updates were applied.**")
+        $dryRunMessage = if ($PrepareOnly) { 'No updates were prepared.' } else { 'No updates were applied.' }
+        [void]$sb.AppendLine("**This was a dry run. $dryRunMessage**")
         [void]$sb.AppendLine()
     }
 
@@ -224,6 +234,7 @@ function Add-AzLocalApplyUpdatesStepSummary {
     [void]$sb.AppendLine('| Status | Count |')
     [void]$sb.AppendLine('|--------|-------|')
     [void]$sb.AppendLine("| Updates Started | $succeededInt |")
+    [void]$sb.AppendLine("| Updates Prepared | $preparedInt |")
     [void]$sb.AppendLine("| Skipped | $skippedInt |")
     [void]$sb.AppendLine("| Failed | $failedInt |")
     [void]$sb.AppendLine("| Health Blocked | $healthBlockedInt |")
@@ -264,7 +275,7 @@ function Add-AzLocalApplyUpdatesStepSummary {
             [void]$sb.AppendLine()
             [void]$sb.AppendLine('| Cluster | Status | Update | Duration | Message |')
             [void]$sb.AppendLine('|---|---|---|---|---|')
-            $startedStates = @('UpdateStarted', 'Started', 'Success')
+            $startedStates = @('UpdateStarted', 'PreparationStarted', 'AlreadyPrepared', 'Started', 'Success')
             $blockedStates = @('HealthCheckBlocked', 'ScheduleBlocked', 'SideloadedBlocked', 'ExcludedByTag', 'NotConnected')
             $failedStates  = @('Failed', 'Error', 'NotFound')
             foreach ($r in ($applyRows | Sort-Object Status, ClusterName)) {

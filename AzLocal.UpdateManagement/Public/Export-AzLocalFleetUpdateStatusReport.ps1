@@ -846,6 +846,35 @@ function Export-AzLocalFleetUpdateStatusReport {
     $available = Get-AzLocalAvailableUpdates -ClusterResourceIds $fleetResourceIds -ExportPath $availableCsv -PassThru
     Write-Host "Found $(@($available).Count) available update(s) across fleet" -ForegroundColor Green
 
+    # The updateSummary availableUpdates field can lag or remain zero even when
+    # the child update resources collected in this same run are actionable.
+    # Reconcile the operator-facing count to those authoritative child rows and
+    # retain the raw ARM value for diagnostics.
+    $actionableCountByCluster = @{}
+    foreach ($update in @($available)) {
+        if (-not ($update.PSObject.Properties['ClusterName'] -and $update.ClusterName)) { continue }
+        if (-not ($update.PSObject.Properties['UpdateState'] -and $update.UpdateState -in (@($script:ReadyStates) + 'NotReady'))) { continue }
+        $clusterKey = ([string]$update.ClusterName).ToLowerInvariant()
+        if (-not $actionableCountByCluster.ContainsKey($clusterKey)) { $actionableCountByCluster[$clusterKey] = 0 }
+        $actionableCountByCluster[$clusterKey]++
+    }
+    $actionableCountMismatches = 0
+    foreach ($summary in @($summaries)) {
+        if (-not ($summary.PSObject.Properties['ClusterName'] -and $summary.ClusterName)) { continue }
+        $clusterKey = ([string]$summary.ClusterName).ToLowerInvariant()
+        $reconciledCount = if ($actionableCountByCluster.ContainsKey($clusterKey)) { [int]$actionableCountByCluster[$clusterKey] } else { 0 }
+        $armCount = if ($summary.PSObject.Properties['ActionableUpdatesCount'] -and $null -ne $summary.ActionableUpdatesCount) { [int]$summary.ActionableUpdatesCount } else { 0 }
+        $summary | Add-Member -NotePropertyName ArmActionableUpdatesCount -NotePropertyValue $armCount -Force
+        $summary.ActionableUpdatesCount = $reconciledCount
+        if ($armCount -ne $reconciledCount) { $actionableCountMismatches++ }
+    }
+    if (@($summaries).Count -gt 0) {
+        @($summaries) | Export-Csv -Path $summariesCsv -NoTypeInformation -Encoding utf8
+    }
+    if ($actionableCountMismatches -gt 0) {
+        Write-Warning ("Reconciled ActionableUpdatesCount from child update states for {0} cluster(s); see ArmActionableUpdatesCount for the raw updateSummary value." -f $actionableCountMismatches)
+    }
+
     # v0.9.19: always defined so the markdown section is safe under Set-StrictMode
     # even when -IncludeUpdateRuns:$false (no run collection performed).
     $recentSuccessRuns = @()

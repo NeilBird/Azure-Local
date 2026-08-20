@@ -48,6 +48,22 @@ function Start-AzLocalClusterUpdate {
         Azure REST API version to use. Default: "2025-10-01".
     .PARAMETER Force
         Skip confirmation prompts.
+    .PARAMETER PrepareOnly
+        Downloads the selected update, validates and extracts its content, and runs
+        update health checks without starting installation. Preparation stops at
+        ReadyToInstall. UpdateStartWindow is not evaluated in this mode, but an active
+        UpdateExclusionsWindow remains a hard blackout; all other safety gates still apply.
+    .PARAMETER PrepareOnlyFirst
+        Enables the automated two-phase workflow. A selected update in Ready state is
+        prepared without evaluating UpdateStartWindow, while UpdateExclusionsWindow
+        remains enforced. On a later invocation, the same update in ReadyToInstall state
+        is applied through both schedule gates. Unlike -PrepareOnly, this switch does not
+        stop an already-prepared update from installing.
+    .PARAMETER AllowPrepareOnlyOutsideOfUpdateStartWindow
+        Controls whether preparation may bypass UpdateStartWindow. The default is true,
+        allowing -PrepareOnly and the preparation phase of -PrepareOnlyFirst to run
+        outside that window. Set false to require preparation inside the cluster's
+        UpdateStartWindow. UpdateExclusionsWindow remains enforced in either mode.
     .PARAMETER IgnoreScheduleTags
         v0.8.79 break-glass override. When set, the per-cluster Step 3c maintenance-schedule
         gate is BYPASSED entirely - both the `UpdateStartWindow` (allowed window) and the
@@ -118,6 +134,15 @@ function Start-AzLocalClusterUpdate {
 
         [Parameter(Mandatory = $false)]
         [switch]$Force,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$PrepareOnly,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$PrepareOnlyFirst,
+
+        [Parameter(Mandatory = $false)]
+        [bool]$AllowPrepareOnlyOutsideOfUpdateStartWindow = $true,
 
         [Parameter(Mandatory = $false)]
         [switch]$IgnoreScheduleTags,
@@ -448,6 +473,8 @@ function Start-AzLocalClusterUpdate {
             Write-Log -Message "========================================" -Level Header
 
             $clusterStartTime = Get-Date
+            $availableUpdates = $null
+            $prepareThisRun = [bool]$PrepareOnly
 
             try {
                 # Step 1: Get cluster resource ID (or use provided ResourceId)
@@ -824,6 +851,32 @@ function Start-AzLocalClusterUpdate {
                     }
                 }
 
+                # PrepareOnlyFirst must know the selected child update state before
+                # deciding whether installation schedule tags apply. Fetch once here
+                # and retain the result for Step 4 below.
+                if ($PrepareOnlyFirst -and -not $PrepareOnly) {
+                    if ($PrefetchedAvailableUpdates -and $clusterInfo.id) {
+                        foreach ($k in $PrefetchedAvailableUpdates.Keys) {
+                            if ($k -and ([string]$k).Equals([string]$clusterInfo.id, [System.StringComparison]::OrdinalIgnoreCase)) {
+                                $availableUpdates = $PrefetchedAvailableUpdates[$k]
+                                break
+                            }
+                        }
+                    }
+                    if (-not $availableUpdates) {
+                        $availableUpdates = Get-AzLocalAvailableUpdates -ClusterResourceId $clusterInfo.id -ApiVersion $ApiVersion -Raw
+                    }
+                    $provisionalReadyUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:ReadyStates })
+                    $provisionalSelection = Select-AzLocalNextUpdateForCluster `
+                        -ReadyUpdates $provisionalReadyUpdates `
+                        -AllowedUpdateVersions $AllowedUpdateVersions `
+                        -UpdateName $UpdateName
+                    if ($provisionalSelection.Reason -eq 'Selected' -and
+                        $provisionalSelection.SelectedUpdate.properties.state -eq 'Ready') {
+                        $prepareThisRun = $true
+                    }
+                }
+
                 # Step 3c: Schedule/maintenance window validation
                 # Check UpdateStartWindow and UpdateExclusionsWindow tags if present on the cluster resource.
                 # v0.8.77: tag absence MUST be treated as "no window restriction" (any time eligible).
@@ -843,6 +896,8 @@ function Start-AzLocalClusterUpdate {
                         if ($clusterTags.PSObject.Properties[$script:UpdateExclusionsWindowTagName]) { $exclusionTagValue = $clusterTags.$($script:UpdateExclusionsWindowTagName) }
                     }
                 }
+                $bypassStartWindowForPreparation = $prepareThisRun -and $AllowPrepareOnlyOutsideOfUpdateStartWindow
+                $effectiveWindowTagValue = if ($bypassStartWindowForPreparation) { $null } else { $windowTagValue }
 
                 if ($IgnoreScheduleTags) {
                     # v0.8.79 break-glass override (-IgnoreScheduleTags / pipeline force_immediate_update=true).
@@ -850,9 +905,10 @@ function Start-AzLocalClusterUpdate {
                     # Log a Warning per cluster so the override is visible in the transcript + step summary.
                     Write-Log -Message "Step 3c: BYPASSED for '$clusterName' (-IgnoreScheduleTags). UpdateStartWindow='$windowTagValue', UpdateExclusionsWindow='$exclusionTagValue' will NOT be evaluated." -Level Warning
                 }
-                elseif ($windowTagValue -or $exclusionTagValue) {
+                elseif ($effectiveWindowTagValue -or $exclusionTagValue) {
                     Write-Log -Message "Step 3c: Checking maintenance schedule tags..." -Level Info
-                    if ($windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue" -Level Info }
+                    if ($bypassStartWindowForPreparation -and $windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue (not evaluated during preparation)" -Level Info }
+                    elseif ($effectiveWindowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $effectiveWindowTagValue" -Level Info }
                     if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusionsWindow tag: $exclusionTagValue" -Level Info }
 
                     try {
@@ -869,7 +925,7 @@ function Start-AzLocalClusterUpdate {
                         }
 
                         $scheduleResult = Test-AzLocalUpdateScheduleAllowed `
-                            -UpdateStartWindow $windowTagValue `
+                            -UpdateStartWindow $effectiveWindowTagValue `
                             -UpdateExclusionsWindow $exclusionTagValue `
                             -AllowBeforeMinutes $updateStartWindowAllowBeforeMinutes `
                             -AllowAfterMinutes $updateStartWindowAllowAfterMinutes
@@ -945,12 +1001,16 @@ function Start-AzLocalClusterUpdate {
                     }
                 }
                 else {
-                    Write-Log -Message "Step 3c: No maintenance schedule tags defined - no schedule restrictions" -Level Info
+                    if ($bypassStartWindowForPreparation) {
+                        Write-Log -Message "Step 3c: UpdateStartWindow is not evaluated during preparation; no UpdateExclusionsWindow is defined." -Level Info
+                    }
+                    else {
+                        Write-Log -Message "Step 3c: No maintenance schedule tags defined - no schedule restrictions" -Level Info
+                    }
                 }
 
                 # Step 4: List available updates
                 Write-Log -Message "Step 4: Listing available updates..." -Level Info
-                $availableUpdates = $null
                 if ($PrefetchedAvailableUpdates -and $clusterInfo.id) {
                     foreach ($k in $PrefetchedAvailableUpdates.Keys) {
                         if ($k -and ([string]$k).Equals([string]$clusterInfo.id, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -1141,11 +1201,31 @@ function Start-AzLocalClusterUpdate {
                     Write-Log -Message "Auto-selected latest update: $($selectedUpdate.name)" -Level Info
                 }
 
-                # Step 6: Apply the update
-                Write-Log -Message "Step 6: Applying update..." -Level Info
-                if ($PSCmdlet.ShouldProcess("$clusterName", "Apply update '$($selectedUpdate.name)'")) {
+                $prepareThisRun = [bool]$PrepareOnly -or (
+                    [bool]$PrepareOnlyFirst -and $selectedUpdate.properties.state -eq 'Ready'
+                )
+
+                if ($PrepareOnly -and $selectedUpdate.properties.state -eq 'ReadyToInstall') {
+                    Write-Log -Message "Update '$($selectedUpdate.name)' is already prepared and ReadyToInstall on cluster '$clusterName'." -Level Success
+                    $results.Add([PSCustomObject]@{
+                        ClusterName   = $clusterName
+                        Status        = "AlreadyPrepared"
+                        Message       = "Update is already prepared and ReadyToInstall"
+                        UpdateName    = $selectedUpdate.name
+                        StartTime     = $clusterStartTime
+                        EndTime       = Get-Date
+                        Duration      = $null
+                    }) | Out-Null
+                    continue
+                }
+
+                # Step 6: Prepare or apply the update
+                $operationVerb = if ($prepareThisRun) { 'Prepare' } else { 'Apply' }
+                Write-Log -Message "Step 6: $operationVerb update..." -Level Info
+                if ($PSCmdlet.ShouldProcess("$clusterName", "$operationVerb update '$($selectedUpdate.name)'")) {
                     if (-not $Force) {
-                        $confirmation = Read-Host "  Do you want to start update '$($selectedUpdate.name)' on cluster '$clusterName'? (Y/N)"
+                        $confirmationAction = if ($prepareThisRun) { 'prepare' } else { 'start' }
+                        $confirmation = Read-Host "  Do you want to $confirmationAction update '$($selectedUpdate.name)' on cluster '$clusterName'? (Y/N)"
                         if ($confirmation -notmatch '^[Yy]') {
                             Write-Log -Message "Update skipped by user." -Level Warning
                             
@@ -1175,22 +1255,30 @@ function Start-AzLocalClusterUpdate {
                         }
                     }
 
-                    Write-Log -Message "Initiating update '$($selectedUpdate.name)' on cluster '$clusterName'..." -Level Info
-                    $applyResult = Invoke-AzLocalUpdateApply -ClusterResourceId $clusterInfo.id `
-                        -UpdateName $selectedUpdate.name `
-                        -ApiVersion $ApiVersion
+                    Write-Log -Message "$operationVerb update '$($selectedUpdate.name)' on cluster '$clusterName'..." -Level Info
+                    if ($prepareThisRun) {
+                        $operationResult = Invoke-AzLocalUpdatePrepare -ClusterResourceId $clusterInfo.id `
+                            -UpdateName $selectedUpdate.name
+                    }
+                    else {
+                        $operationResult = Invoke-AzLocalUpdateApply -ClusterResourceId $clusterInfo.id `
+                            -UpdateName $selectedUpdate.name `
+                            -ApiVersion $ApiVersion
+                    }
 
                     $endTime = Get-Date
                     $duration = $endTime - $clusterStartTime
 
-                    if ($applyResult) {
-                        Write-Log -Message "Update started successfully!" -Level Success
+                    if ($operationResult) {
+                        $successStatus = if ($prepareThisRun) { 'PreparationStarted' } else { 'UpdateStarted' }
+                        $successMessage = if ($prepareThisRun) { 'Update preparation initiated successfully' } else { 'Update initiated successfully' }
+                        Write-Log -Message "$successMessage!" -Level Success
                         Write-Log -Message "Monitor progress using: Get-AzLocalUpdateRuns -ClusterName '$clusterName'" -Level Info
                         
                         # Parse Resource Group and Subscription ID from cluster resource ID
                         $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
                         $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
-                        Write-UpdateCsvLog -LogType Started -ClusterName $clusterName -ResourceGroup $clusterRgName -SubscriptionId $clusterSubId -Message "Update Started: $($selectedUpdate.name)"
+                        Write-UpdateCsvLog -LogType Started -ClusterName $clusterName -ResourceGroup $clusterRgName -SubscriptionId $clusterSubId -Message "$successStatus`: $($selectedUpdate.name)"
 
                         # v0.7.1: Always write UpdateVersionInProgress tag after successful apply.
                         # This is the audit/correlation tag used by the auto-reset path in
@@ -1198,22 +1286,24 @@ function Start-AzLocalClusterUpdate {
                         # the staged sideloaded payload before flipping UpdateSideloaded=False.
                         # Failure to write the tag is non-fatal: the update has already been
                         # initiated; degraded auto-reset metadata only.
-                        try {
-                            [void](Set-AzLocalClusterTagsMerge `
-                                -ClusterResourceId $clusterInfo.id `
-                                -Tags @{ $script:UpdateVersionInProgressTagName = $selectedUpdate.name } `
-                                -ApiVersion $ApiVersion)
-                            Write-Log -Message "Set $($script:UpdateVersionInProgressTagName) tag to '$($selectedUpdate.name)'" -Level Verbose
-                        }
-                        catch {
-                            Write-Log -Message "Warning: failed to write $($script:UpdateVersionInProgressTagName) tag on '$clusterName': $($_.Exception.Message)" -Level Warning
-                            Write-Log -Message "  Update has been initiated successfully; only auto-reset correlation metadata is affected." -Level Warning
+                        if (-not $prepareThisRun) {
+                            try {
+                                [void](Set-AzLocalClusterTagsMerge `
+                                    -ClusterResourceId $clusterInfo.id `
+                                    -Tags @{ $script:UpdateVersionInProgressTagName = $selectedUpdate.name } `
+                                    -ApiVersion $ApiVersion)
+                                Write-Log -Message "Set $($script:UpdateVersionInProgressTagName) tag to '$($selectedUpdate.name)'" -Level Verbose
+                            }
+                            catch {
+                                Write-Log -Message "Warning: failed to write $($script:UpdateVersionInProgressTagName) tag on '$clusterName': $($_.Exception.Message)" -Level Warning
+                                Write-Log -Message "  Update has been initiated successfully; only auto-reset correlation metadata is affected." -Level Warning
+                            }
                         }
 
                         $results.Add([PSCustomObject]@{
                             ClusterName   = $clusterName
-                            Status        = "UpdateStarted"
-                            Message       = "Update initiated successfully"
+                            Status        = $successStatus
+                            Message       = $successMessage
                             UpdateName    = $selectedUpdate.name
                             StartTime     = $clusterStartTime
                             EndTime       = $endTime
@@ -1226,17 +1316,18 @@ function Start-AzLocalClusterUpdate {
                             -ClusterResourceId $clusterInfo.id `
                             -ClusterName $clusterName `
                             -AttemptUtc $clusterStartTime.ToUniversalTime() `
-                            -Outcome 'UpdateStarted' `
+                            -Outcome $successStatus `
                             -UpdateName $selectedUpdate.name `
-                            -Reason 'Update initiated successfully' `
+                            -Reason $successMessage `
                             -ApiVersion $ApiVersion
                     }
                     else {
-                        Write-Log -Message "Failed to start update on cluster '$clusterName'." -Level Error
+                        $failureAction = if ($prepareThisRun) { 'prepare update' } else { 'start update' }
+                        Write-Log -Message "Failed to $failureAction on cluster '$clusterName'." -Level Error
                         $results.Add([PSCustomObject]@{
                             ClusterName   = $clusterName
                             Status        = "Failed"
-                            Message       = "Failed to start update"
+                            Message       = "Failed to $failureAction"
                             UpdateName    = $selectedUpdate.name
                             StartTime     = $clusterStartTime
                             EndTime       = $endTime
@@ -1251,7 +1342,7 @@ function Start-AzLocalClusterUpdate {
                             -AttemptUtc $clusterStartTime.ToUniversalTime() `
                             -Outcome 'Failed' `
                             -UpdateName $selectedUpdate.name `
-                            -Reason 'apply/action returned failure' `
+                            -Reason $(if ($prepareThisRun) { 'prepare/action returned failure' } else { 'apply/action returned failure' }) `
                             -ApiVersion $ApiVersion
                     }
                 }
@@ -1260,11 +1351,12 @@ function Start-AzLocalClusterUpdate {
                     # so the end-of-run Summary lists which clusters would have had an
                     # update started. Matches the normal 'UpdateStarted' shape.
                     $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
-                    Write-Log -Message "[WhatIf] Would start update '$($selectedUpdate.name)' on cluster '$clusterName' (RG: $clusterRgName)" -Level Info
+                    $whatIfAction = if ($prepareThisRun) { 'prepare' } else { 'start' }
+                    Write-Log -Message "[WhatIf] Would $whatIfAction update '$($selectedUpdate.name)' on cluster '$clusterName' (RG: $clusterRgName)" -Level Info
                     $results.Add([PSCustomObject]@{
                         ClusterName = $clusterName
-                        Status      = "WouldUpdate"
-                        Message     = "WhatIf: would start update '$($selectedUpdate.name)'"
+                        Status      = $(if ($prepareThisRun) { 'WouldPrepare' } else { 'WouldUpdate' })
+                        Message     = "WhatIf: would $whatIfAction update '$($selectedUpdate.name)'"
                         UpdateName  = $selectedUpdate.name
                         StartTime   = $clusterStartTime
                         EndTime     = Get-Date
@@ -1298,17 +1390,17 @@ function Start-AzLocalClusterUpdate {
         
         # Display summary statistics
         $totalClusters = $results.Count
-        $succeeded = @($results | Where-Object { $_.Status -eq "UpdateStarted" }).Count
-        $wouldUpdate = @($results | Where-Object { $_.Status -eq "WouldUpdate" }).Count
+        $succeeded = @($results | Where-Object { $_.Status -in @("UpdateStarted", "PreparationStarted") }).Count
+        $wouldUpdate = @($results | Where-Object { $_.Status -in @("WouldUpdate", "WouldPrepare") }).Count
         $failed = @($results | Where-Object { $_.Status -in @("Failed", "Error") }).Count
-        $skipped = @($results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") }).Count
+        $skipped = @($results | Where-Object { $_.Status -in @("Skipped", "AlreadyPrepared", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") }).Count
 
         Write-Log -Message "Total clusters processed: $totalClusters" -Level Info
         if ($WhatIfPreference) {
-            Write-Log -Message "Would start updates on: $wouldUpdate cluster(s) (WhatIf mode - no changes made)" -Level Success
+            Write-Log -Message "Would start or prepare updates on: $wouldUpdate cluster(s) (WhatIf mode - no changes made)" -Level Success
         }
         else {
-            Write-Log -Message "Updates started: $succeeded" -Level Success
+            Write-Log -Message "Update operations started: $succeeded" -Level Success
         }
         if ($failed -gt 0) {
             Write-Log -Message "Failed: $failed" -Level Error

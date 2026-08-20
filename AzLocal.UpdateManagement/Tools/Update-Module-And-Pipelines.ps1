@@ -16,6 +16,12 @@
     ONLY the workflow folder, config\, DevChannel\, managed README, and managed
     updater paths before committing and pushing any changes.
 
+    If config\apply-updates-schedule.yml uses an older supported schema, the
+    refresh saves the exact original as apply-updates-schedule.v<old>.old.yml,
+    migrates additively while preserving schedule rows and line endings,
+    validates the canonical file, and restores the original on failure.
+    -WhatIf performs no schedule write and creates no backup.
+
 .PARAMETER RepoRoot
     Root of the repo whose pipelines should be refreshed.
 

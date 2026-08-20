@@ -39,8 +39,10 @@ Use separate rows with the same `weeksInCycle` only when rings need different
 days or row-level policies.
 
 In one sentence: **the schedule selects eligible rings and days, the cron
-wakes the workflow, and each cluster's `UpdateStartWindow` permits the actual
-start time.**
+wakes the workflow, and each cluster's tags gate preparation or installation.**
+Preparation may bypass `UpdateStartWindow` when its schema policy allows it;
+installation requires the window, and both operations honor
+`UpdateExclusionsWindow` and `UpdateExcluded`.
 
 ## Why this model
 
@@ -55,13 +57,14 @@ cluster's `UpdateExclusionsWindow` tag.
 
 ## Understand the three controls
 
-Three independent controls determine whether an update can start:
+Three independent controls determine whether an update can prepare or install:
 
 1. `apply-updates-schedule.yml` selects the eligible rings for the current UTC
    cycle week and day.
 2. The cron in `apply-updates.yml` determines when the workflow wakes.
-3. Each cluster's `UpdateStartWindow` tag determines whether an update may
-   start at that time.
+3. Each cluster's tags determine whether the selected operation may proceed.
+  `UpdateStartWindow` gates installation but not preparation;
+  `UpdateExclusionsWindow` and `UpdateExcluded` block both.
 
 The schedule file is a selector, not a trigger. A matching schedule row does
 not start a workflow, and a cron firing does not bypass a cluster's start
@@ -213,6 +216,58 @@ See [Restrict which updates each ring installs](../README.md#84-restrict-which-u
 for precedence, cross-row union behavior, SBE handling, and additional
 examples.
 
+## Configure preparation before installation
+
+Schema v3 requires two top-level preparation booleans:
+
+```yaml
+prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+```
+
+Set it to `true` to use the Azure Local 2608 two-phase workflow:
+
+1. When the selected update is `Ready`, the current firing calls the prepare
+  action. Azure downloads, validates/extracts, and health-checks the update,
+  then advances it to `ReadyToInstall` asynchronously.
+2. A later firing sees `ReadyToInstall` and calls apply. Installation proceeds
+  only when `UpdateStartWindow` is open and no exclusion is active.
+
+When `allowPrepareOnlyOutsideOfUpdateStartWindow` is `true`, preparation may
+run before or outside the installation window so content and health checks can
+start early. Set it to `false` to require preparation to pass
+`UpdateStartWindow`. `UpdateExclusionsWindow` remains a hard blackout in both
+modes, and `UpdateExcluded=True` remains an independent operator hold.
+
+Any schedule row may override the fleet default:
+
+```yaml
+prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek:   'Mon-Thu'
+    rings:        'Canary'
+    prepareOnlyFirst: true
+    allowPrepareOnlyOutsideOfUpdateStartWindow: false
+```
+
+An omitted row value inherits its top-level setting. If multiple rows match a
+firing and their explicit values for either policy conflict, resolution fails
+closed instead of choosing one silently.
+
+When a row effectively resolves both policies to `true`, **Config: 3 -
+Apply-Updates Schedule Coverage Audit** recommends one deduplicated Apply
+Updates cron six hours before each applicable `UpdateStartWindow` opening.
+This gives the asynchronous download, validation/extraction, and
+update-specific health checks an early opportunity to start; it does not
+guarantee completion before installation. No extra cron is recommended when
+`allowPrepareOnlyOutsideOfUpdateStartWindow` resolves to `false`, because the
+early firing would be blocked. If subtracting six hours crosses midnight, the
+reported cron uses the previous UTC day; make the ring eligible in the
+schedule on that preparation day or the resolver will intentionally no-op.
+
 ## Example 1: basic four-week staged rollout
 
 A four-week cycle provides a repeating operating pattern for Azure Local's
@@ -224,13 +279,15 @@ top-level `allowedUpdateVersions` list applies to every schedule row because
 none defines an override.
 
 ```yaml
-schemaVersion: 2
+schemaVersion: 3
 
 cycleWeeks:           4
 cycleAnchorISOWeek:   31
 cycleAnchorYear:      2026
 
 allowedUpdateVersions: 'Solution12.2603.1002.502;Solution12.2604.1003.1006;SBE5.0.2603.1522;Solution12.2607.1003.70'
+prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
@@ -262,13 +319,15 @@ separate week 1 rows to move through Canary, DevTest, and Ring1 on different
 days before Production becomes eligible in week 2.
 
 ```yaml
-schemaVersion: 2
+schemaVersion: 3
 
 cycleWeeks:           4
 cycleAnchorISOWeek:   31
 cycleAnchorYear:      2026
 
 allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
@@ -310,13 +369,15 @@ in cycle week 1, both Canary rows match; the resolver returns Canary once. On
 Tuesday in cycle week 5, only Prod matches.
 
 ```yaml
-schemaVersion: 2
+schemaVersion: 3
 
 cycleWeeks:           8
 cycleAnchorISOWeek:   31
 cycleAnchorYear:      2026
 
 allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'

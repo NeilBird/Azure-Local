@@ -80,7 +80,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.32'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.33'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -237,7 +237,7 @@ jobs:
           INPUT_SCOPE: ${{ github.event.inputs.scope }}
           INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
           INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
-          # v0.9.1: optional apply-updates schedule (schema v2). When this file
+          # v0.9.1+: optional apply-updates schedule (current schema v3). When this file
           # exists in the repo, its allowedUpdateVersions allow-list constrains
           # the readiness calc to the updates each ring is permitted to install
           # (per-ring override beats the top-level default; 'Latest' = no

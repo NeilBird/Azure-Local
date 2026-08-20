@@ -97,11 +97,21 @@ function Convert-AzLocalScheduleSchemaVersion {
             throw "Convert-AzLocalScheduleSchemaVersion: no migration recipe registered for '$key'. The module is missing a hop - this is a bug; file at https://github.com/NeilBird/Azure-Local/issues."
         }
         $recipe = $script:ScheduleSchemaRecipes[$key]
+        $scheduleBeforeMatch = [regex]::Match($workingText, '(?ms)^schedule\s*:.*\z')
+        if (-not $scheduleBeforeMatch.Success) {
+            throw "Convert-AzLocalScheduleSchemaVersion: '$SourcePath' has no readable top-level 'schedule:' section before recipe '$key'. Refusing to migrate."
+        }
+        $scheduleBefore = $scheduleBeforeMatch.Value
         $hopResult = & $recipe $workingText
         if (-not $hopResult.ContainsKey('Text') -or -not $hopResult.ContainsKey('Changes')) {
             throw "Convert-AzLocalScheduleSchemaVersion: recipe '$key' did not return the expected @{ Text=...; Changes=... } shape."
         }
         $workingText = [string]$hopResult.Text
+        $scheduleAfterMatch = [regex]::Match($workingText, '(?ms)^schedule\s*:.*\z')
+        if (-not $scheduleAfterMatch.Success -or
+            -not [string]::Equals($scheduleBefore, $scheduleAfterMatch.Value, [System.StringComparison]::Ordinal)) {
+            throw "Convert-AzLocalScheduleSchemaVersion: recipe '$key' changed the operator-owned 'schedule:' section in '$SourcePath'. Migration was aborted before any file write."
+        }
         $hops.Add([pscustomobject]@{
             FromVersion = $v
             ToVersion   = $v + 1
@@ -166,6 +176,7 @@ $script:ScheduleSchemaRecipes = [ordered]@{
         param([string]$Text)
         $changes = New-Object System.Collections.Generic.List[string]
         $work    = $Text
+        $newLine = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
 
         # 1. Rewrite schemaVersion line.
         $svPattern = '(?m)^(\s*)schemaVersion(\s*:\s*)1(\s*(?:#.*)?)$'
@@ -211,7 +222,7 @@ $script:ScheduleSchemaRecipes = [ordered]@{
                 "# 'Latest' (no constraint).",
                 "allowedUpdateVersions: 'Latest'",
                 ''
-            ) -join "`r`n"
+            ) -join $newLine
 
             # Prefer to insert right before the '# ---- Schedule entries' banner.
             # Fall back to inserting just before the bare 'schedule:' key.
@@ -231,7 +242,7 @@ $script:ScheduleSchemaRecipes = [ordered]@{
                 else {
                     # No anchor found - append at end. Should be rare; the
                     # validator already requires a 'schedule:' key.
-                    $work = $work.TrimEnd("`r","`n") + "`r`n" + $block + "`r`n"
+                    $work = $work.TrimEnd("`r","`n") + $newLine + $block + $newLine
                     $changes.Add("Appended mandatory top-level 'allowedUpdateVersions: ''Latest''' block at end (no 'schedule:' anchor found).") | Out-Null
                 }
             }
@@ -241,5 +252,60 @@ $script:ScheduleSchemaRecipes = [ordered]@{
             Text    = $work
             Changes = $changes.ToArray()
         }
+    }
+
+    # =====================================================================
+    # 2 -> 3  (shipped in v0.9.33)
+    # =====================================================================
+    # v3 adds mandatory top-level prepareOnlyFirst and
+    # allowPrepareOnlyOutsideOfUpdateStartWindow settings, plus optional
+    # per-row overrides. Their defaults preserve all v2 automation behavior.
+    '2->3' = {
+        param([string]$Text)
+        $changes = New-Object System.Collections.Generic.List[string]
+        $work = $Text
+        $newLine = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+
+        $svRegex = [regex]::new('(?m)^(\s*)schemaVersion(\s*:\s*)2(\s*(?:#.*)?)$')
+        if ($svRegex.IsMatch($work)) {
+            $work = $svRegex.Replace($work, { param($m)
+                "$($m.Groups[1].Value)schemaVersion$($m.Groups[2].Value)3$($m.Groups[3].Value)"
+            }, 1)
+            $changes.Add("Rewrote 'schemaVersion: 2' to 'schemaVersion: 3'.") | Out-Null
+        }
+
+        $marker = '# >>> PREPARE-ONLY-FIRST-V3 <<<'
+        if ($work -notmatch [regex]::Escape($marker)) {
+            $block = @(
+                '# ---- Prepare before install (schema v3, MANDATORY) ------------',
+                $marker,
+                '# false preserves the existing one-step apply behavior.',
+                '# true prepares Ready updates first; a later firing installs only',
+                '# after they reach ReadyToInstall and UpdateStartWindow permits it.',
+                '# Preparation ignores UpdateStartWindow but still honors the',
+                '# UpdateExclusionsWindow hard blackout.',
+                '# Any schedule row may override this boolean for that firing.',
+                'prepareOnlyFirst: false',
+                '# true allows out-of-window preparation; false requires the',
+                '# preparation phase to pass the UpdateStartWindow gate.',
+                'allowPrepareOnlyOutsideOfUpdateStartWindow: true',
+                ''
+            ) -join $newLine
+
+            $header = [regex]::Match($work, '(?m)^# ---- Schedule entries[^\r\n]*[\r\n]+')
+            $scheduleKey = [regex]::Match($work, '(?m)^schedule\s*:')
+            if ($header.Success) {
+                $work = $work.Insert($header.Index, $block)
+            }
+            elseif ($scheduleKey.Success) {
+                $work = $work.Insert($scheduleKey.Index, $block)
+            }
+            else {
+                $work = $work.TrimEnd("`r", "`n") + $newLine + $block + $newLine
+            }
+            $changes.Add("Inserted mandatory top-level 'prepareOnlyFirst: false' and 'allowPrepareOnlyOutsideOfUpdateStartWindow: true' settings.") | Out-Null
+        }
+
+        return @{ Text = $work; Changes = $changes.ToArray() }
     }
 }

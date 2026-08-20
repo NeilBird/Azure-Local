@@ -342,19 +342,19 @@ function Export-AzLocalClusterUpdateReadinessReport {
     $total = @($readiness).Count
     $notReady = $total - $readyForUpdate - $upToDate
 
-    # v0.9.15: clusters that classify 'Up to Date' ONLY because the
-    # allowedUpdateVersions allow-list filtered out every Ready update. These
+    # Clusters that classify 'Up to Date' because the allowedUpdateVersions
+    # allow-list actually filtered out one or more Ready updates. These
     # are surfaced in a dedicated VISIBLE table (section 6b) + a summary
     # sub-count so operators no longer have to expand 'All clusters detail' to
     # find them. Membership uses the SAME predicate as the detail ' *' marker
-    # (classified UpToDate AND a non-empty ReadyUpdates list). It is a labelled
+    # (classified UpToDate AND a non-empty suppression list). It is a labelled
     # SUBSET of Up to Date - kept INSIDE the $upToDate total so the summary and
     # per-UpdateRing pivot arithmetic (Ready + UpToDate + NotReady = Total)
     # stays consistent.
     $allowListHeldRows = @($readiness | Where-Object {
             (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' -and
-            $_.PSObject.Properties['ReadyUpdates'] -and $_.ReadyUpdates -and
-            (@(([string]$_.ReadyUpdates) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }).Count -gt 0)
+            $_.PSObject.Properties['AllowListSuppressedUpdates'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$_.AllowListSuppressedUpdates)
         })
     $allowListHeld = $allowListHeldRows.Count
 
@@ -414,7 +414,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
         else {
             # Always emit a header-only CSV so the artefact is present even when
             # no clusters are ready. ASCII keeps it BOM-free.
-            Set-Content -Path $readyForUpdateCsv -Value '"ClusterName","UpdateRing","CurrentVersion","RecommendedUpdate","ClusterResourceId"' -Encoding ASCII
+            Set-Content -Path $readyForUpdateCsv -Value '"ClusterName","UpdateRing","CurrentVersion","RecommendedUpdate","ClusterResourceId","State"' -Encoding ASCII
         }
         Write-Host "Ready-for-Update CSV  : $readyForUpdateCsv ($($readyForUpdateRows.Count) cluster(s))"
     }
@@ -644,6 +644,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
         })
     if ($notReadyRows.Count -gt 0) {
         [void]$md.Add('### Not-Ready clusters (review first)')
+        [void]$md.Add('')
+        [void]$md.Add('> **Tip:** Review the **Monitor: 2 - Fleet Health Status** pipeline output for detailed health alerts affecting the clusters below.')
         [void]$md.Add('')
         # v0.8.81: portal deep-links on the Cluster column - operators can
         # jump straight to the cluster blade. Tip explains the GitHub-strips-
@@ -896,11 +898,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
                 $safeReadyItems = @($readyItems | ForEach-Object { ConvertTo-AzLocalMarkdownTableCell -Value $_ })
                 $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $safeReadyItems.Count, ($safeReadyItems -join '<br>'))
             }
-            # v0.9.14: a cluster reporting 'Up to Date' while it STILL has Ready
-            # updates can only be in that state because the allow-list excluded
-            # every one. Mark the Status cell with ' *' (explained by the
-            # footnote above the table) so the operator isn't misled.
-            $isAllowListSuppressed = ($statusKey -eq 'UpToDate') -and ($readyItems.Count -gt 0)
+            $suppressedReady = if ($r.PSObject.Properties['AllowListSuppressedUpdates'] -and $r.AllowListSuppressedUpdates) { [string]$r.AllowListSuppressedUpdates } else { '' }
+            $isAllowListSuppressed = ($statusKey -eq 'UpToDate') -and -not [string]::IsNullOrWhiteSpace($suppressedReady)
             if ($isAllowListSuppressed) {
                 $statusCell = "$statusCell *"
                 $anyAllowListSuppressed = $true

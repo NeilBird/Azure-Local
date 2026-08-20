@@ -603,6 +603,101 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
                     [void]$md.Add('')
                 }
             }
+
+            if ($sched.SchemaVersion -ge 3) {
+                $prepareRings = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+                $prepareAllRings = $false
+                foreach ($scheduleRow in @($sched.Schedule)) {
+                    $rowPrepareOnlyFirst = [bool]$sched.PrepareOnlyFirst
+                    if ($scheduleRow.PSObject.Properties['PrepareOnlyFirstParsed'] -and $null -ne $scheduleRow.PrepareOnlyFirstParsed) {
+                        $rowPrepareOnlyFirst = [bool]$scheduleRow.PrepareOnlyFirstParsed
+                    }
+                    $rowAllowOutside = [bool]$sched.AllowPrepareOnlyOutsideOfUpdateStartWindow
+                    if ($scheduleRow.PSObject.Properties['AllowPrepareOnlyOutsideOfUpdateStartWindowParsed'] -and $null -ne $scheduleRow.AllowPrepareOnlyOutsideOfUpdateStartWindowParsed) {
+                        $rowAllowOutside = [bool]$scheduleRow.AllowPrepareOnlyOutsideOfUpdateStartWindowParsed
+                    }
+                    if (-not ($rowPrepareOnlyFirst -and $rowAllowOutside)) { continue }
+
+                    foreach ($scheduleRing in (([string]$scheduleRow.rings) -split ';')) {
+                        $scheduleRing = $scheduleRing.Trim()
+                        if ($scheduleRing -eq '***') { $prepareAllRings = $true; continue }
+                        if (-not [string]::IsNullOrWhiteSpace($scheduleRing)) {
+                            [void]$prepareRings.Add($scheduleRing)
+                        }
+                    }
+                }
+
+                $prepareCronDetails = @{}
+                foreach ($auditRow in $cronRows) {
+                    if ($auditRow.Status -eq 'RingMixedWindows') { continue }
+                    $auditRing = ([string]$auditRow.UpdateRing).Trim()
+                    $auditWindow = ([string]$auditRow.UpdateStartWindow).Trim()
+                    if ([string]::IsNullOrWhiteSpace($auditRing) -or [string]::IsNullOrWhiteSpace($auditWindow)) { continue }
+                    if (-not $prepareAllRings -and -not $prepareRings.Contains($auditRing)) { continue }
+
+                    $prepareCrons = @()
+                    try {
+                        $prepareCrons = @(Convert-AzLocalUpdateWindowToCron -UpdateStartWindow $auditWindow -LeadTimeMinutes 360 -FiresPerWindow 1 -ErrorAction Stop)
+                    }
+                    catch {
+                        Write-Verbose "Preparation cron recommendation skipped invalid UpdateStartWindow '$auditWindow': $($_.Exception.Message)"
+                        continue
+                    }
+                    foreach ($prepareCron in $prepareCrons) {
+                        $cronExpression = [string]$prepareCron.CronExpression
+                        if (-not $prepareCronDetails.ContainsKey($cronExpression)) {
+                            $prepareCronDetails[$cronExpression] = [pscustomobject]@{
+                                Targets  = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+                                DayShift = $false
+                            }
+                        }
+                        [void]$prepareCronDetails[$cronExpression].Targets.Add("$auditRing ($auditWindow)")
+                        if ($prepareCron.DayShift) { $prepareCronDetails[$cronExpression].DayShift = $true }
+                    }
+                }
+
+                if ($prepareCronDetails.Count -gt 0) {
+                    [void]$md.Add('### Recommended prepare-first opportunity (Update: 3 - Apply Updates)')
+                    [void]$md.Add('')
+                    [void]$md.Add('These schedule rows resolve both `prepareOnlyFirst: true` and `allowPrepareOnlyOutsideOfUpdateStartWindow: true`. Add one Apply Updates firing **six hours before** each distinct `UpdateStartWindow` opening so Azure can begin download, validation/extraction, and update-specific health checks ahead of installation.')
+                    [void]$md.Add('')
+                    [void]$md.Add('> This is a preparation opportunity, not a guarantee that asynchronous preparation will finish before the window opens. `UpdateExclusionsWindow` and `UpdateExcluded` still block preparation. No extra cron is recommended when the effective allow-outside policy is `false`, because that firing would be blocked by `UpdateStartWindow`.')
+                    [void]$md.Add('')
+                    [void]$md.Add('| Preparation cron (UTC) | Ring / UpdateStartWindow |')
+                    [void]$md.Add('|------------------------|--------------------------|')
+                    foreach ($cronExpression in @($prepareCronDetails.Keys | Sort-Object)) {
+                        $targets = @($prepareCronDetails[$cronExpression].Targets | Sort-Object) -join '<br>'
+                        [void]$md.Add("| ``$cronExpression`` | $targets |")
+                    }
+                    [void]$md.Add('')
+                    if (@($prepareCronDetails.Values | Where-Object { $_.DayShift }).Count -gt 0) {
+                        [void]$md.Add('> At least one recommendation crosses midnight. The cron weekday has already been shifted to the previous UTC day; ensure the corresponding ring is eligible in `apply-updates-schedule.yml` on that preparation day or the resolver will intentionally no-op.')
+                        [void]$md.Add('')
+                    }
+                    if ($Platform -in @('GitHubActions', 'Both')) {
+                        [void]$md.Add('GitHub Actions `schedule:` entries:')
+                        [void]$md.Add('')
+                        [void]$md.Add('```yaml')
+                        foreach ($cronExpression in @($prepareCronDetails.Keys | Sort-Object)) {
+                            [void]$md.Add("- cron: '$cronExpression'")
+                        }
+                        [void]$md.Add('```')
+                        [void]$md.Add('')
+                    }
+                    if ($Platform -in @('AzureDevOps', 'Both')) {
+                        [void]$md.Add('Azure DevOps `schedules:` entries:')
+                        [void]$md.Add('')
+                        [void]$md.Add('```yaml')
+                        foreach ($cronExpression in @($prepareCronDetails.Keys | Sort-Object)) {
+                            [void]$md.Add("- cron: '$cronExpression'")
+                            [void]$md.Add("  displayName: 'Prepare updates six hours before the installation window'")
+                            [void]$md.Add('  always: true')
+                        }
+                        [void]$md.Add('```')
+                        [void]$md.Add('')
+                    }
+                }
+            }
         }
     }
 
@@ -928,7 +1023,11 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     # (end <= start) means a run can cross midnight, so hours cannot be bounded.
     $monitorWindowStrings = @(
         $audit |
-            Where-Object { $_.PSObject.Properties['UpdateStartWindow'] -and -not [string]::IsNullOrWhiteSpace([string]$_.UpdateStartWindow) } |
+            Where-Object {
+                $_.Status -ne 'RingMixedWindows' -and
+                $_.PSObject.Properties['UpdateStartWindow'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$_.UpdateStartWindow)
+            } |
             ForEach-Object { ([string]$_.UpdateStartWindow).Trim() } |
             Sort-Object -Unique
     )

@@ -181,12 +181,18 @@ function Update-AzLocalApplyUpdatesScheduleConfig {
 
     try {
         [System.IO.File]::WriteAllText($full, $result.NewText, [System.Text.UTF8Encoding]::new($false))
+        $null = Get-AzLocalApplyUpdatesScheduleConfig -Path $full
     }
     catch {
         # Roll the rename back so the operator is not left without a
         # schedule file in the canonical location.
-        Write-Log -Message "Write of migrated content FAILED: $($_.Exception.Message). Rolling back the rename so the original is restored." -Level Error
-        try { Rename-Item -LiteralPath $backupPath -NewName ([System.IO.Path]::GetFileName($full)) -ErrorAction Stop }
+        Write-Log -Message "Write or validation of migrated content FAILED: $($_.Exception.Message). Rolling back the rename so the original is restored." -Level Error
+        try {
+            if (Test-Path -LiteralPath $full -PathType Leaf) {
+                Remove-Item -LiteralPath $full -Force -ErrorAction Stop
+            }
+            Rename-Item -LiteralPath $backupPath -NewName ([System.IO.Path]::GetFileName($full)) -ErrorAction Stop
+        }
         catch { Write-Log -Message "ROLLBACK ALSO FAILED. Manual recovery needed: rename '$backupPath' back to '$full' by hand." -Level Error }
         throw
     }

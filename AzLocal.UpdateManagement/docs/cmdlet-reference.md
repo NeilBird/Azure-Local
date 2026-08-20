@@ -258,6 +258,9 @@ Main function to start updates on one or more Azure Local clusters.
 - `-ResourceGroupName` (Optional): Resource group containing the clusters (only used with `-ClusterNames`)
 - `-SubscriptionId` (Optional): Azure subscription ID (defaults to current, only used with `-ClusterNames`)
 - `-UpdateName` (Optional): Specific update name to apply (e.g., `Solution12.2603.1002.15`). If not specified, the latest cumulative update is auto-selected by YYMM version from the update name
+- `-PrepareOnly` (Optional, v0.9.33): Prepare a Ready update without installing it. Azure downloads, validates/extracts, and runs health checks, then stops at `ReadyToInstall`.
+- `-PrepareOnlyFirst` (Optional, v0.9.33): Automated two-firing policy. A Ready update is prepared on the current run; after Azure reports `ReadyToInstall`, a later run applies it through both schedule gates. This differs from `-PrepareOnly`, which never applies an already-prepared update.
+- `-AllowPrepareOnlyOutsideOfUpdateStartWindow` (Optional Boolean, v0.9.33; default `$true`): When preparation is the effective action, `$true` bypasses `UpdateStartWindow` and `$false` enforces it. `UpdateExclusionsWindow` and `UpdateExcluded` remain enforced in either mode; `-IgnoreScheduleTags` remains the explicit bypass for both schedule tags.
 - `-ApiVersion` (Optional): API version (default: "2025-10-01")
 - `-Force` (Optional): Skip confirmation prompts
 - `-WhatIf` (Optional): Show what would happen without executing
@@ -287,6 +290,15 @@ Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Production" -
 
 # Update clusters with specific UpdateRing and update version
 Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -UpdateName "Solution12.2601.1002.38" -Force
+
+# Explicitly prepare the selected update now; do not install it
+Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -PrepareOnly -Force
+
+# Prepare only while the cluster's UpdateStartWindow is open
+Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -PrepareOnly -AllowPrepareOnlyOutsideOfUpdateStartWindow $false -Force
+
+# Automated policy: prepare Ready now, apply ReadyToInstall on a later firing
+Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -PrepareOnlyFirst -Force
 ```
 
 > **Prerequisites for Tag-based Filtering:**
@@ -329,7 +341,7 @@ Assesses update readiness across Azure Local clusters and provides a summary rep
 **Parameters:**
 - `-ClusterNames`, `-ClusterResourceIds`, or `-ScopeByUpdateRingTag`/`-UpdateRingValue` (same as `Start-AzLocalClusterUpdate`)
 - `-ExportPath` (Optional): Export results to a CSV file
-- `-SchedulePath` (Optional, v0.9.1): Path to an apply-updates schedule (schema v2). Its `allowedUpdateVersions` allow-list constrains readiness to the updates each ring is permitted to install (per-ring override beats the top-level fleet default; `Latest` = no constraint).
+- `-SchedulePath` (Optional, v0.9.1): Path to an apply-updates schedule (current schema v3). Its `allowedUpdateVersions` allow-list constrains readiness to the updates each ring is permitted to install (per-ring override beats the top-level fleet default; `Latest` = no constraint).
 - `-AllowedUpdateVersions` (Optional, v0.9.1): `[string[]]` explicit allow-list, applied to every cluster when `-SchedulePath` is not used. `Latest` = no constraint.
 
 **Output Columns (and CSV Export):**

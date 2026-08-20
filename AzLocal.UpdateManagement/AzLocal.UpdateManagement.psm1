@@ -147,7 +147,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.9.32'
+$script:ModuleVersion = '0.9.33'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -273,7 +273,7 @@ $script:UpdateAuthAccountIdTagName = 'UpdateAuthAccountId'
 # preceding cumulative updates) instead of the cmdlet's default 'latest
 # Ready update' behaviour. v1 files remain readable; the additive field is
 # silently absent.
-$script:ScheduleSchemaCurrentVersion = 2
+$script:ScheduleSchemaCurrentVersion = 3
 
 # Current sideload-catalog.yml schema version produced + consumed by this
 # module (v0.8.7 on-prem sideloading automation). Mirrors the schedule schema

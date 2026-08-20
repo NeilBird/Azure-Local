@@ -429,8 +429,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.32' {
-            $script:ModuleInfo.Version | Should -Be '0.9.32'
+        It 'Should have version 0.9.33' {
+            $script:ModuleInfo.Version | Should -Be '0.9.33'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1256,6 +1256,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'Step.6 GH Summary step must call the apply-updates step-summary cmdlet (which renders the Cluster Actions + Clusters Skipped at Readiness Gate tables)'
             $content | Should -Match 'ApplyResultsJsonPath\s*=\s*''\./artifacts/apply-results\.json''' -Because 'Step.6 GH Summary must pass the apply-results.json path so the per-cluster Cluster Actions table can be rendered from it'
             $content | Should -Match 'ReadinessCsvPath\s*=\s*''\./artifacts/readiness-report\.csv''' -Because 'Step.6 GH Summary must pass the readiness-report.csv path so the Clusters Skipped at Readiness Gate table can be rendered from it'
+            $content | Should -Match 'allow_prepare_only_outside_of_update_start_window:'
+            $content | Should -Match 'RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW'
+            $content | Should -Match '\$params\[''AllowPrepareOnlyOutsideOfUpdateStartWindow''\]'
         }
 
         It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
@@ -1266,6 +1269,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'ADO Step.6 Generate Summary task must call the apply-updates step-summary cmdlet'
             $content | Should -Match 'ApplyResultsJsonPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/apply-results\.json"' -Because 'ADO Step.6 Summary must pass apply-results.json so the Cluster Actions table can be rendered'
             $content | Should -Match 'ReadinessCsvPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/readiness-report\.csv"' -Because 'ADO Step.6 Summary must pass readiness-report.csv so the Clusters Skipped at Readiness Gate table can be rendered'
+            $content | Should -Match 'allowPrepareOnlyOutsideOfUpdateStartWindow'
+            $content | Should -Match 'RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW'
+            $content | Should -Match 'UPDATE_OPERATION_PARAM:\s*\$\{\{ parameters\.updateOperation \}\}'
+            $content | Should -Match 'USE_SCHEDULE_FILE_PARAM:\s*\$\{\{ parameters\.useScheduleFile \}\}'
+            $content | Should -Match '\$params\[''AllowPrepareOnlyOutsideOfUpdateStartWindow''\]'
         }
 
         It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
@@ -1676,6 +1684,15 @@ Describe 'Function: Start-AzLocalClusterUpdate' {
             $command.Parameters['IgnoreScheduleTags'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
 
+        It 'v0.9.33: Should expose prepare workflow parameters' {
+            $command.Parameters.Keys | Should -Contain 'PrepareOnly'
+            $command.Parameters.Keys | Should -Contain 'PrepareOnlyFirst'
+            $command.Parameters.Keys | Should -Contain 'AllowPrepareOnlyOutsideOfUpdateStartWindow'
+            $command.Parameters['PrepareOnly'].ParameterType.Name | Should -Be 'SwitchParameter'
+            $command.Parameters['PrepareOnlyFirst'].ParameterType.Name | Should -Be 'SwitchParameter'
+            $command.Parameters['AllowPrepareOnlyOutsideOfUpdateStartWindow'].ParameterType.Name | Should -Be 'Boolean'
+        }
+
         It 'Should have WhatIf parameter' {
             $command.Parameters.Keys | Should -Contain 'WhatIf'
         }
@@ -1729,6 +1746,173 @@ Describe 'Function: Start-AzLocalClusterUpdate' {
             $outputTypes.Type.FullName | Should -Contain 'System.Management.Automation.PSObject[]'
         }
     }
+}
+
+Describe 'v0.9.33: Invoke-AzLocalUpdatePrepare transport' {
+    BeforeEach {
+        $global:prepareAzArgs = @()
+        $global:prepareExitCode = 0
+        $global:prepareResponse = ''
+        function global:az {
+            $global:prepareAzArgs = @($args)
+            $global:LASTEXITCODE = $global:prepareExitCode
+            return $global:prepareResponse
+        }
+    }
+
+    AfterEach {
+        Remove-Item function:\az -ErrorAction SilentlyContinue
+        Remove-Variable prepareAzArgs, prepareExitCode, prepareResponse -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'POSTs the stable prepare URI without a request body' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalClusterResourceInGlobalScope { $true }
+            Mock Test-AzCliAvailable { $true }
+            $clusterId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/Dallas'
+
+            Invoke-AzLocalUpdatePrepare -ClusterResourceId $clusterId -UpdateName 'Solution12.2608.1003.8' | Should -BeTrue
+
+            ($global:prepareAzArgs -join ' ') | Should -BeExactly "rest --method POST --uri https://management.azure.com$clusterId/updates/Solution12.2608.1003.8/prepare?api-version=2026-04-30 --only-show-errors"
+            $global:prepareAzArgs | Should -Not -Contain '--body'
+        }
+    }
+
+    It 'accepts an asynchronous 202 response even when the native exit code is nonzero' {
+        $global:prepareExitCode = 1
+        $global:prepareResponse = '202 Accepted'
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalClusterResourceInGlobalScope { $true }
+            Mock Test-AzCliAvailable { $true }
+            Invoke-AzLocalUpdatePrepare -ClusterResourceId '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/Dallas' -UpdateName 'Solution12.2608.1003.8' | Should -BeTrue
+        }
+    }
+
+    It 'returns false for a rejected prepare request' {
+        $global:prepareExitCode = 1
+        $global:prepareResponse = 'BadRequest'
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalClusterResourceInGlobalScope { $true }
+            Mock Test-AzCliAvailable { $true }
+            Mock ConvertTo-ScrubbedCliOutput { 'BadRequest' }
+            Invoke-AzLocalUpdatePrepare -ClusterResourceId '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/Dallas' -UpdateName 'Solution12.2608.1003.8' | Should -BeFalse
+        }
+    }
+
+    It 'fails before Azure CLI when global fleet scope rejects the cluster' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalClusterResourceInGlobalScope { $false }
+            Mock Test-AzCliAvailable { $true }
+            { Invoke-AzLocalUpdatePrepare -ClusterResourceId '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/Dallas' -UpdateName 'Solution12.2608.1003.8' } | Should -Throw '*GlobalFilterMismatch*'
+            Assert-MockCalled Test-AzCliAvailable -Times 0 -Exactly
+        }
+        $global:prepareAzArgs.Count | Should -Be 0
+    }
+}
+
+Describe 'v0.9.33: prepareOnlyFirst schedule resolution' {
+    BeforeAll {
+        $script:prepareScheduleDir = Join-Path $env:TEMP "azlocal-prepare-schedule-$([guid]::NewGuid())"
+        New-Item -ItemType Directory -Path $script:prepareScheduleDir -Force | Out-Null
+    }
+
+    AfterAll {
+        Remove-Item -LiteralPath $script:prepareScheduleDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'uses the top-level true value when matching rows omit an override' {
+        $path = Join-Path $script:prepareScheduleDir 'top-level.yml'
+        @'
+schemaVersion: 3
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+'@ | Set-Content -LiteralPath $path -Encoding ASCII
+        $decision = Resolve-AzLocalCurrentUpdateRing -Schedule (Get-AzLocalApplyUpdatesScheduleConfig -Path $path) -Now ([datetime]'2025-12-29T12:00:00Z')
+        $decision.PrepareOnlyFirst | Should -BeTrue
+        $decision.PrepareOnlyFirstSource | Should -Be 'top-level'
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindow | Should -BeTrue
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindowSource | Should -Be 'top-level'
+    }
+
+    It 'uses an explicit row value before the top-level value' {
+        $path = Join-Path $script:prepareScheduleDir 'row.yml'
+        @'
+schemaVersion: 3
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+    prepareOnlyFirst: false
+    allowPrepareOnlyOutsideOfUpdateStartWindow: false
+'@ | Set-Content -LiteralPath $path -Encoding ASCII
+        $decision = Resolve-AzLocalCurrentUpdateRing -Schedule (Get-AzLocalApplyUpdatesScheduleConfig -Path $path) -Now ([datetime]'2025-12-29T12:00:00Z')
+        $decision.PrepareOnlyFirst | Should -BeFalse
+        $decision.PrepareOnlyFirstSource | Should -Be 'row'
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindow | Should -BeFalse
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindowSource | Should -Be 'row'
+    }
+
+    It 'fails closed when matching row overrides conflict' {
+        $path = Join-Path $script:prepareScheduleDir 'conflict.yml'
+        @'
+schemaVersion: 3
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+    prepareOnlyFirst: true
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'DevTest'
+    prepareOnlyFirst: false
+'@ | Set-Content -LiteralPath $path -Encoding ASCII
+        $config = Get-AzLocalApplyUpdatesScheduleConfig -Path $path
+        { Resolve-AzLocalCurrentUpdateRing -Schedule $config -Now ([datetime]'2025-12-29T12:00:00Z') } | Should -Throw '*conflicting prepareOnlyFirst*'
+    }
+
+        It 'fails closed when matching prepare-window overrides conflict' {
+                $path = Join-Path $script:prepareScheduleDir 'prepare-window-conflict.yml'
+                @'
+schemaVersion: 3
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+schedule:
+    - weeksInCycle: '1'
+        daysOfWeek: 'Mon'
+        rings: 'Canary'
+        allowPrepareOnlyOutsideOfUpdateStartWindow: true
+    - weeksInCycle: '1'
+        daysOfWeek: 'Mon'
+        rings: 'DevTest'
+        allowPrepareOnlyOutsideOfUpdateStartWindow: false
+'@ | Set-Content -LiteralPath $path -Encoding ASCII
+                $config = Get-AzLocalApplyUpdatesScheduleConfig -Path $path
+                { Resolve-AzLocalCurrentUpdateRing -Schedule $config -Now ([datetime]'2025-12-29T12:00:00Z') } | Should -Throw '*conflicting allowPrepareOnlyOutsideOfUpdateStartWindow*'
+        }
 }
 
 Describe 'Function: Get-AzLocalClusterUpdateReadiness' {
@@ -4060,6 +4244,26 @@ Describe 'Function: Test-AzLocalUpdateScheduleAllowed (Exported)' {
 }
 
 Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
+    Context 'Preparation schedule semantics' {
+        BeforeAll {
+            $script:prepareScheduleSource = Get-Content -LiteralPath "$PSScriptRoot/../Public/Start-AzLocalClusterUpdate.ps1" -Raw
+        }
+
+        It 'Bypasses UpdateStartWindow only when preparation policy allows it' {
+            $script:prepareScheduleSource | Should -Match '\$bypassStartWindowForPreparation\s*=\s*\$prepareThisRun\s+-and\s+\$AllowPrepareOnlyOutsideOfUpdateStartWindow'
+            $script:prepareScheduleSource | Should -Match '\$effectiveWindowTagValue\s*=\s*if \(\$bypassStartWindowForPreparation\) \{ \$null \} else \{ \$windowTagValue \}'
+        }
+
+        It 'Still forwards UpdateExclusionsWindow to the schedule gate during preparation' {
+            $script:prepareScheduleSource | Should -Match '(?s)Test-AzLocalUpdateScheduleAllowed\s+`\s*\r?\n\s*-UpdateStartWindow \$effectiveWindowTagValue\s+`\s*\r?\n\s*-UpdateExclusionsWindow \$exclusionTagValue'
+        }
+
+        It 'Leaves IgnoreScheduleTags as the explicit bypass for both schedule tags' {
+            $script:prepareScheduleSource | Should -Match 'if \(\$IgnoreScheduleTags\)'
+            $script:prepareScheduleSource | Should -Match 'UpdateStartWindow=.*UpdateExclusionsWindow=.*will NOT be evaluated'
+        }
+    }
+
     Context 'ScheduleBlocked status in result counting' {
         It 'ScheduleBlocked is included in the skip statuses list' {
             # Verify ScheduleBlocked is in the expected skip statuses used by the end block
@@ -5497,7 +5701,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.32'
+            $report.moduleVersion | Should -Match '^0\.9\.33'
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw
@@ -7165,6 +7369,53 @@ Describe 'Get-AzLocalClusterUpdateReadiness (ARG-batch dispatch)' {
                 $result[0].HasPrerequisiteUpdates | Should -Be 'Vendor-SBE-4.2.0'
                 Assert-MockCalled Get-AzLocalAvailableUpdates -Times 1 -Exactly -ParameterFilter {
                     $ClusterResourceId -eq $clusterId -and $Raw
+                }
+            }
+        }
+
+        It 'Surfaces a Pending OEM Validation feature update without classifying it as ready or downloading' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable       { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Get-HealthCheckFailureSummary { return '' }
+                Mock Write-Host {}
+
+                $clusterId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/pending-oem'
+                Mock Invoke-AzResourceGraphQuery {
+                    param($Query)
+                    if ($Query -match 'updatesummaries') {
+                        return @([PSCustomObject]@{
+                            ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                            properties = [PSCustomObject]@{ state = 'UpdateAvailable'; healthState = 'Success' }
+                        })
+                    }
+                    if ($Query -match "clusters/updates'") {
+                        return @([PSCustomObject]@{
+                            ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                            UpdateName_ = 'Solution12.2610.1004.1'
+                            name = 'Solution12.2610.1004.1'
+                            properties = [PSCustomObject]@{ state = 'PendingOEMValidation'; packageType = 'Solution' }
+                        })
+                    }
+                    return @([PSCustomObject]@{
+                        id = $clusterId
+                        name = 'pending-oem'; resourceGroup = 'r'; subscriptionId = 's'; tags = $null
+                        properties = [PSCustomObject]@{ status = 'ConnectedRecently' }
+                    })
+                }
+
+                $result = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($clusterId) -PassThru
+
+                $result | Should -HaveCount 1
+                $result[0].ReadyForUpdate | Should -BeFalse
+                $result[0].RecommendedUpdate | Should -Be 'Solution12.2610.1004.1'
+                $result[0].RecommendedUpdateState | Should -Be 'PendingOEMValidation'
+                Assert-MockCalled Write-Host -Times 1 -Exactly -ParameterFilter {
+                    $Object -eq ' Pending OEM Validation'
+                }
+                Assert-MockCalled Write-Host -Times 0 -Exactly -ParameterFilter {
+                    $Object -eq ' Updates Downloading'
                 }
             }
         }
@@ -9285,7 +9536,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         $text = Get-Content -LiteralPath (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') -Raw
-        $text | Should -Match 'AZLOCAL-UPDATER-VERSION:\s+1\.4\.0'
+        $text | Should -Match 'AZLOCAL-UPDATER-VERSION:\s+1\.4\.1'
         $text | Should -Match '\[version\]\$RequiredVersion'
         $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$RequiredVersion'
         $text | Should -Match 'Install-Module\s+-Name\s+\$moduleName.+-RequiredVersion\s+\$targetVersion'
@@ -10112,6 +10363,15 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
                 $r[0].FireHour | Should -Be 1
                 $r[0].FireMinute | Should -Be 55
                 $r[0].DayShift | Should -BeFalse
+            }
+        }
+
+        It 'Sat_02:00-06:00 with a six-hour preparation lead shifts to Friday 20:00' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat_02:00-06:00' -LeadTimeMinutes 360
+                $r | Should -HaveCount 1
+                $r[0].CronExpression | Should -Be '0 20 * * 5'
+                $r[0].DayShift | Should -BeTrue
             }
         }
 
@@ -11569,6 +11829,19 @@ Describe 'v0.7.67 schedule-audit summary - cron fixes first when issues exist' {
     }
 }
 
+Describe 'v0.9.33 schedule-audit mixed-window transcript regression' {
+    It 'Excludes RingMixedWindows display values from monitor-window parsing' {
+        $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+        $content = Get-Content -LiteralPath $cmdletPath -Raw
+        $monitorWindowBlock = [regex]::Match(
+            $content,
+            '(?s)\$monitorWindowStrings\s*=\s*@\(.*?\n\s*\)\s*\n\s*\$monitorWinMinStartHour'
+        )
+        $monitorWindowBlock.Success | Should -BeTrue
+        $monitorWindowBlock.Value | Should -Match '\$_\.Status\s+-ne\s+''RingMixedWindows'''
+    }
+}
+
 Describe 'v0.7.67 Reset-AzLocalSideloadedTag warns on malformed Resource IDs' {
     # v0.7.67 review finding: the ByResourceId resolver silently dropped Resource
     # IDs that did not end in '/clusters/<name>'. Operators with typo'd inputs
@@ -11927,6 +12200,67 @@ Describe 'Function: Update-AzLocalPipelineExample' {
         It 'Throws when -Destination does not exist' {
             { Update-AzLocalPipelineExample -Destination "$env:TEMP\does-not-exist-$([guid]::NewGuid())" -Platform GitHub -PassThru } |
                 Should -Throw -ExpectedMessage '*Destination*does not exist*'
+        }
+    }
+
+    Context 'Apply-updates schedule schema migration' {
+        It 'Automatically backs up and migrates a repo-root schema v2 schedule to v3' {
+            $repoRoot = Join-Path $env:TEMP "upe-apply-schedule-v2-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $schedulePath = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
+            $backupPath = Join-Path $repoRoot 'config\apply-updates-schedule.v2.old.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $schedulePath) -ItemType Directory -Force | Out-Null
+            $before = @(
+                'schemaVersion: 2'
+                'cycleWeeks: 4'
+                'cycleAnchorISOWeek: 1'
+                'cycleAnchorYear: 2026'
+                "allowedUpdateVersions: 'Latest'"
+                '# OPERATOR SENTINEL'
+                'schedule:'
+                "  - weeksInCycle: '1'"
+                "    daysOfWeek: 'Mon'"
+                "    rings: 'Canary'"
+                "    notes: 'Change 1234'"
+            ) -join "`r`n"
+            [IO.File]::WriteAllText($schedulePath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                $after = [IO.File]::ReadAllText($schedulePath)
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+                $after | Should -Match '(?m)^schemaVersion: 3\r?$'
+                $after | Should -Match '(?m)^prepareOnlyFirst: false\r?$'
+                $after | Should -Match '(?m)^# OPERATOR SENTINEL\r?$'
+                (Get-AzLocalApplyUpdatesScheduleConfig -Path $schedulePath).SchemaVersion | Should -Be 3
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                [IO.File]::ReadAllText($schedulePath) | Should -BeExactly $after
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Does not migrate or create a backup under WhatIf' {
+            $repoRoot = Join-Path $env:TEMP "upe-apply-schedule-v2-whatif-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $schedulePath = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $schedulePath) -ItemType Directory -Force | Out-Null
+            $before = "schemaVersion: 2`ncycleWeeks: 4`ncycleAnchorISOWeek: 1`ncycleAnchorYear: 2026`nallowedUpdateVersions: 'Latest'`nschedule:`n  - weeksInCycle: '1'`n    daysOfWeek: 'Mon'`n    rings: 'Canary'`n"
+            [IO.File]::WriteAllText($schedulePath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null 4>$null | Out-Null
+
+                [IO.File]::ReadAllText($schedulePath) | Should -BeExactly $before
+                Test-Path -LiteralPath (Join-Path $repoRoot 'config\apply-updates-schedule.v2.old.yml') | Should -BeFalse
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -13039,7 +13373,8 @@ Describe 'v0.7.69 Apply-Updates Schedule: New-AzLocalApplyUpdatesScheduleConfig 
         $null = New-AzLocalApplyUpdatesScheduleConfig -OutputPath $out -Rings @('Canary','Ring1','Ring2','Prod') -Force 6>$null
         Test-Path -LiteralPath $out | Should -Be $true
         $text = Get-Content -LiteralPath $out -Raw
-        $text | Should -Match 'schemaVersion:\s*2'
+        $text | Should -Match 'schemaVersion:\s*3'
+        $text | Should -Match '(?m)^prepareOnlyFirst:\s*false\r?$'
         $text | Should -Match 'cycleWeeks:\s*4'
         # Active (uncommented) schedule rows must be zero.
         @($text -split "`n" | Where-Object { $_ -match '^\s*-\s+weeksInCycle:' }).Count | Should -Be 0
@@ -13067,11 +13402,12 @@ Describe 'v0.7.69 Apply-Updates Schedule: Update-AzLocalApplyUpdatesScheduleConf
 
         $script:up_live = Join-Path $script:up_tmp 'live.yml'
         $body = @'
-schemaVersion: 2
+schemaVersion: 3
 cycleWeeks: 4
 cycleAnchorISOWeek: 1
 cycleAnchorYear: 2026
 allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: false
 schedule:
   - weeksInCycle: '1'
     daysOfWeek: 'Mon'
@@ -13520,8 +13856,8 @@ schedule:
         }
     }
 
-    Context 'Schema migration: 1->2 (additive, idempotent)' {
-        It 'Migrates schemaVersion 1 to 2 and inserts the documented commented block' {
+    Context 'Schema migration: 1->3 (chained, additive, idempotent)' {
+        It 'Migrates schemaVersion 1 through every hop and inserts both documented blocks' {
             $p = Join-Path $script:av_tmp 'mig-v1.yml'
             $body = @"
 schemaVersion: 1
@@ -13539,19 +13875,22 @@ schedule:
             $r = Update-AzLocalApplyUpdatesScheduleConfig -Path $p -PassThru -Confirm:$false 6>$null
             $r.Action      | Should -Be 'Migrated'
             $r.FromVersion | Should -Be 1
-            $r.ToVersion   | Should -Be 2
+            $r.ToVersion   | Should -Be 3
             $migrated = Get-Content -LiteralPath $p -Raw
-            $migrated | Should -Match 'schemaVersion:\s*2'
+            $migrated | Should -Match 'schemaVersion:\s*3'
             $migrated | Should -Match '# >>> ALLOWED-UPDATE-VERSIONS-V2 <<<'
+            $migrated | Should -Match '# >>> PREPARE-ONLY-FIRST-V3 <<<'
             $migrated | Should -Match '#\s+allowedUpdateVersions:'
             # v0.7.89: migrator inserts an ACTIVE top-level
             # 'allowedUpdateVersions: ''Latest''' line so the migrated
             # file satisfies the new mandatory rule with zero behaviour
             # change ('Latest' = no constraint = historic v0.7.88 default).
             $migrated | Should -Match "allowedUpdateVersions:\s*'Latest'"
+            $migrated | Should -Match '(?m)^prepareOnlyFirst:\s*false\r?$'
             # Reader accepts the migrated file.
             $cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
-            $cfg.SchemaVersion | Should -Be 2
+            $cfg.SchemaVersion | Should -Be 3
+            $cfg.PrepareOnlyFirst | Should -BeFalse
         }
 
         It 'Migration is idempotent: running twice produces the same file' {
@@ -13577,6 +13916,90 @@ schedule:
             $afterSecond | Should -Be $afterFirst
             # Marker appears exactly once.
             ([regex]::Matches($afterSecond, '# >>> ALLOWED-UPDATE-VERSIONS-V2 <<<')).Count | Should -Be 1
+            ([regex]::Matches($afterSecond, '# >>> PREPARE-ONLY-FIRST-V3 <<<')).Count | Should -Be 1
+        }
+    }
+
+    Context 'Schema migration: 2->3 operator schedule invariants' {
+        It 'Preserves every byte from schedule onward and retains newline style' -TestCases @(
+            @{ Name = 'LF';   NewLine = "`n";   ForbiddenNewLine = "`r`n" }
+            @{ Name = 'CRLF'; NewLine = "`r`n"; ForbiddenNewLine = $null }
+        ) {
+            param($Name, $NewLine, $ForbiddenNewLine)
+
+            $lines = @(
+                'schemaVersion: 2'
+                'cycleWeeks: 8'
+                'cycleAnchorISOWeek: 1'
+                'cycleAnchorYear: 2026'
+                "allowedUpdateVersions: 'Solution12.2608.1003.8;SBE5.0.2603.1522'"
+                '# OPERATOR TOP-LEVEL COMMENT: false must remain false text'
+                'schedule:'
+                "  - weeksInCycle: '1-2'"
+                "    daysOfWeek: 'Mon-Fri'"
+                "    rings: 'Canary;DevTest'"
+                "    allowedUpdateVersions: 'Solution12.2608.1003.8'"
+                "    notes: 'prepare=false; change 1234'"
+                "  - weeksInCycle: '3-8'"
+                "    daysOfWeek: 'Tue,Thu'"
+                "    rings: 'Ring1;Ring2;Prod'"
+                "    notes: 'operator text true and false stays literal'"
+            )
+            $before = $lines -join $NewLine
+            $beforeSchedule = [regex]::Match($before, '(?ms)^schedule\s*:.*\z').Value
+
+            $conversion = & (Get-Module 'AzLocal.UpdateManagement') {
+                param($text)
+                Convert-AzLocalScheduleSchemaVersion -Text $text -TargetSchemaVersion 3 -SourcePath '<invariance-test>'
+            } $before
+
+            $conversion.Migrated | Should -BeTrue
+            $conversion.FromVersion | Should -Be 2
+            $conversion.ToVersion | Should -Be 3
+            [regex]::Match($conversion.NewText, '(?ms)^schedule\s*:.*\z').Value | Should -BeExactly $beforeSchedule
+            ([regex]::Matches($conversion.NewText, '(?m)^prepareOnlyFirst:\s*false\r?$')).Count | Should -Be 1
+            $conversion.NewText | Should -Match "allowedUpdateVersions: 'Solution12\.2608\.1003\.8;SBE5\.0\.2603\.1522'"
+            if ($ForbiddenNewLine) {
+                $conversion.NewText.Contains($ForbiddenNewLine) | Should -BeFalse
+            }
+            else {
+                ($conversion.NewText -match '(?<!\r)\n') | Should -BeFalse
+            }
+        }
+
+        It 'Produces the same ring and allow-list decision with prepareOnlyFirst defaulted to false' {
+            $beforePath = Join-Path $script:av_tmp 'mig-v2-decision-before.yml'
+            $afterPath = Join-Path $script:av_tmp 'mig-v2-decision-after.yml'
+            $before = @'
+schemaVersion: 2
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'Solution12.2608.1003.8;SBE5.0.2603.1522'
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary;DevTest'
+    allowedUpdateVersions: 'Solution12.2608.1003.8'
+    notes: 'Operator-owned ring policy'
+'@
+            [IO.File]::WriteAllText($beforePath, $before, [Text.UTF8Encoding]::new($false))
+            $beforeConfig = Get-AzLocalApplyUpdatesScheduleConfig -Path $beforePath
+            $beforeDecision = Resolve-AzLocalCurrentUpdateRing -Schedule $beforeConfig -Now $script:av_wk1Mon.AddHours(12)
+
+            $conversion = & (Get-Module 'AzLocal.UpdateManagement') {
+                param($text)
+                Convert-AzLocalScheduleSchemaVersion -Text $text -TargetSchemaVersion 3 -SourcePath '<decision-test>'
+            } $before
+            [IO.File]::WriteAllText($afterPath, $conversion.NewText, [Text.UTF8Encoding]::new($false))
+            $afterConfig = Get-AzLocalApplyUpdatesScheduleConfig -Path $afterPath
+            $afterDecision = Resolve-AzLocalCurrentUpdateRing -Schedule $afterConfig -Now $script:av_wk1Mon.AddHours(12)
+
+            $afterDecision.RingsValue | Should -BeExactly $beforeDecision.RingsValue
+            $afterDecision.AllowedUpdateVersionsValue | Should -BeExactly $beforeDecision.AllowedUpdateVersionsValue
+            $afterDecision.AllowedUpdateVersionsSource | Should -BeExactly $beforeDecision.AllowedUpdateVersionsSource
+            $afterDecision.PrepareOnlyFirst | Should -BeFalse
+            $afterDecision.PrepareOnlyFirstSource | Should -Be 'top-level'
         }
     }
 
@@ -15577,6 +16000,10 @@ Describe 'Function: Get-AzLocalFleetConnectivityStatus (v0.7.79)' {
                 Test-Path -LiteralPath $jsonPath | Should -BeTrue
                 (Get-Content -LiteralPath $jsonPath -Raw).Trim() | Should -Be '[]'
             }
+
+            $nicCsvPath = Join-Path -Path $exportPath -ChildPath 'fleet-physical-nics.csv'
+            (Get-Item -LiteralPath $nicCsvPath).Length | Should -BeGreaterThan 0
+            (Get-Content -LiteralPath $nicCsvPath -Raw).Trim() | Should -Be '"NodeName","MachineId","ClusterName","ClusterId","MachineConnectivity","NicName","NicType","NicStatus","DriverVersion","InterfaceDescription","Ip4Address","SubnetMask","DefaultGateway","DnsServers","MacAddress","ResourceGroup","SubscriptionId"'
         }
     }
 }
@@ -18019,6 +18446,16 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $xml | Should -Match 'Subscription Scope \(count=0\).*tests="1"'
     }
 
+    It 'Reports a successful empty role-assignment list without a blank failure message' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $captured = & {
+            Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows @()
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match "no role assignments returned for appId 'app-id-from-cli'"
+        $joined | Should -Not -Match 'role assignment lookup failed:'
+    }
+
     It 'Multi-subscription: each subscription row appears in the JUnit XML and the markdown roster' {
         $multi = @(
             [pscustomobject]@{ name = 'A'; subscriptionId = 's1'; tenantId = 't1'; state = 'Enabled' }
@@ -19352,6 +19789,45 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $summary | Should -Match '\| Update attempts without observable run \(last 72h\) \| 1 \| 33\.3% \|'
     }
 
+    It 'Does not regress to an older ARG run when an 11-day-old tagged attempt is still visible through ARM' {
+        $attemptTime = $script:_s7_now.AddDays(-11)
+        $resourceId = '/subscriptions/s1/resourceGroups/rg-mobile/providers/Microsoft.AzureStackHCI/clusters/mobile'
+        $inventory = @([pscustomobject]@{
+            ClusterName = 'Mobile'
+            ResourceId  = $resourceId
+            tags        = @{ UpdateLastAttempt = ($attemptTime.ToString('yyyy-MM-ddTHH:mm:ssZ') + ';UpdateStarted;Solution12.2608.1003.8;Update initiated successfully') }
+        })
+        $staleArgRun = [pscustomobject]@{
+            ClusterName = 'Mobile'; ClusterResourceId = $resourceId; UpdateName = 'Solution12.2607.1003.7'
+            State = 'Succeeded'; Status = 'Success'; StartTime = $attemptTime.AddDays(-30).ToString('o')
+            EndTime = $attemptTime.AddDays(-30).AddHours(4).ToString('o'); LastUpdatedTime = $attemptTime.AddDays(-30).AddHours(4).ToString('o')
+            Progress = '10/10 steps'; CurrentStep = ''; CurrentStepDetail = ''; ErrorMessage = ''; ErrorDescription = ''
+            RunId = 'older-arg-run'; RunResourceId = ($resourceId + '/updates/Solution12.2607.1003.7/updateRuns/older-arg-run')
+        }
+        $armRun = [pscustomobject]@{
+            id = ($resourceId + '/updates/Solution12.2608.1003.8/updateRuns/newer-arm-run')
+            name = 'newer-arm-run'
+            properties = [pscustomobject]@{
+                state = 'Failed'; timeStarted = $attemptTime.AddMinutes(1).ToString('o'); lastUpdatedTime = $attemptTime.AddHours(2).ToString('o')
+                progress = [pscustomobject]@{ status = 'Error'; steps = @() }; location = 'eastus'
+            }
+        }
+        $global:_s7_payload = @{ Inventory = $inventory; Runs = @($staleArgRun); ArmRun = $armRun; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns { @($global:_s7_payload.Runs) }
+            Mock Get-AzLocalClusterUpdateRuns { @($global:_s7_payload.ArmRun) }
+            $monitorResult = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+            Should -Invoke Get-AzLocalClusterUpdateRuns -Times 1 -Exactly
+            return $monitorResult
+        }
+
+        @($result.Rows).Count | Should -Be 1
+        @($result.Rows | Where-Object RunId -eq 'newer-arm-run').Count | Should -Be 1
+        @($result.Rows | Where-Object RunId -eq 'newer-arm-run')[0].State | Should -Be 'Failed'
+    }
+
     It 'CSV is sorted by SeverityScore descending (worst first), and contains all rows' {
         $runs = @(
             [pscustomobject]@{
@@ -19612,6 +20088,42 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
         $out | Should -Match 'total_clusters=0'
         $out | Should -Match 'critical_health_failed=0'
+    }
+
+    It 'Reconciles stale ARM actionable counts from child update states and preserves both values in CSV' {
+        $resourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='alpha'; ResourceId=$resourceId })
+            Readiness = @([pscustomobject]@{
+                ClusterName='alpha'; ResourceGroup='rg1'; SubscriptionId='s1'; ResourceId=$resourceId
+                UpdateState='Ready'; HealthState='Success'; ReadyForUpdate=$true; HasPrerequisiteUpdates=$false
+                AllAvailableUpdates='Solution12.2608.1003.8'; ReadyUpdates='Solution12.2608.1003.8'; SBEDependency=''
+                RecommendedUpdate='Solution12.2608.1003.8'; CurrentVersion='12.2607.1003.7'; HealthCheckFailures=''
+            })
+            Summary = @([pscustomobject]@{ ClusterName='alpha'; ActionableUpdatesCount=0 })
+            Available = @(
+                [pscustomobject]@{ ClusterName='ALPHA'; UpdateState='Ready' }
+                [pscustomobject]@{ ClusterName='alpha'; UpdateState='ReadyToInstall' }
+                [pscustomobject]@{ ClusterName='alpha'; UpdateState='Installed' }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2608'); LatestYYMM='2608'; LatestVersion='12.2608.1003.8'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @($global:_s8_payload.Summary) }
+            Mock Get-AzLocalAvailableUpdates       { @($global:_s8_payload.Available) }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+
+        $summaryRows = @(Import-Csv -LiteralPath $result.SummariesCsvPath)
+        $summaryRows.Count | Should -Be 1
+        $summaryRows[0].ActionableUpdatesCount | Should -Be '2'
+        $summaryRows[0].ArmActionableUpdatesCount | Should -Be '0'
     }
 
     It 'Single healthy cluster produces 1 testcase per suite, criticalHealthPassed=1, no actions required' {
@@ -20949,8 +21461,9 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
                                    AllowListSource='TopLevel'; AllowListSuppressedUpdates='Solution12.2607.1003.71' }
                 [pscustomobject]@{ ClusterName='stale'; ClusterResourceId=$staleId; UpdateRing='Prod'
                                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
-                                   AllAvailableUpdates=''; ReadyUpdates=''
+                                   AllAvailableUpdates='Solution12.2607.1003.71'; ReadyUpdates='Solution12.2607.1003.71'
                                    CurrentVersion='12.2604.1003.1006'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowedUpdateVersions='Latest'
                                    AllowListSource='Latest'; AllowListSuppressedUpdates='' }
             )
             Health = @(
@@ -20979,6 +21492,7 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         }
         $result.StaleAssessmentCount | Should -Be 2
         $result.StaleAssessmentScanTriggered | Should -BeTrue
+        $result.AllowListHeldCount | Should -Be 3 -Because "Latest and explicit policies that suppressed nothing must not be reported as holding Ready updates"
         @($result.StaleAssessmentClusters).Count | Should -Be 2
         @($result.StaleAssessmentClusters.ClusterName) | Should -Contain 'missing-allowed'
         @($result.StaleAssessmentClusters.ClusterName) | Should -Contain 'stale'
@@ -22004,6 +22518,29 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
                 )
             }
         }
+        function script:New-S3ScheduleV3 {
+            param(
+                [bool]$AllowOutside = $true,
+                [Nullable[bool]]$RowAllowOutside = $null
+            )
+            [pscustomobject]@{
+                SchemaVersion = 3
+                CycleWeeks = 4
+                AllowedUpdateVersions = @('Latest')
+                PrepareOnlyFirst = $true
+                AllowPrepareOnlyOutsideOfUpdateStartWindow = $AllowOutside
+                Schedule = @(
+                    [pscustomobject]@{
+                        weeksInCycle = '1'
+                        daysOfWeek = 'Sat'
+                        rings = 'Wave1'
+                        AllowedUpdateVersionsParsed = @()
+                        PrepareOnlyFirstParsed = $null
+                        AllowPrepareOnlyOutsideOfUpdateStartWindowParsed = $RowAllowOutside
+                    }
+                )
+            }
+        }
     }
 
     BeforeEach {
@@ -22089,6 +22626,65 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
         $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
         $summary | Should -Match 'Cycle Calendar'
         $summary | Should -Match 'synthetic calendar markdown'
+    }
+
+    It 'Recommends one Apply Updates cron six hours before the window only for effective true/true preparation policy' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @(
+            (New-S3AuditRow -Status 'Covered' -UpdateStartWindow 'Sat_02:00-06:00')
+            (New-S3AuditRow -Status 'Covered' -UpdateStartWindow 'Sat_02:00-06:00')
+        )
+        $global:_s3_schedule = New-S3ScheduleV3
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { } -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath $env:_S3_SCHEDULE `
+                -OutputDirectory $env:_S3_OUTDIR | Out-Null
+        }
+
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Recommended prepare-first opportunity'
+        $summary | Should -Match 'preparation opportunity, not a guarantee'
+        $summary | Should -Match 'previous UTC day'
+        ([regex]::Matches($summary, "(?m)^- cron: '0 20 \* \* 5'\r?$" )).Count | Should -Be 1
+    }
+
+    It 'Does not recommend a pre-window cron when the effective allow-outside policy is false' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @((New-S3AuditRow -Status 'Covered' -UpdateStartWindow 'Sat_02:00-06:00'))
+        $global:_s3_schedule = New-S3ScheduleV3 -AllowOutside $true -RowAllowOutside $false
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { } -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath $env:_S3_SCHEDULE `
+                -OutputDirectory $env:_S3_OUTDIR | Out-Null
+        }
+
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Not -Match 'Recommended prepare-first opportunity'
+        $summary | Should -Not -Match "(?m)^- cron: '0 20 \* \* 5'\r?$"
     }
 
     It 'Uncovered cron row produces a <failure> in the Cron coverage suite + non-zero uncovered output' {
@@ -22859,6 +23455,10 @@ Describe 'Thin-YAML Step.6: Invoke-AzLocalReadinessGatedClusterUpdate' {
             $script:S6CmdI.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
         It 'Has parameter AllowedUpdateVersions' { $script:S6CmdI.Parameters.Keys | Should -Contain 'AllowedUpdateVersions' }
+        It 'Has Boolean parameter AllowPrepareOnlyOutsideOfUpdateStartWindow' {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'AllowPrepareOnlyOutsideOfUpdateStartWindow'
+            $script:S6CmdI.Parameters['AllowPrepareOnlyOutsideOfUpdateStartWindow'].ParameterType.Name | Should -Be 'Boolean'
+        }
         It 'Has parameter OutputDirectory'       { $script:S6CmdI.Parameters.Keys | Should -Contain 'OutputDirectory' }
         It 'Has parameter JUnitFileName'         { $script:S6CmdI.Parameters.Keys | Should -Contain 'JUnitFileName' }
         It 'Has parameter ApplyResultsJsonFileName' { $script:S6CmdI.Parameters.Keys | Should -Contain 'ApplyResultsJsonFileName' }
@@ -24636,8 +25236,9 @@ Describe 'v0.8.82: Start-AzLocalClusterUpdate writes UpdateLastAttempt tag at He
     It 'HealthCheckBlocked path calls Write-AzLocalUpdateLastAttemptTag with Outcome HealthCheckBlocked' {
         $script:srcStart | Should -Match "(?s)Status\s*=\s*['""]HealthCheckBlocked['""].*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+'HealthCheckBlocked'"
     }
-    It 'UpdateStarted path calls Write-AzLocalUpdateLastAttemptTag with Outcome UpdateStarted' {
-        $script:srcStart | Should -Match "(?s)Status\s*=\s*['""]UpdateStarted['""].*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+'UpdateStarted'"
+    It 'Apply and prepare success paths map their status into the UpdateLastAttempt outcome' {
+        $script:srcStart | Should -Match "\`$successStatus\s*=\s*if\s*\(\`$prepareThisRun\)\s*\{\s*'PreparationStarted'\s*\}\s*else\s*\{\s*'UpdateStarted'\s*\}"
+        $script:srcStart | Should -Match '(?s)Status\s*=\s*\$successStatus.*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+\$successStatus'
     }
     It 'Failed path calls Write-AzLocalUpdateLastAttemptTag with Outcome Failed' {
         $script:srcStart | Should -Match "(?s)Status\s*=\s*['""]Failed['""].*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+'Failed'"
@@ -25288,7 +25889,7 @@ Describe 'v0.8.97: Get-AzLocalReadyForUpdateRows private helper' {
     It 'Filters to only ReadyForUpdate clusters and resolves UpdateRing from the map' {
         $result = InModuleScope AzLocal.UpdateManagement {
             $rows = @(
-                [pscustomobject]@{ ClusterName = 'alpha'; ClusterResourceId = '/sub/s/rg/alpha'; CurrentVersion = '12.2511.1002.5'; RecommendedUpdate = '12.2606.1.1'; UpdateState = 'UpdateAvailable'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $true }
+                [pscustomobject]@{ ClusterName = 'alpha'; ClusterResourceId = '/sub/s/rg/alpha'; CurrentVersion = '12.2511.1002.5'; RecommendedUpdate = '12.2606.1.1'; RecommendedUpdateState = 'ReadyToInstall'; UpdateState = 'UpdateAvailable'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $true }
                 [pscustomobject]@{ ClusterName = 'bravo'; ClusterResourceId = '/sub/s/rg/bravo'; CurrentVersion = '12.2606.1.1'; RecommendedUpdate = ''; UpdateState = 'UpToDate'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $false }
             )
             $ringMap = @{ '/sub/s/rg/alpha' = 'Wave1'; '/sub/s/rg/bravo' = 'Wave2' }
@@ -25299,6 +25900,7 @@ Describe 'v0.8.97: Get-AzLocalReadyForUpdateRows private helper' {
         $result[0].UpdateRing        | Should -Be 'Wave1'
         $result[0].CurrentVersion    | Should -Be '12.2511.1002.5'
         $result[0].RecommendedUpdate | Should -Be '12.2606.1.1'
+        $result[0].State             | Should -Be 'ReadyToInstall'
     }
 
     It 'Falls back to "-" when a ready cluster has no ring map entry' {
@@ -25353,16 +25955,17 @@ Describe 'v0.8.97: Get-AzLocalReadyForUpdateTableMarkdown private helper' {
     It 'Renders the shared table header, Ctrl-click tip and a portal deep-link per cluster' {
         $lines = InModuleScope AzLocal.UpdateManagement {
             $rows = @(
-                [pscustomobject]@{ ClusterName = 'alpha'; UpdateRing = 'Wave1'; CurrentVersion = '12.2511.1002.5'; RecommendedUpdate = '12.2606.1.1'; ClusterResourceId = '/sub/s/rg/alpha' }
+                [pscustomobject]@{ ClusterName = 'alpha'; UpdateRing = 'Wave1'; CurrentVersion = '12.2511.1002.5'; RecommendedUpdate = '12.2606.1.1'; ClusterResourceId = '/sub/s/rg/alpha'; State = 'Ready' }
             )
             Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $rows
         }
         $joined = $lines -join "`n"
         $joined | Should -Match '### Clusters - Ready for Update'
-        $joined | Should -Match '\| Cluster \| Update Ring \| Current Update \| Recommended Update \|'
+        $joined | Should -Match '\| Cluster \| Update Ring \| Current Update \| Recommended Update \| State \|'
         $joined | Should -Match '\*\*Tip:\*\*'
         $joined | Should -Match 'Wave1'
         $joined | Should -Match '12\.2511\.1002\.5'
+        $joined | Should -Match '\| Ready \|'
         $joined | Should -Match 'href="https://portal\.azure\.com/#@/resource/sub/s/rg/alpha"'
     }
 
@@ -25478,8 +26081,8 @@ Describe 'v0.9.14: Assess Readiness allow-list mismatch surfacing' {
     It 'Report row appends the collapsible available-updates cell' {
         $src05Allow | Should -Match '\$recommendedUpdateCell \| \$availCell \|'
     }
-    It 'Report flags allow-list-suppressed UpToDate rows with a Status marker' {
-        $src05Allow | Should -Match "\`$isAllowListSuppressed = \(\`$statusKey -eq 'UpToDate'\) -and \(\`$readyItems\.Count -gt 0\)"
+    It 'Report flags only actually suppressed UpToDate rows with a Status marker' {
+        $src05Allow | Should -Match "\`$isAllowListSuppressed = \(\`$statusKey -eq 'UpToDate'\) -and -not \[string\]::IsNullOrWhiteSpace\(\`$suppressedReady\)"
         $src05Allow | Should -Match '\$statusCell = "\$statusCell \*"'
         $src05Allow | Should -Match '\$anyAllowListSuppressed = \$true'
     }
@@ -25492,10 +26095,10 @@ Describe 'v0.9.14: Assess Readiness allow-list mismatch surfacing' {
         $srcReadinessAllow | Should -Match 'Allow-list mismatches \(updates available but not allow-listed\)'
         $srcReadinessAllow | Should -Match '\$allowListSuppressed'
     }
-    It 'Readiness mismatch detection gates on active allow-list + UpToDate + non-empty ReadyUpdates' {
-        $srcReadinessAllow | Should -Match "AllowListSource'\] -and"
+    It 'Readiness mismatch detection gates on UpToDate + non-empty suppressed updates' {
+        $srcReadinessAllow | Should -Match "AllowListSuppressedUpdates'\] -and"
         $srcReadinessAllow | Should -Match "-eq 'UpToDate'"
-        $srcReadinessAllow | Should -Match "ReadyUpdates'\] -and"
+        $srcReadinessAllow | Should -Match 'IsNullOrWhiteSpace'
     }
     It 'Schedule example documents the SBE-prerequisite trap' {
         $srcScheduleYml | Should -Match 'SBE updates are often a PREREQUISITE'
@@ -25526,13 +26129,17 @@ Describe 'v0.9.15: SBE-prerequisite note + allow-list-held dedicated table' {
             $src05v915 | Should -Match 'Hardware OEM provider'
             $src05v915 | Should -Match 'sideload the SBE update onto the cluster'
         }
+        It 'Points Not-Ready operators to the detailed fleet health pipeline' {
+            $src05v915 | Should -Match 'Monitor: 2 - Fleet Health Status'
+            $src05v915 | Should -Match 'detailed health alerts affecting the clusters below'
+        }
     }
 
     Context 'Allow-list-held dedicated visible table + summary sub-count' {
         It 'Computes the allow-list-held subset with the same predicate as the detail marker' {
             $src05v915 | Should -Match '\$allowListHeldRows = @\(\$readiness \| Where-Object'
             $src05v915 | Should -Match "-eq 'UpToDate' -and"
-            $src05v915 | Should -Match "ReadyUpdates'\] -and"
+            $src05v915 | Should -Match "AllowListSuppressedUpdates'\] -and"
             $src05v915 | Should -Match '\$allowListHeld = \$allowListHeldRows\.Count'
         }
         It 'Adds the labelled of-which sub-count row only when non-zero' {

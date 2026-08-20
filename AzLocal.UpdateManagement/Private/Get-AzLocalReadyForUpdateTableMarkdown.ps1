@@ -12,7 +12,7 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
         builder.
 
         Columns: Cluster (portal deep-link), Update Ring, Current Update,
-        Recommended Update.
+        Recommended Update, State.
     .PARAMETER ReadyRows
         The projected rows from Get-AzLocalReadyForUpdateRows.
     .PARAMETER Heading
@@ -60,15 +60,16 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
     [void]$lines.Add('')
     [void]$lines.Add((Get-AzLocalCtrlClickTip))
     [void]$lines.Add('')
-    [void]$lines.Add('| Cluster | Update Ring | Current Update | Recommended Update |')
-    [void]$lines.Add('|---------|-------------|----------------|--------------------|')
+    [void]$lines.Add('| Cluster | Update Ring | Current Update | Recommended Update | State |')
+    [void]$lines.Add('|---------|-------------|----------------|--------------------|-------|')
     foreach ($r in ($rows | Select-Object -First $MaxRows)) {
         $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
         $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
         $ring = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateRing) } else { '-' }
         $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.CurrentVersion) } else { '-' }
         $ru = if ($r.PSObject.Properties['RecommendedUpdate'] -and $r.RecommendedUpdate) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.RecommendedUpdate) } else { '-' }
-        [void]$lines.Add("| $clusterCell | $ring | $cv | $ru |")
+        $state = if ($r.PSObject.Properties['State'] -and $r.State) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.State) } else { '-' }
+        [void]$lines.Add("| $clusterCell | $ring | $cv | $ru | $state |")
     }
     if ($rows.Count -gt $MaxRows) {
         [void]$lines.Add('')

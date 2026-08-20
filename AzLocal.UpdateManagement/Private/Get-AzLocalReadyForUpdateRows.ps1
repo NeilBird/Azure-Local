@@ -23,7 +23,7 @@ function Get-AzLocalReadyForUpdateRows {
         value, built from cluster inventory. Missing entries fall back to '-'.
     .OUTPUTS
         PSCustomObject[] - ClusterName, UpdateRing, CurrentVersion,
-        RecommendedUpdate, ClusterResourceId.
+        RecommendedUpdate, ClusterResourceId, State.
     .NOTES
         Author  : AzLocal.UpdateManagement
         Version : 0.8.97
@@ -51,6 +51,7 @@ function Get-AzLocalReadyForUpdateRows {
         $ring = if ($clusterResId -and $RingByResourceId.ContainsKey($clusterResId)) { [string]$RingByResourceId[$clusterResId] } else { '-' }
         $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { [string]$r.CurrentVersion } else { '-' }
         $ru = if ($r.PSObject.Properties['RecommendedUpdate'] -and $r.RecommendedUpdate) { [string]$r.RecommendedUpdate } else { '-' }
+        $state = if ($r.PSObject.Properties['RecommendedUpdateState'] -and $r.RecommendedUpdateState) { [string]$r.RecommendedUpdateState } else { '-' }
 
         $readyRows.Add([pscustomobject]@{
                 ClusterName       = [string]$r.ClusterName
@@ -58,6 +59,7 @@ function Get-AzLocalReadyForUpdateRows {
                 CurrentVersion    = $cv
                 RecommendedUpdate = $ru
                 ClusterResourceId = $clusterResId
+                State             = $state
             }) | Out-Null
     }
 
