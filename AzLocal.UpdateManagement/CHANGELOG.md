@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Remote Azure control-plane orchestration for the existing local PowerShell prepare workflow in Azure Local 2608. `Start-AzLocalClusterUpdate -PrepareOnly` calls the stable `2026-04-30` prepare action without a body and stops at `ReadyToInstall`; `-PrepareOnlyFirst` prepares a Ready update on one firing and applies it on a later firing after Azure reports `ReadyToInstall`. `Invoke-AzLocalReadinessGatedClusterUpdate` and both bundled Apply Updates pipelines expose the same modes, with separate preparation result counts and summaries.
-- Apply-updates schedule schema v3 adds mandatory top-level `prepareOnlyFirst: false` plus optional per-row overrides. Matching row overrides must agree or resolution fails closed. Scheduled pipelines emit and consume `RESOLVED_PREPARE_ONLY_FIRST`; manual pipelines retain an explicit Apply / PrepareOnly selector.
+- Apply-updates schedule schema v3 adds mandatory top-level `prepareOnlyFirst: false` and `allowPrepareOnlyOutsideOfUpdateStartWindow: true` policies plus optional per-row overrides. Matching explicit row overrides must agree or resolution fails closed. Scheduled pipelines emit and consume both resolved policies; manual pipelines expose Apply / PrepareOnly selection and the prepare-window policy when schedule-file resolution is not in control.
+- Config: 3 recommends one deduplicated Apply Updates cron six hours before each applicable start-window opening when the effective schedule row resolves both preparation policies to true. The output explains asynchronous preparation, exclusion enforcement, previous-day rollover, and why no extra firing is recommended when start-window bypass is false.
 
 ### Fixed
 
@@ -18,11 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Monitor: 3 reconciles `ActionableUpdatesCount` from actionable child update states collected in the same run. `update-summaries.csv` retains the upstream value as `ArmActionableUpdatesCount` and emits a warning only when the values disagree.
 - Update: 4 reconciles every durable `UpdateStarted` or `UpdateRetried` tag whose run is absent or older in Azure Resource Graph, regardless of the recent-attempt alert window. A recovered ARM run replaces the stale per-cluster ARG row, preventing a newer failed run from silently regressing to an older success.
 - Monitor: 1 writes `fleet-physical-nics.csv` with its stable 17-column header when there are no physical-NIC exceptions; the matching JSON remains `[]`.
+- Config: 1 authentication validation now distinguishes a successful empty role-assignment query from an Azure CLI failure, so it reports that no assignments were returned instead of emitting a blank failure detail.
+- Config: 3 schedule audit no longer reparses synthetic `RingMixedWindows` display strings as canonical `UpdateStartWindow` values, eliminating caught parser errors from otherwise successful transcripts.
+- The Azure DevOps Apply Updates task now binds the manual operation and schedule-file flags in the task that consumes them, so manual `PrepareOnly` and manual schedule-file runs cannot silently fall back to Apply behavior.
 
 ### Changed
 
-- Preparation bypasses only `UpdateStartWindow`; `UpdateExclusionsWindow` remains a hard blackout, `UpdateExcluded` remains a higher-priority operator hold, and `-IgnoreScheduleTags` remains the explicit break-glass override for both schedule tags.
-- Normal pipeline refresh automatically migrates `config/apply-updates-schedule.yml` to schema v3. Migration defaults `prepareOnlyFirst` to `false`, saves the exact original as `apply-updates-schedule.v<old>.old.yml`, preserves every byte from top-level `schedule:` through EOF and the source newline style, validates the written file, and restores the original on write or validation failure.
+- Preparation bypasses `UpdateStartWindow` when `allowPrepareOnlyOutsideOfUpdateStartWindow` is true; false requires preparation to occur inside the start window. `UpdateExclusionsWindow` remains a hard blackout, `UpdateExcluded` remains a higher-priority operator hold, and `-IgnoreScheduleTags` remains the explicit break-glass override for both schedule tags.
+- Normal pipeline refresh automatically migrates `config/apply-updates-schedule.yml` to schema v3. Migration adds `prepareOnlyFirst: false` and `allowPrepareOnlyOutsideOfUpdateStartWindow: true`, saves the exact original as `apply-updates-schedule.v<old>.old.yml`, preserves every byte from top-level `schedule:` through EOF and the source newline style, validates the written file, and restores the original on write or validation failure.
 - No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.33`.
 
 ## [0.9.32] - 2026-08-03

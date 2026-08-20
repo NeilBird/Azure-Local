@@ -1256,6 +1256,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'Step.6 GH Summary step must call the apply-updates step-summary cmdlet (which renders the Cluster Actions + Clusters Skipped at Readiness Gate tables)'
             $content | Should -Match 'ApplyResultsJsonPath\s*=\s*''\./artifacts/apply-results\.json''' -Because 'Step.6 GH Summary must pass the apply-results.json path so the per-cluster Cluster Actions table can be rendered from it'
             $content | Should -Match 'ReadinessCsvPath\s*=\s*''\./artifacts/readiness-report\.csv''' -Because 'Step.6 GH Summary must pass the readiness-report.csv path so the Clusters Skipped at Readiness Gate table can be rendered from it'
+            $content | Should -Match 'allow_prepare_only_outside_of_update_start_window:'
+            $content | Should -Match 'RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW'
+            $content | Should -Match '\$params\[''AllowPrepareOnlyOutsideOfUpdateStartWindow''\]'
         }
 
         It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
@@ -1266,6 +1269,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'ADO Step.6 Generate Summary task must call the apply-updates step-summary cmdlet'
             $content | Should -Match 'ApplyResultsJsonPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/apply-results\.json"' -Because 'ADO Step.6 Summary must pass apply-results.json so the Cluster Actions table can be rendered'
             $content | Should -Match 'ReadinessCsvPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/readiness-report\.csv"' -Because 'ADO Step.6 Summary must pass readiness-report.csv so the Clusters Skipped at Readiness Gate table can be rendered'
+            $content | Should -Match 'allowPrepareOnlyOutsideOfUpdateStartWindow'
+            $content | Should -Match 'RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW'
+            $content | Should -Match 'UPDATE_OPERATION_PARAM:\s*\$\{\{ parameters\.updateOperation \}\}'
+            $content | Should -Match 'USE_SCHEDULE_FILE_PARAM:\s*\$\{\{ parameters\.useScheduleFile \}\}'
+            $content | Should -Match '\$params\[''AllowPrepareOnlyOutsideOfUpdateStartWindow''\]'
         }
 
         It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
@@ -1676,11 +1684,13 @@ Describe 'Function: Start-AzLocalClusterUpdate' {
             $command.Parameters['IgnoreScheduleTags'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
 
-        It 'v0.9.33: Should expose PrepareOnly and PrepareOnlyFirst switches' {
+        It 'v0.9.33: Should expose prepare workflow parameters' {
             $command.Parameters.Keys | Should -Contain 'PrepareOnly'
             $command.Parameters.Keys | Should -Contain 'PrepareOnlyFirst'
+            $command.Parameters.Keys | Should -Contain 'AllowPrepareOnlyOutsideOfUpdateStartWindow'
             $command.Parameters['PrepareOnly'].ParameterType.Name | Should -Be 'SwitchParameter'
             $command.Parameters['PrepareOnlyFirst'].ParameterType.Name | Should -Be 'SwitchParameter'
+            $command.Parameters['AllowPrepareOnlyOutsideOfUpdateStartWindow'].ParameterType.Name | Should -Be 'Boolean'
         }
 
         It 'Should have WhatIf parameter' {
@@ -1819,6 +1829,7 @@ cycleAnchorISOWeek: 1
 cycleAnchorYear: 2026
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 schedule:
   - weeksInCycle: '1'
     daysOfWeek: 'Mon'
@@ -1827,6 +1838,8 @@ schedule:
         $decision = Resolve-AzLocalCurrentUpdateRing -Schedule (Get-AzLocalApplyUpdatesScheduleConfig -Path $path) -Now ([datetime]'2025-12-29T12:00:00Z')
         $decision.PrepareOnlyFirst | Should -BeTrue
         $decision.PrepareOnlyFirstSource | Should -Be 'top-level'
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindow | Should -BeTrue
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindowSource | Should -Be 'top-level'
     }
 
     It 'uses an explicit row value before the top-level value' {
@@ -1838,15 +1851,19 @@ cycleAnchorISOWeek: 1
 cycleAnchorYear: 2026
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 schedule:
   - weeksInCycle: '1'
     daysOfWeek: 'Mon'
     rings: 'Canary'
     prepareOnlyFirst: false
+    allowPrepareOnlyOutsideOfUpdateStartWindow: false
 '@ | Set-Content -LiteralPath $path -Encoding ASCII
         $decision = Resolve-AzLocalCurrentUpdateRing -Schedule (Get-AzLocalApplyUpdatesScheduleConfig -Path $path) -Now ([datetime]'2025-12-29T12:00:00Z')
         $decision.PrepareOnlyFirst | Should -BeFalse
         $decision.PrepareOnlyFirstSource | Should -Be 'row'
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindow | Should -BeFalse
+        $decision.AllowPrepareOnlyOutsideOfUpdateStartWindowSource | Should -Be 'row'
     }
 
     It 'fails closed when matching row overrides conflict' {
@@ -1858,6 +1875,7 @@ cycleAnchorISOWeek: 1
 cycleAnchorYear: 2026
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 schedule:
   - weeksInCycle: '1'
     daysOfWeek: 'Mon'
@@ -1871,6 +1889,30 @@ schedule:
         $config = Get-AzLocalApplyUpdatesScheduleConfig -Path $path
         { Resolve-AzLocalCurrentUpdateRing -Schedule $config -Now ([datetime]'2025-12-29T12:00:00Z') } | Should -Throw '*conflicting prepareOnlyFirst*'
     }
+
+        It 'fails closed when matching prepare-window overrides conflict' {
+                $path = Join-Path $script:prepareScheduleDir 'prepare-window-conflict.yml'
+                @'
+schemaVersion: 3
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+schedule:
+    - weeksInCycle: '1'
+        daysOfWeek: 'Mon'
+        rings: 'Canary'
+        allowPrepareOnlyOutsideOfUpdateStartWindow: true
+    - weeksInCycle: '1'
+        daysOfWeek: 'Mon'
+        rings: 'DevTest'
+        allowPrepareOnlyOutsideOfUpdateStartWindow: false
+'@ | Set-Content -LiteralPath $path -Encoding ASCII
+                $config = Get-AzLocalApplyUpdatesScheduleConfig -Path $path
+                { Resolve-AzLocalCurrentUpdateRing -Schedule $config -Now ([datetime]'2025-12-29T12:00:00Z') } | Should -Throw '*conflicting allowPrepareOnlyOutsideOfUpdateStartWindow*'
+        }
 }
 
 Describe 'Function: Get-AzLocalClusterUpdateReadiness' {
@@ -4207,8 +4249,9 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
             $script:prepareScheduleSource = Get-Content -LiteralPath "$PSScriptRoot/../Public/Start-AzLocalClusterUpdate.ps1" -Raw
         }
 
-        It 'Bypasses UpdateStartWindow only when the effective action is preparation' {
-            $script:prepareScheduleSource | Should -Match '\$effectiveWindowTagValue\s*=\s*if \(\$prepareThisRun\) \{ \$null \} else \{ \$windowTagValue \}'
+        It 'Bypasses UpdateStartWindow only when preparation policy allows it' {
+            $script:prepareScheduleSource | Should -Match '\$bypassStartWindowForPreparation\s*=\s*\$prepareThisRun\s+-and\s+\$AllowPrepareOnlyOutsideOfUpdateStartWindow'
+            $script:prepareScheduleSource | Should -Match '\$effectiveWindowTagValue\s*=\s*if \(\$bypassStartWindowForPreparation\) \{ \$null \} else \{ \$windowTagValue \}'
         }
 
         It 'Still forwards UpdateExclusionsWindow to the schedule gate during preparation' {
@@ -10323,6 +10366,15 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
             }
         }
 
+        It 'Sat_02:00-06:00 with a six-hour preparation lead shifts to Friday 20:00' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat_02:00-06:00' -LeadTimeMinutes 360
+                $r | Should -HaveCount 1
+                $r[0].CronExpression | Should -Be '0 20 * * 5'
+                $r[0].DayShift | Should -BeTrue
+            }
+        }
+
         It 'Mon-Fri_22:00-04:00 with lead 5 -> 55 21 * * 1-5 (range)' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5
@@ -11774,6 +11826,19 @@ Describe 'v0.7.67 schedule-audit summary - cron fixes first when issues exist' {
         $idxRecoBlock   | Should -BeGreaterThan -1
         $idxAuditDetail | Should -BeGreaterThan -1
         $idxRecoBlock   | Should -BeLessThan $idxAuditDetail -Because 'The conditional that prepends the Recommend output must appear earlier in the cmdlet body than the detail table emission so the rendered markdown puts the cron fix at the top.'
+    }
+}
+
+Describe 'v0.9.33 schedule-audit mixed-window transcript regression' {
+    It 'Excludes RingMixedWindows display values from monitor-window parsing' {
+        $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+        $content = Get-Content -LiteralPath $cmdletPath -Raw
+        $monitorWindowBlock = [regex]::Match(
+            $content,
+            '(?s)\$monitorWindowStrings\s*=\s*@\(.*?\n\s*\)\s*\n\s*\$monitorWinMinStartHour'
+        )
+        $monitorWindowBlock.Success | Should -BeTrue
+        $monitorWindowBlock.Value | Should -Match '\$_\.Status\s+-ne\s+''RingMixedWindows'''
     }
 }
 
@@ -18381,6 +18446,16 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $xml | Should -Match 'Subscription Scope \(count=0\).*tests="1"'
     }
 
+    It 'Reports a successful empty role-assignment list without a blank failure message' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $captured = & {
+            Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows @()
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match "no role assignments returned for appId 'app-id-from-cli'"
+        $joined | Should -Not -Match 'role assignment lookup failed:'
+    }
+
     It 'Multi-subscription: each subscription row appears in the JUnit XML and the markdown roster' {
         $multi = @(
             [pscustomobject]@{ name = 'A'; subscriptionId = 's1'; tenantId = 't1'; state = 'Enabled' }
@@ -22443,6 +22518,29 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
                 )
             }
         }
+        function script:New-S3ScheduleV3 {
+            param(
+                [bool]$AllowOutside = $true,
+                [Nullable[bool]]$RowAllowOutside = $null
+            )
+            [pscustomobject]@{
+                SchemaVersion = 3
+                CycleWeeks = 4
+                AllowedUpdateVersions = @('Latest')
+                PrepareOnlyFirst = $true
+                AllowPrepareOnlyOutsideOfUpdateStartWindow = $AllowOutside
+                Schedule = @(
+                    [pscustomobject]@{
+                        weeksInCycle = '1'
+                        daysOfWeek = 'Sat'
+                        rings = 'Wave1'
+                        AllowedUpdateVersionsParsed = @()
+                        PrepareOnlyFirstParsed = $null
+                        AllowPrepareOnlyOutsideOfUpdateStartWindowParsed = $RowAllowOutside
+                    }
+                )
+            }
+        }
     }
 
     BeforeEach {
@@ -22528,6 +22626,65 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
         $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
         $summary | Should -Match 'Cycle Calendar'
         $summary | Should -Match 'synthetic calendar markdown'
+    }
+
+    It 'Recommends one Apply Updates cron six hours before the window only for effective true/true preparation policy' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @(
+            (New-S3AuditRow -Status 'Covered' -UpdateStartWindow 'Sat_02:00-06:00')
+            (New-S3AuditRow -Status 'Covered' -UpdateStartWindow 'Sat_02:00-06:00')
+        )
+        $global:_s3_schedule = New-S3ScheduleV3
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { } -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath $env:_S3_SCHEDULE `
+                -OutputDirectory $env:_S3_OUTDIR | Out-Null
+        }
+
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Recommended prepare-first opportunity'
+        $summary | Should -Match 'preparation opportunity, not a guarantee'
+        $summary | Should -Match 'previous UTC day'
+        ([regex]::Matches($summary, "(?m)^- cron: '0 20 \* \* 5'\r?$" )).Count | Should -Be 1
+    }
+
+    It 'Does not recommend a pre-window cron when the effective allow-outside policy is false' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @((New-S3AuditRow -Status 'Covered' -UpdateStartWindow 'Sat_02:00-06:00'))
+        $global:_s3_schedule = New-S3ScheduleV3 -AllowOutside $true -RowAllowOutside $false
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { } -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath $env:_S3_SCHEDULE `
+                -OutputDirectory $env:_S3_OUTDIR | Out-Null
+        }
+
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Not -Match 'Recommended prepare-first opportunity'
+        $summary | Should -Not -Match "(?m)^- cron: '0 20 \* \* 5'\r?$"
     }
 
     It 'Uncovered cron row produces a <failure> in the Cron coverage suite + non-zero uncovered output' {
@@ -23298,6 +23455,10 @@ Describe 'Thin-YAML Step.6: Invoke-AzLocalReadinessGatedClusterUpdate' {
             $script:S6CmdI.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
         It 'Has parameter AllowedUpdateVersions' { $script:S6CmdI.Parameters.Keys | Should -Contain 'AllowedUpdateVersions' }
+        It 'Has Boolean parameter AllowPrepareOnlyOutsideOfUpdateStartWindow' {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'AllowPrepareOnlyOutsideOfUpdateStartWindow'
+            $script:S6CmdI.Parameters['AllowPrepareOnlyOutsideOfUpdateStartWindow'].ParameterType.Name | Should -Be 'Boolean'
+        }
         It 'Has parameter OutputDirectory'       { $script:S6CmdI.Parameters.Keys | Should -Contain 'OutputDirectory' }
         It 'Has parameter JUnitFileName'         { $script:S6CmdI.Parameters.Keys | Should -Contain 'JUnitFileName' }
         It 'Has parameter ApplyResultsJsonFileName' { $script:S6CmdI.Parameters.Keys | Should -Contain 'ApplyResultsJsonFileName' }

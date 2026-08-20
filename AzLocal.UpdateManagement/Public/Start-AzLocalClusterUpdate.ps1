@@ -59,6 +59,11 @@ function Start-AzLocalClusterUpdate {
         remains enforced. On a later invocation, the same update in ReadyToInstall state
         is applied through both schedule gates. Unlike -PrepareOnly, this switch does not
         stop an already-prepared update from installing.
+    .PARAMETER AllowPrepareOnlyOutsideOfUpdateStartWindow
+        Controls whether preparation may bypass UpdateStartWindow. The default is true,
+        allowing -PrepareOnly and the preparation phase of -PrepareOnlyFirst to run
+        outside that window. Set false to require preparation inside the cluster's
+        UpdateStartWindow. UpdateExclusionsWindow remains enforced in either mode.
     .PARAMETER IgnoreScheduleTags
         v0.8.79 break-glass override. When set, the per-cluster Step 3c maintenance-schedule
         gate is BYPASSED entirely - both the `UpdateStartWindow` (allowed window) and the
@@ -135,6 +140,9 @@ function Start-AzLocalClusterUpdate {
 
         [Parameter(Mandatory = $false)]
         [switch]$PrepareOnlyFirst,
+
+        [Parameter(Mandatory = $false)]
+        [bool]$AllowPrepareOnlyOutsideOfUpdateStartWindow = $true,
 
         [Parameter(Mandatory = $false)]
         [switch]$IgnoreScheduleTags,
@@ -888,7 +896,8 @@ function Start-AzLocalClusterUpdate {
                         if ($clusterTags.PSObject.Properties[$script:UpdateExclusionsWindowTagName]) { $exclusionTagValue = $clusterTags.$($script:UpdateExclusionsWindowTagName) }
                     }
                 }
-                $effectiveWindowTagValue = if ($prepareThisRun) { $null } else { $windowTagValue }
+                $bypassStartWindowForPreparation = $prepareThisRun -and $AllowPrepareOnlyOutsideOfUpdateStartWindow
+                $effectiveWindowTagValue = if ($bypassStartWindowForPreparation) { $null } else { $windowTagValue }
 
                 if ($IgnoreScheduleTags) {
                     # v0.8.79 break-glass override (-IgnoreScheduleTags / pipeline force_immediate_update=true).
@@ -898,7 +907,7 @@ function Start-AzLocalClusterUpdate {
                 }
                 elseif ($effectiveWindowTagValue -or $exclusionTagValue) {
                     Write-Log -Message "Step 3c: Checking maintenance schedule tags..." -Level Info
-                    if ($prepareThisRun -and $windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue (not evaluated during preparation)" -Level Info }
+                    if ($bypassStartWindowForPreparation -and $windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue (not evaluated during preparation)" -Level Info }
                     elseif ($effectiveWindowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $effectiveWindowTagValue" -Level Info }
                     if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusionsWindow tag: $exclusionTagValue" -Level Info }
 
@@ -992,7 +1001,7 @@ function Start-AzLocalClusterUpdate {
                     }
                 }
                 else {
-                    if ($prepareThisRun) {
+                    if ($bypassStartWindowForPreparation) {
                         Write-Log -Message "Step 3c: UpdateStartWindow is not evaluated during preparation; no UpdateExclusionsWindow is defined." -Level Info
                     }
                     else {

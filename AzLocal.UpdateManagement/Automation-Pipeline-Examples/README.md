@@ -1648,7 +1648,7 @@ If you do want a hard go / no-go gate (typical for first production wave), have 
 New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
 ```
 
-The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v3 schedule with one block per distinct ring, `allowedUpdateVersions: 'Latest'`, and behavior-preserving `prepareOnlyFirst: false`, plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
+The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v3 schedule with one block per distinct ring, `allowedUpdateVersions: 'Latest'`, `prepareOnlyFirst: false`, and `allowPrepareOnlyOutsideOfUpdateStartWindow: true`, plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
 
 The generator anchors cycle week 1 to the current UTC ISO week and year. Before
 editing its rows, read [Configure the Apply Updates repeating
@@ -1675,6 +1675,7 @@ For each ring in turn (Wave1 -> validate -> Wave2 -> validate -> Production), ru
 | `update_ring` | The ring to target (e.g. `Wave1`). |
 | `update_name` | Leave blank to apply the latest ready update; set explicitly to pin a version. |
 | `update_operation` / `updateOperation` | Manual runs: choose `Apply` (default) or `PrepareOnly`. Scheduled runs resolve `prepareOnlyFirst` from the schema-v3 schedule instead. |
+| `allow_prepare_only_outside_of_update_start_window` / `allowPrepareOnlyOutsideOfUpdateStartWindow` | Manual runs without schedule-file resolution: `true` allows PrepareOnly before or outside `UpdateStartWindow`; `false` enforces it. Scheduled and manual-with-schedule runs resolve this policy from the schema-v3 schedule. |
 | `dry_run` | `true` for the first run of any new ring - prints the cluster list and intended actions without starting an update. |
 | `throttle_limit` | See section 9. Default 4 is fine for fleets up to ~50 clusters. |
 
@@ -2169,6 +2170,7 @@ cycleAnchorYear: 2025
 # Fleet-wide default: clusters install the latest Ready update on each run.
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
@@ -2247,35 +2249,39 @@ Update-AzLocalApplyUpdatesScheduleConfig `
 
 The migration is **additive and idempotent**:
 
-- Walks every required hop to current schema v3. v1 adds active `allowedUpdateVersions: 'Latest'`; v2 adds active `prepareOnlyFirst: false`.
+- Walks every required hop to current schema v3. v1 adds active `allowedUpdateVersions: 'Latest'`; v2 adds active `prepareOnlyFirst: false` and `allowPrepareOnlyOutsideOfUpdateStartWindow: true`.
 - Saves the exact source as `apply-updates-schedule.v<old>.old.yml` before replacing the canonical file.
 - Preserves every byte from top-level `schedule:` through EOF, including row order, comments, strings, booleans, and row-level allow lists. Source LF or CRLF style is retained.
 - Validates the written v3 file through `Get-AzLocalApplyUpdatesScheduleConfig`; any write or validation failure removes the candidate and restores the exact backup.
 - Re-running an already-v3 file is a no-op. Normal `Update-Module-And-Pipelines.ps1` refresh performs this migration automatically; use `-NoPush` to review it before committing.
 
-After migration the file is a strict behavioral superset: every cluster resolves to the same ring and allow-list, `'Latest'` preserves the v1 install-latest-Ready behavior, and `prepareOnlyFirst: false` preserves the v2 direct-apply behavior. Change either policy only when you intentionally want different behavior.
+After migration every cluster resolves to the same ring and allow-list, `'Latest'` preserves the v1 install-latest-Ready behavior, and `prepareOnlyFirst: false` preserves the v2 direct-apply behavior. The new prepare-window policy is set to `true`, allowing preparation before or outside `UpdateStartWindow` when preparation is enabled.
 
 #### 8.4.5 Audit pipeline support
 
 `apply-updates-schedule-audit.yml` (GitHub Actions and Azure DevOps) automatically emits an **Allow-list coverage (schema v2)** section in its run summary when a `-SchedulePath` is supplied. The section surfaces the **top-level fleet default**, then a per-row table showing the effective `allowedUpdateVersions` for each schedule row (or `inherits top-level` when no row-level override is set), and recommends edit sites for rows that you might want to override. Schema v1 files get a one-line nudge to run the migrator.
 
-#### 8.4.6 Prepare before install (`prepareOnlyFirst`, schema v3)
+#### 8.4.6 Prepare before install (schema v3)
 
-Schema v3 requires top-level `prepareOnlyFirst: false`. Keep `false` for the historical one-step apply behavior. Set it to `true` to prepare a Ready update on one scheduled firing and apply it on a later firing after Azure reports `ReadyToInstall`.
+Schema v3 requires both top-level preparation policies. Set `prepareOnlyFirst` to `true` to prepare a Ready update on one scheduled firing and apply it on a later firing after Azure reports `ReadyToInstall`. `allowPrepareOnlyOutsideOfUpdateStartWindow: true` lets the preparation firing run before or outside the installation window; set it to `false` to require preparation to pass `UpdateStartWindow`.
 
 ```yaml
 schemaVersion: 3
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: true
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
     daysOfWeek: 'Mon-Thu'
     rings: 'Canary'
     prepareOnlyFirst: false  # row override: Canary applies directly
+    allowPrepareOnlyOutsideOfUpdateStartWindow: false
 ```
 
-Row values override the fleet default; omitted rows inherit it. Explicit values from multiple matching rows must agree or the resolver fails closed. Preparation ignores `UpdateStartWindow`, allowing download and readiness checks before the installation window, but still honors `UpdateExclusionsWindow` and `UpdateExcluded`. Once the update is `ReadyToInstall`, apply requires both normal schedule gates.
+  Row values override the corresponding fleet default; omitted rows inherit it. Explicit values from multiple matching rows must agree per policy or the resolver fails closed. Preparation always honors `UpdateExclusionsWindow` and `UpdateExcluded`. Once the update is `ReadyToInstall`, apply requires both normal schedule gates.
+
+  Config: 3 emits a deduplicated Apply Updates cron six hours before each applicable window only when the effective row resolves both policies to `true`. The early firing is an opportunity to start asynchronous preparation, not a completion guarantee. A cron shifted to the previous UTC day also requires the ring to be eligible on that day; no extra cron is emitted when the effective allow-outside policy is `false`.
 
 ---
 

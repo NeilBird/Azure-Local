@@ -40,8 +40,9 @@ days or row-level policies.
 
 In one sentence: **the schedule selects eligible rings and days, the cron
 wakes the workflow, and each cluster's tags gate preparation or installation.**
-Preparation ignores `UpdateStartWindow`, installation requires it, and both
-operations honor `UpdateExclusionsWindow` and `UpdateExcluded`.
+Preparation may bypass `UpdateStartWindow` when its schema policy allows it;
+installation requires the window, and both operations honor
+`UpdateExclusionsWindow` and `UpdateExcluded`.
 
 ## Why this model
 
@@ -215,13 +216,13 @@ See [Restrict which updates each ring installs](../README.md#84-restrict-which-u
 for precedence, cross-row union behavior, SBE handling, and additional
 examples.
 
-## Choose whether to prepare before installation
+## Configure preparation before installation
 
-Schema v3 requires a top-level `prepareOnlyFirst` boolean:
+Schema v3 requires two top-level preparation booleans:
 
 ```yaml
-# Preserve the historical behavior: apply a Ready update immediately.
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 ```
 
 Set it to `true` to use the Azure Local 2608 two-phase workflow:
@@ -232,25 +233,40 @@ Set it to `true` to use the Azure Local 2608 two-phase workflow:
 2. A later firing sees `ReadyToInstall` and calls apply. Installation proceeds
   only when `UpdateStartWindow` is open and no exclusion is active.
 
-Preparation ignores `UpdateStartWindow` so content and health checks can run
-before the maintenance window. `UpdateExclusionsWindow` remains a hard
-blackout, and `UpdateExcluded=True` remains an independent operator hold.
+When `allowPrepareOnlyOutsideOfUpdateStartWindow` is `true`, preparation may
+run before or outside the installation window so content and health checks can
+start early. Set it to `false` to require preparation to pass
+`UpdateStartWindow`. `UpdateExclusionsWindow` remains a hard blackout in both
+modes, and `UpdateExcluded=True` remains an independent operator hold.
 
 Any schedule row may override the fleet default:
 
 ```yaml
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
-   daysOfWeek:   'Mon-Thu'
-   rings:        'Canary'
-   prepareOnlyFirst: true
+    daysOfWeek:   'Mon-Thu'
+    rings:        'Canary'
+    prepareOnlyFirst: true
+    allowPrepareOnlyOutsideOfUpdateStartWindow: false
 ```
 
-An omitted row value inherits the top-level setting. If multiple rows match a
-firing and their explicit `prepareOnlyFirst` values conflict, resolution fails
+An omitted row value inherits its top-level setting. If multiple rows match a
+firing and their explicit values for either policy conflict, resolution fails
 closed instead of choosing one silently.
+
+When a row effectively resolves both policies to `true`, **Config: 3 -
+Apply-Updates Schedule Coverage Audit** recommends one deduplicated Apply
+Updates cron six hours before each applicable `UpdateStartWindow` opening.
+This gives the asynchronous download, validation/extraction, and
+update-specific health checks an early opportunity to start; it does not
+guarantee completion before installation. No extra cron is recommended when
+`allowPrepareOnlyOutsideOfUpdateStartWindow` resolves to `false`, because the
+early firing would be blocked. If subtracting six hours crosses midnight, the
+reported cron uses the previous UTC day; make the ring eligible in the
+schedule on that preparation day or the resolver will intentionally no-op.
 
 ## Example 1: basic four-week staged rollout
 
@@ -271,6 +287,7 @@ cycleAnchorYear:      2026
 
 allowedUpdateVersions: 'Solution12.2603.1002.502;Solution12.2604.1003.1006;SBE5.0.2603.1522;Solution12.2607.1003.70'
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
@@ -310,6 +327,7 @@ cycleAnchorYear:      2026
 
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'
@@ -359,6 +377,7 @@ cycleAnchorYear:      2026
 
 allowedUpdateVersions: 'Latest'
 prepareOnlyFirst: false
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
 
 schedule:
   - weeksInCycle: '1'

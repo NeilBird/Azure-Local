@@ -318,6 +318,27 @@ function Resolve-AzLocalCurrentUpdateRing {
         $prepareOnlyFirstSource = 'default'
     }
 
+    $rowPrepareWindowValues = @($matched | ForEach-Object {
+        if ($_.PSObject.Properties.Match('AllowPrepareOnlyOutsideOfUpdateStartWindowParsed').Count -gt 0 -and $null -ne $_.AllowPrepareOnlyOutsideOfUpdateStartWindowParsed) {
+            [bool]$_.AllowPrepareOnlyOutsideOfUpdateStartWindowParsed
+        }
+    } | Select-Object -Unique)
+    if ($rowPrepareWindowValues.Count -gt 1) {
+        throw "Resolve-AzLocalCurrentUpdateRing: matching schedule rows specify conflicting allowPrepareOnlyOutsideOfUpdateStartWindow values: $($rowPrepareWindowValues -join ', '). Use one value for all rows that can match the same firing."
+    }
+    if ($rowPrepareWindowValues.Count -eq 1) {
+        $allowPrepareOnlyOutsideOfUpdateStartWindow = [bool]$rowPrepareWindowValues[0]
+        $allowPrepareOnlyOutsideOfUpdateStartWindowSource = 'row'
+    }
+    elseif ($Schedule.PSObject.Properties.Match('AllowPrepareOnlyOutsideOfUpdateStartWindow').Count -gt 0) {
+        $allowPrepareOnlyOutsideOfUpdateStartWindow = [bool]$Schedule.AllowPrepareOnlyOutsideOfUpdateStartWindow
+        $allowPrepareOnlyOutsideOfUpdateStartWindowSource = 'top-level'
+    }
+    else {
+        $allowPrepareOnlyOutsideOfUpdateStartWindow = $true
+        $allowPrepareOnlyOutsideOfUpdateStartWindowSource = 'default'
+    }
+
     $reason = if ($matched.Count -eq 0) {
         "No schedule row matches (cycleWeek=$cycleWeek of $cycleWeeks, dayOfWeek=$dowName)."
     } else {
@@ -347,5 +368,7 @@ function Resolve-AzLocalCurrentUpdateRing {
         AllowedUpdateVersionsSource = $allowSource
         PrepareOnlyFirst             = $prepareOnlyFirst
         PrepareOnlyFirstSource       = $prepareOnlyFirstSource
+        AllowPrepareOnlyOutsideOfUpdateStartWindow       = $allowPrepareOnlyOutsideOfUpdateStartWindow
+        AllowPrepareOnlyOutsideOfUpdateStartWindowSource = $allowPrepareOnlyOutsideOfUpdateStartWindowSource
     }
 }

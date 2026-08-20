@@ -219,6 +219,7 @@ function ConvertFrom-AzLocalScheduleYaml {
         CycleAnchorYear            = $topLevel['cycleAnchorYear']
         AllowedUpdateVersionsRaw   = $topLevel['allowedUpdateVersions']
         PrepareOnlyFirstRaw        = $topLevel['prepareOnlyFirst']
+        AllowPrepareOnlyOutsideOfUpdateStartWindowRaw = $topLevel['allowPrepareOnlyOutsideOfUpdateStartWindow']
         Schedule                   = @($schedule)
         SourcePath                 = $SourcePath
     }

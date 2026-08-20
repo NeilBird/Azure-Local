@@ -257,8 +257,9 @@ $script:ScheduleSchemaRecipes = [ordered]@{
     # =====================================================================
     # 2 -> 3  (shipped in v0.9.33)
     # =====================================================================
-    # v3 adds a mandatory top-level prepareOnlyFirst setting and optional
-    # per-row overrides. False preserves all v2 automation behavior.
+    # v3 adds mandatory top-level prepareOnlyFirst and
+    # allowPrepareOnlyOutsideOfUpdateStartWindow settings, plus optional
+    # per-row overrides. Their defaults preserve all v2 automation behavior.
     '2->3' = {
         param([string]$Text)
         $changes = New-Object System.Collections.Generic.List[string]
@@ -285,6 +286,9 @@ $script:ScheduleSchemaRecipes = [ordered]@{
                 '# UpdateExclusionsWindow hard blackout.',
                 '# Any schedule row may override this boolean for that firing.',
                 'prepareOnlyFirst: false',
+                '# true allows out-of-window preparation; false requires the',
+                '# preparation phase to pass the UpdateStartWindow gate.',
+                'allowPrepareOnlyOutsideOfUpdateStartWindow: true',
                 ''
             ) -join $newLine
 
@@ -299,7 +303,7 @@ $script:ScheduleSchemaRecipes = [ordered]@{
             else {
                 $work = $work.TrimEnd("`r", "`n") + $newLine + $block + $newLine
             }
-            $changes.Add("Inserted mandatory top-level 'prepareOnlyFirst: false' setting.") | Out-Null
+            $changes.Add("Inserted mandatory top-level 'prepareOnlyFirst: false' and 'allowPrepareOnlyOutsideOfUpdateStartWindow: true' settings.") | Out-Null
         }
 
         return @{ Text = $work; Changes = $changes.ToArray() }

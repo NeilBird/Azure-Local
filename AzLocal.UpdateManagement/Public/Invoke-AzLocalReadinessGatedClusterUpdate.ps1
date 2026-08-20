@@ -44,6 +44,9 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     .PARAMETER PrepareOnlyFirst
         Switch. When set, forwards -PrepareOnlyFirst so Ready updates are prepared
         first and ReadyToInstall updates are installed on a later eligible firing.
+    .PARAMETER AllowPrepareOnlyOutsideOfUpdateStartWindow
+        Boolean forwarded to Start-AzLocalClusterUpdate. True allows out-of-window
+        preparation; false enforces UpdateStartWindow while preparing.
     .PARAMETER AllowedUpdateVersions
         String[] or single ';'-joined string. Allow-list resolved from
         apply-updates-schedule.yml schema-v2 'allowedUpdateVersions'. Empty =
@@ -94,6 +97,9 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         [switch]$PrepareOnly,
 
         [switch]$PrepareOnlyFirst,
+
+        [Parameter(Mandatory = $false)]
+        [bool]$AllowPrepareOnlyOutsideOfUpdateStartWindow = $true,
 
         [Parameter(Mandatory = $false)]
         [AllowEmptyCollection()]
@@ -251,13 +257,16 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
 
     if ($PrepareOnly) {
         $applyParams['PrepareOnly'] = $true
-        Write-Host "PREPARE ONLY MODE - Update content and health checks will run, but installation will not start. UpdateStartWindow and UpdateExclusionsWindow are not evaluated."
+        Write-Host "PREPARE ONLY MODE - Update content and health checks will run, but installation will not start. UpdateExclusionsWindow remains enforced."
     }
 
     if ($PrepareOnlyFirst) {
         $applyParams['PrepareOnlyFirst'] = $true
         Write-Host "PREPARE FIRST MODE - Ready updates will be prepared now; ReadyToInstall updates will install only when schedule tags permit."
     }
+
+    $applyParams['AllowPrepareOnlyOutsideOfUpdateStartWindow'] = $AllowPrepareOnlyOutsideOfUpdateStartWindow
+    Write-Host "Prepare UpdateStartWindow policy: AllowOutsideWindow=$AllowPrepareOnlyOutsideOfUpdateStartWindow"
 
     if ($ForceImmediateUpdate) {
         # v0.8.79 break-glass override. Surface a HIGH-VISIBILITY warning on every

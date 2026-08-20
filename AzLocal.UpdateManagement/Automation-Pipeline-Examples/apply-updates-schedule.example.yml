@@ -170,6 +170,14 @@ allowedUpdateVersions: 'Latest'
 # A schedule row may override this boolean; matching rows must agree.
 prepareOnlyFirst: false
 
+# true is the schema-v3 default: preparation may run before or outside
+# UpdateStartWindow so update downloads (when not already sideloaded) and
+# update-specific health checks can start/finish before an installation window opens.
+# false requires preparation to pass the same UpdateStartWindow gate as installation.
+# UpdateExclusionsWindow remains a hard blackout in either mode.
+# A row may override this value; matching rows must agree.
+allowPrepareOnlyOutsideOfUpdateStartWindow: true
+
 # ---- Schedule entries ----------------------------------------------
 # UNION semantics: if multiple rows match the current (cycleWeek, dow)
 # tuple, the resolver concatenates their `rings` columns with ';' and
@@ -203,6 +211,10 @@ prepareOnlyFirst: false
 #                 the top-level value. If multiple rows match the same firing,
 #                 all row-level prepareOnlyFirst values must agree; conflicting
 #                 values are rejected so the pipeline fails closed.
+#   allowPrepareOnlyOutsideOfUpdateStartWindow  OPTIONAL (schema v3). true or
+#                 false. When set on a row, it overrides the top-level value
+#                 for that firing. Matching row values must agree. This setting
+#                 has no effect unless that firing performs preparation.
 #
 # COMMON SETUP: put every ring that shares the same week and days in one
 # row, separated by semicolons, for example `rings: 'Canary;DevTest'`.

@@ -258,8 +258,9 @@ Main function to start updates on one or more Azure Local clusters.
 - `-ResourceGroupName` (Optional): Resource group containing the clusters (only used with `-ClusterNames`)
 - `-SubscriptionId` (Optional): Azure subscription ID (defaults to current, only used with `-ClusterNames`)
 - `-UpdateName` (Optional): Specific update name to apply (e.g., `Solution12.2603.1002.15`). If not specified, the latest cumulative update is auto-selected by YYMM version from the update name
-- `-PrepareOnly` (Optional, v0.9.33): Prepare a Ready update without installing it. Azure downloads, validates/extracts, and runs health checks, then stops at `ReadyToInstall`. Preparation ignores `UpdateStartWindow` but still honors `UpdateExclusionsWindow` and `UpdateExcluded`.
+- `-PrepareOnly` (Optional, v0.9.33): Prepare a Ready update without installing it. Azure downloads, validates/extracts, and runs health checks, then stops at `ReadyToInstall`.
 - `-PrepareOnlyFirst` (Optional, v0.9.33): Automated two-firing policy. A Ready update is prepared on the current run; after Azure reports `ReadyToInstall`, a later run applies it through both schedule gates. This differs from `-PrepareOnly`, which never applies an already-prepared update.
+- `-AllowPrepareOnlyOutsideOfUpdateStartWindow` (Optional Boolean, v0.9.33; default `$true`): When preparation is the effective action, `$true` bypasses `UpdateStartWindow` and `$false` enforces it. `UpdateExclusionsWindow` and `UpdateExcluded` remain enforced in either mode; `-IgnoreScheduleTags` remains the explicit bypass for both schedule tags.
 - `-ApiVersion` (Optional): API version (default: "2025-10-01")
 - `-Force` (Optional): Skip confirmation prompts
 - `-WhatIf` (Optional): Show what would happen without executing
@@ -292,6 +293,9 @@ Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -Updat
 
 # Explicitly prepare the selected update now; do not install it
 Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -PrepareOnly -Force
+
+# Prepare only while the cluster's UpdateStartWindow is open
+Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -PrepareOnly -AllowPrepareOnlyOutsideOfUpdateStartWindow $false -Force
 
 # Automated policy: prepare Ready now, apply ReadyToInstall on a later firing
 Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -PrepareOnlyFirst -Force

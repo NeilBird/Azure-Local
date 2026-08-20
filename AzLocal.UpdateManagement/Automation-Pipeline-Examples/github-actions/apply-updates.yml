@@ -84,13 +84,21 @@ on:
         required: false
         default: ''
       update_operation:
-        description: 'Update operation: Apply starts installation; PrepareOnly downloads content and runs health checks in advance without enforcing schedule tags.'
+        description: 'Update operation: Apply starts installation; PrepareOnly downloads content and runs health checks without installing. UpdateExclusionsWindow remains enforced.'
         required: false
         default: 'Apply'
         type: choice
         options:
           - 'Apply'
           - 'PrepareOnly'
+      allow_prepare_only_outside_of_update_start_window:
+        description: 'Allow PrepareOnly to run outside UpdateStartWindow. Ignored when use_schedule_file=true; scheduled policy comes from schema v3.'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
       dry_run:
         description: 'Preview which clusters would be updated (WhatIf mode)'
         required: false
@@ -236,6 +244,7 @@ jobs:
       # cmdlet falls back to its default "install latest Ready update".
       resolved_allowed_update_versions: ${{ steps.resolve-ring.outputs.RESOLVED_ALLOWED_UPDATE_VERSIONS }}
       resolved_prepare_only_first: ${{ steps.resolve-ring.outputs.RESOLVED_PREPARE_ONLY_FIRST }}
+      resolved_allow_prepare_only_outside_of_update_start_window: ${{ steps.resolve-ring.outputs.RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW }}
 
     steps:
     - name: Checkout repository
@@ -533,6 +542,7 @@ jobs:
         INPUT_UPDATE_NAME: ${{ github.event.inputs.update_name }}
         INPUT_UPDATE_OPERATION: ${{ github.event.inputs.update_operation || 'Apply' }}
         INPUT_PREPARE_ONLY_FIRST: ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.use_schedule_file == 'true') && needs.check-readiness.outputs.resolved_prepare_only_first || 'false' }}
+        INPUT_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW: ${{ (github.event_name != 'workflow_dispatch' || github.event.inputs.use_schedule_file == 'true') && needs.check-readiness.outputs.resolved_allow_prepare_only_outside_of_update_start_window || github.event.inputs.allow_prepare_only_outside_of_update_start_window || 'true' }}
         INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
         # v0.8.79 break-glass override. Force-immediate is ONLY honoured on
         # workflow_dispatch runs. The conditional below collapses to 'false'
@@ -567,6 +577,7 @@ jobs:
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
         if ($env:INPUT_UPDATE_OPERATION -eq 'PrepareOnly') { $params['PrepareOnly'] = $true }
         if ($env:INPUT_PREPARE_ONLY_FIRST -eq 'true') { $params['PrepareOnlyFirst'] = $true }
+        $params['AllowPrepareOnlyOutsideOfUpdateStartWindow'] = $env:INPUT_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW -eq 'true'
         if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
         Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
           Invoke-AzLocalReadinessGatedClusterUpdate @params

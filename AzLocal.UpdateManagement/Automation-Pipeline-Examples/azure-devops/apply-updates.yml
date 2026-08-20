@@ -81,12 +81,17 @@ parameters:
     default: ''
 
   - name: updateOperation
-    displayName: 'Update operation: Apply starts installation; PrepareOnly downloads content and runs health checks in advance without enforcing schedule tags.'
+    displayName: 'Update operation: Apply starts installation; PrepareOnly downloads content and runs health checks without installing. UpdateExclusionsWindow remains enforced.'
     type: string
     default: 'Apply'
     values:
       - 'Apply'
       - 'PrepareOnly'
+
+  - name: allowPrepareOnlyOutsideOfUpdateStartWindow
+    displayName: 'Allow manual PrepareOnly outside UpdateStartWindow. Ignored when useScheduleFile=true.'
+    type: boolean
+    default: true
   
   - name: dryRun
     displayName: 'Preview which clusters would be updated (WhatIf mode)'
@@ -404,6 +409,7 @@ stages:
           # Schedule firing or when no allow-list is configured.
           resolvedAllowedUpdateVersions: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_ALLOWED_UPDATE_VERSIONS'] ]
           resolvedPrepareOnlyFirst: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_PREPARE_ONLY_FIRST'] ]
+          resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW'] ]
 
         steps:
           - checkout: self
@@ -520,6 +526,10 @@ stages:
               # status 'NotInAllowList'.
               RESOLVED_ALLOWED_UPDATE_VERSIONS: $(resolvedAllowedUpdateVersions)
               RESOLVED_PREPARE_ONLY_FIRST: $(resolvedPrepareOnlyFirst)
+              RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW: $(resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow)
+              ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW_PARAM: ${{ parameters.allowPrepareOnlyOutsideOfUpdateStartWindow }}
+              UPDATE_OPERATION_PARAM: ${{ parameters.updateOperation }}
+              USE_SCHEDULE_FILE_PARAM: ${{ parameters.useScheduleFile }}
               # v0.8.79 break-glass override - parameter value + Build.Reason guard.
               # The runtime check below collapses force=true on Schedule/CI runs to
               # force=false so the override only ever takes effect on a Manual queue.
@@ -561,6 +571,9 @@ stages:
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
                 if ($env:UPDATE_OPERATION_PARAM -eq 'PrepareOnly') { $params['PrepareOnly'] = $true }
                 if (($env:BUILD_REASON -eq 'Schedule' -or $env:USE_SCHEDULE_FILE_PARAM -eq 'True') -and $env:RESOLVED_PREPARE_ONLY_FIRST -eq 'true') { $params['PrepareOnlyFirst'] = $true }
+                $useResolvedPrepareWindowPolicy = $env:BUILD_REASON -eq 'Schedule' -or $env:USE_SCHEDULE_FILE_PARAM -eq 'True'
+                $prepareWindowPolicyValue = if ($useResolvedPrepareWindowPolicy) { $env:RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW } else { $env:ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW_PARAM }
+                $params['AllowPrepareOnlyOutsideOfUpdateStartWindow'] = $prepareWindowPolicyValue -eq 'true' -or $prepareWindowPolicyValue -eq 'True'
                 if ($env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'True') {
                     if ($env:BUILD_REASON -eq 'Manual') {
                         $params['ForceImmediateUpdate'] = $true

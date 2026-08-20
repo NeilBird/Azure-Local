@@ -134,6 +134,25 @@ function Get-AzLocalApplyUpdatesScheduleConfig {
         $errors.Add("Schema v$($cfg.SchemaVersion) requires a top-level 'prepareOnlyFirst:' field. Set it to false to preserve existing behavior or true to prepare Ready updates before installing them on a later firing.") | Out-Null
     }
 
+    # True allows preparation outside UpdateStartWindow. False requires the
+    # prepare phase to pass that gate.
+    $cfg | Add-Member -NotePropertyName 'AllowPrepareOnlyOutsideOfUpdateStartWindow' -NotePropertyValue $true -Force
+    $topPrepareWindowRaw = if ($cfg.PSObject.Properties.Match('AllowPrepareOnlyOutsideOfUpdateStartWindowRaw').Count) { [string]$cfg.AllowPrepareOnlyOutsideOfUpdateStartWindowRaw } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($topPrepareWindowRaw)) {
+        if ($cfg.SchemaVersion -lt 3) {
+            $errors.Add("Top-level 'allowPrepareOnlyOutsideOfUpdateStartWindow' requires schemaVersion >= 3. Run Update-AzLocalApplyUpdatesScheduleConfig to migrate the file.") | Out-Null
+        }
+        if ($topPrepareWindowRaw -notmatch '^(?i:true|false)$') {
+            $errors.Add("Top-level 'allowPrepareOnlyOutsideOfUpdateStartWindow' must be true or false. Got: '$topPrepareWindowRaw'.") | Out-Null
+        }
+        else {
+            $cfg.AllowPrepareOnlyOutsideOfUpdateStartWindow = [System.Convert]::ToBoolean($topPrepareWindowRaw)
+        }
+    }
+    elseif ($cfg.SchemaVersion -ge 3) {
+        $errors.Add("Schema v$($cfg.SchemaVersion) requires a top-level 'allowPrepareOnlyOutsideOfUpdateStartWindow:' field. Set it to true to allow preparation outside UpdateStartWindow or false to enforce that window during preparation.") | Out-Null
+    }
+
     # ---- Validate each schedule row ---------------------------------
     # Cross-checks weeksInCycle / daysOfWeek tokens by attempting to
     # expand them. This will surface bad ranges, out-of-bounds values,
@@ -218,6 +237,21 @@ function Get-AzLocalApplyUpdatesScheduleConfig {
                 }
                 else {
                     $row.PrepareOnlyFirstParsed = [System.Convert]::ToBoolean($rowPrepareRaw)
+                }
+            }
+
+            $rowHasPrepareWindow = $row.PSObject.Properties.Match('allowPrepareOnlyOutsideOfUpdateStartWindow').Count -gt 0
+            $row | Add-Member -NotePropertyName 'AllowPrepareOnlyOutsideOfUpdateStartWindowParsed' -NotePropertyValue $null -Force
+            if ($rowHasPrepareWindow) {
+                $rowPrepareWindowRaw = [string]$row.allowPrepareOnlyOutsideOfUpdateStartWindow
+                if ($cfg.SchemaVersion -lt 3) {
+                    $errors.Add("schedule[$i]$line uses 'allowPrepareOnlyOutsideOfUpdateStartWindow' which requires schemaVersion >= 3. Run Update-AzLocalApplyUpdatesScheduleConfig to migrate the file.") | Out-Null
+                }
+                if ($rowPrepareWindowRaw -notmatch '^(?i:true|false)$') {
+                    $errors.Add("schedule[$i]$line 'allowPrepareOnlyOutsideOfUpdateStartWindow' must be true or false. Got: '$rowPrepareWindowRaw'.") | Out-Null
+                }
+                else {
+                    $row.AllowPrepareOnlyOutsideOfUpdateStartWindowParsed = [System.Convert]::ToBoolean($rowPrepareWindowRaw)
                 }
             }
         }

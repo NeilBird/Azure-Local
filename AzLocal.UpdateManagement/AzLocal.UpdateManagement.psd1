@@ -389,7 +389,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.33 - Adds remote ARM orchestration for Azure Local 2608's existing local prepare workflow: PrepareOnly and PrepareOnlyFirst. Schedule v3 adds prepareOnlyFirst with backed-up, row-preserving migration and rollback. Preparation bypasses UpdateStartWindow but honors exclusions and UpdateExcluded. Reporting accuracy fixes included. No export change (73).
+## Version 0.9.33 - Adds remote ARM PrepareOnly and PrepareOnlyFirst for Azure Local 2608. Schedule v3 adds prepareOnlyFirst and allowPrepareOnlyOutsideOfUpdateStartWindow; migration preserves rows and rolls back on failure. Policy controls UpdateStartWindow bypass; exclusions and UpdateExcluded always apply. Fixes transcript reporting. Exports 73.
 
 ## Version 0.9.32 - Diagnostic transcripts close deterministically in finally blocks across every bundled workload, including failed runs and Apply Updates retry sessions. Empty collection JSON artifacts contain [] across connectivity, health, authentication, inventory, apply, and retry workflows. Live certification adds Config 1 inventory and JSON parsing, bounded eight-shard PowerShell job execution, and a pipeline-command coverage drift gate. No export change (73).
 

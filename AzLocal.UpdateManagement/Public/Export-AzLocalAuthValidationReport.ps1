@@ -205,8 +205,11 @@ function Export-AzLocalAuthValidationReport {
     Write-Host '--- 2. role assignments for the pipeline identity (proves RBAC grant) ---'
     if ($AzureClientId) {
         $rolesResult = Invoke-AzCliJson -Arguments @('role', 'assignment', 'list', '--assignee', $AzureClientId, '--all')
-        if ($rolesResult.Ok -and $rolesResult.Data) {
-            $rolesRows = @($rolesResult.Data | Select-Object roleDefinitionName, principalType, scope)
+        if ($rolesResult.Ok) {
+            $rolesRows = @()
+            if ($rolesResult.Data) {
+                $rolesRows = @($rolesResult.Data | Select-Object roleDefinitionName, principalType, scope)
+            }
             if ($rolesRows.Count -gt 0) {
                 $rolesRows | Format-Table -AutoSize | Out-Host
             }
@@ -215,7 +218,8 @@ function Export-AzLocalAuthValidationReport {
             }
         }
         else {
-            Write-Host "(role assignment lookup failed: $($rolesResult.Error))"
+            $rolesError = if ([string]::IsNullOrWhiteSpace([string]$rolesResult.Error)) { 'Azure CLI returned no error details' } else { [string]$rolesResult.Error }
+            Write-Host "(role assignment lookup failed: $rolesError)"
         }
     }
     else {
