@@ -218,6 +218,7 @@ function ConvertFrom-AzLocalScheduleYaml {
         CycleAnchorISOWeek         = $topLevel['cycleAnchorISOWeek']
         CycleAnchorYear            = $topLevel['cycleAnchorYear']
         AllowedUpdateVersionsRaw   = $topLevel['allowedUpdateVersions']
+        PrepareOnlyFirstRaw        = $topLevel['prepareOnlyFirst']
         Schedule                   = @($schedule)
         SourcePath                 = $SourcePath
     }

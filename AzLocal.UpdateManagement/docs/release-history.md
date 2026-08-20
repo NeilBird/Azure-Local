@@ -4,9 +4,15 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.32 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0932) `What's New in v0.9.32` section.
+> **For v0.9.33 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0933) `What's New in v0.9.33` section.
 
 ---
+
+### What's New in v0.9.33
+
+**Azure Local 2608 exposes update preparation through the Azure control-plane API, bringing the existing local PowerShell prepare workflow into remote automation with source-controlled rollout policy.** `Start-AzLocalClusterUpdate -PrepareOnly` invokes the stable prepare action to download, validate/extract, and execute update-specific health checks, then stops at `ReadyToInstall`; `-PrepareOnlyFirst` prepares a Ready update on one firing and applies it on a later firing after the health checks complete successfully. Apply schedule schema v3 adds `prepareOnlyFirst: false` as the behavior-preserving fleet default plus optional row overrides. Preparation ignores `UpdateStartWindow` but honors `UpdateExclusionsWindow` and `UpdateExcluded`. Normal pipeline refresh backs up and automatically migrates v1/v2 schedules while preserving the operator-owned schedule rows and line endings, validates the result, and rolls back on failure. Manual GitHub and Azure DevOps runs expose Apply / PrepareOnly selection.
+
+**Fleet reporting remains truthful across stale summary fields, Resource Graph omissions, and empty exception sets.** Update: 1 distinguishes actual allow-list suppression from ordinary Ready updates, preserves recommended child state, adds `State` to Ready output, and links Not-Ready clusters to Monitor: 2. Monitor: 3 reconciles actionable counts from child updates while retaining the ARM value. Update: 4 sparsely recovers tagged runs through ARM regardless of age and replaces stale per-cluster ARG output. Monitor: 1 writes a schema-bearing empty physical-NIC CSV. No public function or export-count change (73); pipeline pins are updated to `0.9.33`. See [CHANGELOG.md](../CHANGELOG.md#0933---2026-08-20) for full details.
 
 ### What's New in v0.9.32
 

@@ -383,10 +383,11 @@ function Export-AzLocalUpdateRunMonitorReport {
     }
 
     # ARG can omit nested updateRun resources even when the ARM endpoint and
-    # portal expose them. Reconcile recent UpdateStarted/UpdateRetried tags through ARM so
-    # those runs are monitored instead of reported as false attempt gaps.
-    if ($RecentAttemptWindowHours -gt 0 -and $inventoryForTags -and $inventoryForTags.Count -gt 0) {
-        $attemptCutoff = $nowUtc.AddHours(-$RecentAttemptWindowHours)
+    # portal expose them. Reconcile every durable UpdateStarted/UpdateRetried
+    # tag through ARM when ARG has no covering run. The recent-attempt window
+    # controls alerting below, but must not allow an older successful run to
+    # replace a newer failed run merely because the missing run is older.
+    if ($inventoryForTags -and $inventoryForTags.Count -gt 0) {
         $argRunCount = @($runs).Count
         $reconciliationCandidateCount = 0
         $armEmptyCount = 0
@@ -405,7 +406,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             $tagValue = Get-TagValue -Tags $tagBag -Name $script:UpdateLastAttemptTagName
             if ([string]::IsNullOrWhiteSpace($tagValue)) { continue }
             $attempt = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value $tagValue
-            if (-not $attempt -or $attempt.Outcome -notin @('UpdateStarted', 'UpdateRetried') -or -not $attempt.UpdateName -or $attempt.AttemptUtc -lt $attemptCutoff) { continue }
+            if (-not $attempt -or $attempt.Outcome -notin @('UpdateStarted', 'UpdateRetried') -or -not $attempt.UpdateName) { continue }
 
             $resourceId = if ($inventoryRow.PSObject.Properties['ResourceId']) { [string]$inventoryRow.ResourceId } else { '' }
             if (-not $resourceId) { continue }
@@ -456,8 +457,7 @@ function Export-AzLocalUpdateRunMonitorReport {
                 $runsByAttemptKey[$runKey] = $recoveredRun
                 $runs = @($runs | Where-Object {
                     $candidateResourceId = if ($_.PSObject.Properties['ClusterResourceId']) { [string]$_.ClusterResourceId } else { '' }
-                    $candidateUpdateName = if ($_.PSObject.Properties['UpdateName']) { [string]$_.UpdateName } else { '' }
-                    ('{0}|{1}' -f $candidateResourceId.ToLowerInvariant(), $candidateUpdateName.ToLowerInvariant()) -ne $runKey
+                    -not $candidateResourceId -or $candidateResourceId -ine $resourceId
                 })
                 Write-Warning ("Recovered update run for cluster '{0}' and update '{1}' through ARM because Resource Graph did not return it." -f $clusterName, $attempt.UpdateName)
                 Write-Verbose ("ARM reconciliation result: cluster='{0}', update='{1}', covering run=true, recoveredRun='{2}'." -f $clusterName, $attempt.UpdateName, $recoveredRun.RunId)

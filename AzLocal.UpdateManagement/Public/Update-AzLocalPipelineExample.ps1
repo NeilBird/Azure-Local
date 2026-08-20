@@ -105,6 +105,15 @@ function Update-AzLocalPipelineExample {
         modifies anything under (Get-Module).ModuleBase). Supports
         -WhatIf and -Confirm.
 
+        When the repo-root config\apply-updates-schedule.yml exists and uses
+        an older supported schema, a normal refresh also calls
+        Update-AzLocalApplyUpdatesScheduleConfig -SchemaMigrate. The exact
+        source is renamed to apply-updates-schedule.v<old>.old.yml; migration
+        preserves the operator-owned schedule section and newline style,
+        validates the new canonical file, and restores the original if write
+        or validation fails. -WhatIf previews this action without creating a
+        backup or changing the schedule.
+
     .PARAMETER Destination
         Folder containing the customer's pipeline YAMLs. Must exist. For
         GitHub Actions the canonical layout is the repo's .\.github\workflows
@@ -953,7 +962,40 @@ function Update-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 8. Fleet settings starter drop parity with Copy-AzLocalPipelineExample.
+    # 8. Apply-updates schedule schema migration. The turnkey
+    # Update-Module-And-Pipelines.ps1 calls this function during every normal
+    # refresh, so an existing schedule advances to the module's current schema
+    # with the dedicated migrator's text-preserving backup semantics.
+    # ------------------------------------------------------------------
+    $trimmedTarget = $destResolved.TrimEnd('\', '/')
+    $oneLevelUp = Split-Path -Parent $trimmedTarget
+    if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+        $repoRoot = Split-Path -Parent $oneLevelUp
+    }
+    else {
+        $repoRoot = $oneLevelUp
+    }
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+        $repoRoot = $trimmedTarget
+    }
+
+    $applyScheduleDest = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath 'config') -ChildPath 'apply-updates-schedule.yml'
+    if (Test-Path -LiteralPath $applyScheduleDest -PathType Leaf) {
+        $scheduleMigration = Update-AzLocalApplyUpdatesScheduleConfig `
+            -Path $applyScheduleDest `
+            -SchemaMigrate `
+            -PassThru `
+            -Confirm:$false
+        if ($scheduleMigration.Action -eq 'Migrated') {
+            Write-Log -Message "  Updated : apply-updates-schedule.yml upgraded from schema v$($scheduleMigration.FromVersion) to v$($scheduleMigration.ToVersion) at '$applyScheduleDest'" -Level Success
+        }
+        else {
+            Write-Verbose ("Update-AzLocalPipelineExample: apply-updates-schedule.yml schema upgrade not required ({0})." -f $scheduleMigration.Action)
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 9. Fleet settings starter drop parity with Copy-AzLocalPipelineExample.
     # Existing repos upgraded via Update receive the fully commented starter;
     # an existing schema v1/v2/v3 file is backed up before migration to v4.
     # ------------------------------------------------------------------
@@ -1012,7 +1054,7 @@ function Update-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 9. Sideload settings/config parity with Copy-AzLocalPipelineExample.
+    # 10. Sideload settings/config parity with Copy-AzLocalPipelineExample.
     # Settings, auth-map, and catalog files are created only when absent and
     # are never overwritten here.
     # ------------------------------------------------------------------

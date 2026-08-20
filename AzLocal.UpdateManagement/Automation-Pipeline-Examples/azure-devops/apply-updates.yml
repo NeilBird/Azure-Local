@@ -79,6 +79,14 @@ parameters:
     displayName: 'Specific update version (leave empty for latest ready update)'
     type: string
     default: ''
+
+  - name: updateOperation
+    displayName: 'Update operation: Apply starts installation; PrepareOnly downloads content and runs health checks in advance without enforcing schedule tags.'
+    type: string
+    default: 'Apply'
+    values:
+      - 'Apply'
+      - 'PrepareOnly'
   
   - name: dryRun
     displayName: 'Preview which clusters would be updated (WhatIf mode)'
@@ -134,7 +142,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.32'
+    value: '0.9.33'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -284,6 +292,8 @@ stages:
               # allowedUpdateVersions allow-list on a break-glass run - only the
               # schedule WINDOW is bypassed, never the version allow-list.
               FORCE_IMMEDIATE_UPDATE_PARAM: ${{ parameters.forceImmediateUpdate }}
+              UPDATE_OPERATION_PARAM: ${{ parameters.updateOperation }}
+              USE_SCHEDULE_FILE_PARAM: ${{ parameters.useScheduleFile }}
             inputs:
               targetType: 'inline'
               pwsh: true
@@ -393,6 +403,7 @@ stages:
           # schema-v2 'allowedUpdateVersions' field. Empty when build was not a
           # Schedule firing or when no allow-list is configured.
           resolvedAllowedUpdateVersions: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_ALLOWED_UPDATE_VERSIONS'] ]
+          resolvedPrepareOnlyFirst: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_PREPARE_ONLY_FIRST'] ]
 
         steps:
           - checkout: self
@@ -508,6 +519,7 @@ stages:
               # clusters with no matching Ready update are skipped with
               # status 'NotInAllowList'.
               RESOLVED_ALLOWED_UPDATE_VERSIONS: $(resolvedAllowedUpdateVersions)
+              RESOLVED_PREPARE_ONLY_FIRST: $(resolvedPrepareOnlyFirst)
               # v0.8.79 break-glass override - parameter value + Build.Reason guard.
               # The runtime check below collapses force=true on Schedule/CI runs to
               # force=false so the override only ever takes effect on a Manual queue.
@@ -547,6 +559,8 @@ stages:
                     OutputDirectory       = "$(Build.ArtifactStagingDirectory)"
                 }
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
+                if ($env:UPDATE_OPERATION_PARAM -eq 'PrepareOnly') { $params['PrepareOnly'] = $true }
+                if (($env:BUILD_REASON -eq 'Schedule' -or $env:USE_SCHEDULE_FILE_PARAM -eq 'True') -and $env:RESOLVED_PREPARE_ONLY_FIRST -eq 'true') { $params['PrepareOnlyFirst'] = $true }
                 if ($env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'True') {
                     if ($env:BUILD_REASON -eq 'Manual') {
                         $params['ForceImmediateUpdate'] = $true
@@ -577,7 +591,7 @@ stages:
           - task: AzureCLI@2
             displayName: 'Retry Failed Updates'
             name: retryFailedUpdates
-            condition: eq(variables['FAILED_UPDATES_SINGLE_RETRY'], 'true')
+            condition: and(eq(variables['FAILED_UPDATES_SINGLE_RETRY'], 'true'), eq('${{ parameters.updateOperation }}', 'Apply'), ne(variables['resolvedPrepareOnlyFirst'], 'true'))
             env:
               RESOLVED_UPDATE_RING: $(resolvedUpdateRing)
               DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
@@ -806,6 +820,7 @@ stages:
                     UpToDateCount        = "$(upToDateCount)"
                     NotReadyCount        = "$(notReadyCount)"
                     Succeeded            = "$(applyUpdates.Succeeded)"
+                    Prepared             = "$(applyUpdates.Prepared)"
                     Skipped              = "$(applyUpdates.Skipped)"
                     Failed               = "$(applyUpdates.Failed)"
                     HealthBlocked        = "$(applyUpdates.HealthBlocked)"
@@ -816,6 +831,7 @@ stages:
                     ReadinessCsvPath     = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                 }
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
+                if ('${{ parameters.updateOperation }}' -eq 'PrepareOnly') { $params['PrepareOnly'] = $true }
                 Add-AzLocalApplyUpdatesStepSummary @params
 
           # v0.9.18: render the support disclaimer at the very bottom of the run summary.

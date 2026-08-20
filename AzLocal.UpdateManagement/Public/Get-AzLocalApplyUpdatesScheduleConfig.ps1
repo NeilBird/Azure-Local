@@ -2,7 +2,7 @@ function Get-AzLocalApplyUpdatesScheduleConfig {
     <#
     .SYNOPSIS
         Reads and validates an apply-updates-schedule.yml file (schema
-        v1 or v2), returning a typed config object suitable for
+        v1, v2, or v3), returning a typed config object suitable for
         Resolve-AzLocalCurrentUpdateRing and the audit cmdlet.
 
     .DESCRIPTION
@@ -65,8 +65,8 @@ function Get-AzLocalApplyUpdatesScheduleConfig {
 
     if ($null -eq $cfg.SchemaVersion -or $cfg.SchemaVersion -isnot [int]) {
         $errors.Add("Top-level 'schemaVersion' must be present and an integer.") | Out-Null
-    } elseif ($cfg.SchemaVersion -ne 1 -and $cfg.SchemaVersion -ne 2) {
-        $errors.Add("schemaVersion '$($cfg.SchemaVersion)' is not supported by this module version. Expected: 1 or 2.") | Out-Null
+    } elseif ($cfg.SchemaVersion -notin @(1, 2, 3)) {
+        $errors.Add("schemaVersion '$($cfg.SchemaVersion)' is not supported by this module version. Expected: 1, 2, or 3.") | Out-Null
     }
 
     if ($null -eq $cfg.CycleWeeks -or $cfg.CycleWeeks -isnot [int] -or $cfg.CycleWeeks -lt 1 -or $cfg.CycleWeeks -gt 52) {
@@ -112,6 +112,26 @@ function Get-AzLocalApplyUpdatesScheduleConfig {
     elseif ($cfg.SchemaVersion -ge 2) {
         # Mandatory on v2+ with no value supplied.
         $errors.Add("Schema v$($cfg.SchemaVersion) requires a top-level 'allowedUpdateVersions:' field. Set it to 'Latest' to keep the default 'install the latest Ready update' behaviour, or to a semicolon-separated list of explicit update names / version strings (e.g. '10.2604.0.123;10.2610.0.456') to enforce a fleet-wide allow-list. See https://github.com/NeilBird/Azure-Local/tree/main/AzLocal.UpdateManagement#allowedupdateversions for details.") | Out-Null
+    }
+
+    # ---- Validate prepare-first policy (schema v3) -----------------
+    # False preserves historical behavior. True prepares Ready updates and
+    # installs them from ReadyToInstall on a later eligible firing.
+    $cfg | Add-Member -NotePropertyName 'PrepareOnlyFirst' -NotePropertyValue $false -Force
+    $topPrepareRaw = if ($cfg.PSObject.Properties.Match('PrepareOnlyFirstRaw').Count) { [string]$cfg.PrepareOnlyFirstRaw } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($topPrepareRaw)) {
+        if ($cfg.SchemaVersion -lt 3) {
+            $errors.Add("Top-level 'prepareOnlyFirst' requires schemaVersion >= 3. Run Update-AzLocalApplyUpdatesScheduleConfig to migrate the file.") | Out-Null
+        }
+        if ($topPrepareRaw -notmatch '^(?i:true|false)$') {
+            $errors.Add("Top-level 'prepareOnlyFirst' must be true or false. Got: '$topPrepareRaw'.") | Out-Null
+        }
+        else {
+            $cfg.PrepareOnlyFirst = [System.Convert]::ToBoolean($topPrepareRaw)
+        }
+    }
+    elseif ($cfg.SchemaVersion -ge 3) {
+        $errors.Add("Schema v$($cfg.SchemaVersion) requires a top-level 'prepareOnlyFirst:' field. Set it to false to preserve existing behavior or true to prepare Ready updates before installing them on a later firing.") | Out-Null
     }
 
     # ---- Validate each schedule row ---------------------------------
@@ -183,6 +203,21 @@ function Get-AzLocalApplyUpdatesScheduleConfig {
                 $parsedRow = Test-AzLocalAllowedUpdateVersionsString -Raw $row.allowedUpdateVersions -Location "schedule[$i]$line 'allowedUpdateVersions'" -Errors $errors
                 if ($null -ne $parsedRow) {
                     $row.AllowedUpdateVersionsParsed = $parsedRow
+                }
+            }
+
+            $rowHasPrepareFirst = $row.PSObject.Properties.Match('prepareOnlyFirst').Count -gt 0
+            $row | Add-Member -NotePropertyName 'PrepareOnlyFirstParsed' -NotePropertyValue $null -Force
+            if ($rowHasPrepareFirst) {
+                $rowPrepareRaw = [string]$row.prepareOnlyFirst
+                if ($cfg.SchemaVersion -lt 3) {
+                    $errors.Add("schedule[$i]$line uses 'prepareOnlyFirst' which requires schemaVersion >= 3. Run Update-AzLocalApplyUpdatesScheduleConfig to migrate the file.") | Out-Null
+                }
+                if ($rowPrepareRaw -notmatch '^(?i:true|false)$') {
+                    $errors.Add("schedule[$i]$line 'prepareOnlyFirst' must be true or false. Got: '$rowPrepareRaw'.") | Out-Null
+                }
+                else {
+                    $row.PrepareOnlyFirstParsed = [System.Convert]::ToBoolean($rowPrepareRaw)
                 }
             }
         }

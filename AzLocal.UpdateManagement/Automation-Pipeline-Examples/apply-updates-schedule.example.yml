@@ -1,5 +1,5 @@
 # =====================================================================
-# AzLocal.UpdateManagement - Apply-Updates ring schedule (schema v2)
+# AzLocal.UpdateManagement - Apply-Updates ring schedule (schema v3)
 # =====================================================================
 #
 # This is the single source of truth for "which UpdateRing(s) is/are
@@ -38,7 +38,7 @@
 #   https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/Automation-Pipeline-Examples/docs/apply-updates-schedule.md
 # =====================================================================
 
-schemaVersion: 2
+schemaVersion: 3
 
 # ---- Cycle anchor --------------------------------------------------
 # Every cron firing in UTC is mapped to a (cycleWeek, dayOfWeek) pair
@@ -158,6 +158,18 @@ cycleAnchorYear:      2026
 # explicit versions in the same field is rejected by the validator).
 allowedUpdateVersions: 'Latest'
 
+# ---- Prepare before install (schema v3, MANDATORY) ------------
+# >>> PREPARE-ONLY-FIRST-V3 <<<
+# false preserves the existing one-step apply behavior.
+# true uses the Azure Local 2608 prepare updates workflow, allowing you to
+# prepare updates now and install them at a later time. A Ready update is
+# downloaded, validated/extracted, and health checked without enforcing
+# UpdateStartWindow, while UpdateExclusionsWindow remains a hard blackout.
+# A later firing installs it from ReadyToInstall only when both schedule
+# gates permit installation.
+# A schedule row may override this boolean; matching rows must agree.
+prepareOnlyFirst: false
+
 # ---- Schedule entries ----------------------------------------------
 # UNION semantics: if multiple rows match the current (cycleWeek, dow)
 # tuple, the resolver concatenates their `rings` columns with ';' and
@@ -185,6 +197,12 @@ allowedUpdateVersions: 'Latest'
 #                 Key order within a row is not significant. Placing this
 #                 below `rings` and before `notes` is recommended only for
 #                 readability; placing it below `notes` is equally valid.
+#   prepareOnlyFirst  OPTIONAL (schema v3). true or false. When set on a
+#                 schedule row, it OVERRIDES the top-level prepareOnlyFirst
+#                 value for that (cycleWeek, dayOfWeek) match. Omit it to use
+#                 the top-level value. If multiple rows match the same firing,
+#                 all row-level prepareOnlyFirst values must agree; conflicting
+#                 values are rejected so the pipeline fails closed.
 #
 # COMMON SETUP: put every ring that shares the same week and days in one
 # row, separated by semicolons, for example `rings: 'Canary;DevTest'`.

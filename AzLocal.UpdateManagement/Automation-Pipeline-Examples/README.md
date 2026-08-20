@@ -1247,7 +1247,7 @@ Once your repo is wired (sections 5.1-5.4), keeping it current after a new `AzLo
 That one command does three things, in order, and **only acts when something actually changed**:
 
 1. **Upgrades the module on your workstation** - queries PSGallery and runs `Install-Module` **only if** the published version is newer than what you have installed (then imports it). If you are already current, it skips the install.
-2. **Refreshes the pipeline YAMLs** via the marker-aware `Update-AzLocalPipelineExample` - it replaces everything **outside** the `AZLOCAL-CUSTOMIZE` marker regions while **preserving your customisations inside them** (schedule crons, service-connection names, runner labels, ITSM secret bindings, the exclusion/schedule paths, etc.). It also refreshes the managed `config\` starters and the dropped `README.md` when the module ships newer templates.
+2. **Refreshes the pipeline YAMLs and supported configuration schemas** via the marker-aware `Update-AzLocalPipelineExample` - it replaces everything **outside** the `AZLOCAL-CUSTOMIZE` marker regions while **preserving your customisations inside them** (schedule crons, service-connection names, runner labels, ITSM secret bindings, the exclusion/schedule paths, etc.). It also refreshes the managed `config\` starters and the dropped `README.md` when the module ships newer templates. When `config\apply-updates-schedule.yml` uses an older supported schema, the refresh saves the exact original as `apply-updates-schedule.v<old>.old.yml`, performs only registered additive migrations, preserves the operator-owned `schedule:` section and newline style byte-for-byte, validates the migrated canonical file, and restores the original automatically on failure.
 3. **Commits and pushes** - stages the workflow folder, the repo-root `config\` folder, the managed `README.md`, and the updater script itself (which may self-refresh), then commits and pushes **only if** the refresh produced a diff.
 
 **Useful options:**
@@ -1262,7 +1262,7 @@ That one command does three things, in order, and **only acts when something act
 
 > **Self-managing:** the script is a **managed file** - `Copy-`/`Update-AzLocalPipelineExample` auto-refresh it in place when the module ships a newer template, and the run above stages that self-update too. Tune its behaviour with the **parameters** above rather than editing the body (body edits are replaced on refresh).
 
-> **Prefer to review before pushing?** Run `.\Update-Module-And-Pipelines.ps1 -NoPush`, inspect `git diff`, then commit and push manually. The marker-aware merge means a refresh is safe to run even on a heavily-customised repo - your `AZLOCAL-CUSTOMIZE` regions survive.
+> **Prefer to review before pushing?** Run `.\Update-Module-And-Pipelines.ps1 -NoPush`, inspect `git diff` and the versioned schedule backup, then commit and push manually. `-WhatIf` previews the refresh without writing or creating a backup. The marker-aware merge preserves `AZLOCAL-CUSTOMIZE` regions, and schedule migration never parses and reserializes operator rows.
 
 ---
 
@@ -1408,7 +1408,7 @@ Key handoffs to remember:
 - **`ClusterUpdateRings.csv`** is the canonical inventory file intended for operator review. During initial setup, copy it to `config/ClusterUpdateRings.csv`, edit the managed columns there, and commit it. Everything else in the inventory artifact is machine-generated evidence.
 - **Update: 1 and Update: 3 have separate readiness roles.** Update: 1 is the advance report operators review before a wave. Update: 3 runs its own readiness stage and passes that run's readiness artifact into its apply stage; it does not consume an artifact from a separate Update: 1 run.
 - **`apply-updates-results.xml`** (JUnit) is what surfaces in the Tests tab on GH Actions and Azure DevOps. Failed-first ordering means actionable rows appear at the top of the reporter UI.
-- **Declared collection JSON artifacts remain parseable on empty runs.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, apply, and failed-update retry outputs contain `[]` when no rows exist; apply and retry create their JSON artifacts even when their gates select no clusters.
+- **Declared collection artifacts remain parseable on empty runs.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, apply, and failed-update retry JSON outputs contain `[]` when no rows exist; apply and retry create their JSON artifacts even when their gates select no clusters. Since v0.9.33, an empty `fleet-physical-nics.csv` retains its stable 17-column header.
 - **`schedule-coverage-recommend.md`** is the only artifact intended to be pasted by hand - directly back into `apply-updates.yml`'s `on.schedule` / ADO trigger block when the audit reports `Uncovered` or `PartiallyCovered` rows.
 - **Fleet Connectivity Status runs parallel to (not downstream of) the apply-updates artifact chain.** It reads ARG directly and emits its own per-scope CSVs (`fleet-cluster-connectivity.csv`, `fleet-arc-status-summary.csv`, `fleet-arc-non-connected-machines.csv`, `fleet-physical-nics.csv`, `fleet-physical-nic-stats.csv`, `fleet-arb-status.csv`) with matching JSON exports, plus a JUnit XML (`fleet-connectivity-status.xml`). An empty scope writes a valid JSON empty collection (`[]`) rather than a zero-byte file. No dependency on `cluster-readiness.csv` or `cluster-inventory.csv` - it is the upstream "can we see the fleet at all?" probe. Use it to triage why the apply-updates chain is empty or under-counting.
 
@@ -1616,9 +1616,9 @@ Since v0.9.26, the report constrains update-summary, available-update, and block
 |---|---|
 | `readiness.xml` / `readiness.csv` | One test per cluster from `Get-AzLocalClusterUpdateReadiness`. Fails if `ReadyForUpdate = $false` (e.g. missing SBE prerequisite, no updates available, cluster in `Updating`). |
 | `health-blocking.xml` / `health-blocking.csv` | One failed test per **Critical blocking finding** from `Test-AzLocalClusterHealth -BlockingOnly`. A clean fleet emits a valid zero-test JUnit suite and a header-only CSV, so the combined report and diagnostic publishers still succeed. |
-| `ready-for-update.csv` (v0.8.97) | The subset of clusters that passed every readiness check and are ready to roll, grouped by `UpdateRing` - mirrors the new **"Clusters - Ready for Update"** summary table in the step summary. |
+| `ready-for-update.csv` (v0.8.97) | The subset of clusters that passed every readiness check and is ready to roll, grouped by `UpdateRing` - mirrors **"Clusters - Ready for Update"** and includes the recommended child update's `State` as its final column since v0.9.33. |
 
-The step summary now leads with the **"Clusters - Ready for Update"** table; the verbose **"All clusters detail"** table is collapsed behind an `Expand to view clusters` block (v0.8.97).
+The step summary leads with **"Clusters - Ready for Update"**; the verbose **"All clusters detail"** table is collapsed behind an `Expand to view clusters` block (v0.8.97). Since v0.9.33, allow-list warnings require actual suppressed Ready updates rather than merely a non-empty Ready set, and the Not-Ready section links to Monitor: 2 health detail.
 
 ![Update: 1 - Assess Update Readiness summary tab: Cluster Readiness table on a 20-cluster fleet (Total 11 / Ready 2 / Up to Date 9 / Not Ready 0 / Stale assessment 1) with per-cluster Current Version, Update State, Health, Status, Support, Recommended Update and Blocking Reasons columns - one cluster flagged "Update Available (stale assessment)" / Unsupported / Disconnected - and the footer note explaining stale "Up to Date" clusters running a build behind the latest manifest should re-run Sync-AzLocalClusterUpdateSummary](../docs/images/apply-updates-update-readiness.png)
 
@@ -1648,7 +1648,7 @@ If you do want a hard go / no-go gate (typical for first production wave), have 
 New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
 ```
 
-The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
+The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v3 schedule with one block per distinct ring, `allowedUpdateVersions: 'Latest'`, and behavior-preserving `prepareOnlyFirst: false`, plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
 
 The generator anchors cycle week 1 to the current UTC ISO week and year. Before
 editing its rows, read [Configure the Apply Updates repeating
@@ -1674,6 +1674,7 @@ For each ring in turn (Wave1 -> validate -> Wave2 -> validate -> Production), ru
 |---|---|
 | `update_ring` | The ring to target (e.g. `Wave1`). |
 | `update_name` | Leave blank to apply the latest ready update; set explicitly to pin a version. |
+| `update_operation` / `updateOperation` | Manual runs: choose `Apply` (default) or `PrepareOnly`. Scheduled runs resolve `prepareOnlyFirst` from the schema-v3 schedule instead. |
 | `dry_run` | `true` for the first run of any new ring - prints the cluster list and intended actions without starting an update. |
 | `throttle_limit` | See section 9. Default 4 is fine for fleets up to ~50 clusters. |
 
@@ -1682,6 +1683,8 @@ The pipeline publishes one test per cluster to the Tests tab and writes per-clus
 | Status | Meaning | Action |
 |---|---|---|
 | `Started` / `UpdateStarted` / `Success` | Update is running or finished. | None. |
+| `PreparationStarted` | Azure accepted preparation. The update is downloading, validating/extracting, or running health checks asynchronously. | Wait for `ReadyToInstall`; a later prepare-first firing applies it. |
+| `AlreadyPrepared` | Explicit `PrepareOnly` found the selected update already at `ReadyToInstall`. | Run again with operation `Apply` when the installation gates permit it. |
 | `Skipped` | Cluster is up to date or has no ready updates. | None. |
 | `ScheduleBlocked` | Cluster is outside its `UpdateStartWindow` or inside an `UpdateExclusionsWindow` period. | Re-run during the window, or update the tag if the schedule has drifted. |
 | `ExcludedByTag` (v0.7.90) | The cluster has `UpdateExcluded = True` (operator hard override). | Flip `UpdateExcluded` to `False` on the cluster resource in the Azure portal (or via `az tag update ... --operation Merge --tags UpdateExcluded=False`) once the operator-imposed hold is lifted. Then re-run. |
@@ -1758,7 +1761,7 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 
 > **Net effect:** between waves the monitor uses one ARG probe plus a bounded admitted-inventory check every 6h; during a wave it triggers itself off Apply, reconciles ARG gaps through ARM, and can delay its first rich progress snapshot with `MONITOR_TRIGGER_DELAY_MINUTES`.
 
-**Large management-group fleets (v0.9.28):** inventory and update-run queries use the management groups and grouped tag admission from `config/fleet-settings.yml`. The admitted cluster IDs are passed to the child update-run query in batches of 40, avoiding the Windows `az.cmd` command-line limit even when the management groups contain thousands of subscriptions. Direct ARM reconciliation is attempted only for admitted clusters with a recent start/retry tag.
+**Large management-group fleets (v0.9.28):** inventory and update-run queries use the management groups and grouped tag admission from `config/fleet-settings.yml`. The admitted cluster IDs are passed to the child update-run query in batches of 40, avoiding the Windows `az.cmd` command-line limit even when the management groups contain thousands of subscriptions. Since v0.9.33, a full Update: 4 sweep attempts sparse direct ARM reconciliation for any admitted cluster whose durable start/retry tag is not covered by ARG, regardless of age; the recent window still controls idle admission and attempt-gap alerts.
 
 **Fleet Connectivity Status** runs daily at 05:17 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity see every expected cluster, physical node, and Resource Bridge?"* Its reconciliation table compares each cluster's reported node count with Arc-tagged physical machines and provides per-direction remediation when they differ. RBAC is read-only and included in the custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
@@ -1777,7 +1780,7 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 | `readiness-status.xml` | JUnit XML, one cluster per test (`Passed` = healthy + up to date, `Failed` = needs attention, `Failed/HasPrerequisite` = vendor SBE update required first). |
 | `readiness-status.csv` | Spreadsheet view of the same data plus `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`, `SBEDependency`. |
 | `readiness-status.json` | Machine-readable, with summary counts. |
-| `update-summaries.csv` | Update-summary state per cluster from Azure. |
+| `update-summaries.csv` | Update-summary state per cluster. Since v0.9.33, `ActionableUpdatesCount` is reconciled from actionable child updates collected in the same run and the raw upstream count is retained as `ArmActionableUpdatesCount`. |
 | `available-updates.csv` | Every available update across the fleet with version + health state. |
 | `update-runs.csv` | Recent run history per cluster (durations, failure summaries) - this is what section 6.6's "size the next maintenance window" advice consumes. |
 
@@ -2158,13 +2161,14 @@ The `apply-updates-schedule.yml` schema v2 adds an `allowedUpdateVersions:` fiel
 Default a fleet to `Latest`, then narrow Production to a known-good feature build:
 
 ```yaml
-schemaVersion: 2
+schemaVersion: 3
 cycleWeeks: 4
 cycleAnchorISOWeek: 1
 cycleAnchorYear: 2025
 
 # Fleet-wide default: clusters install the latest Ready update on each run.
 allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: false
 
 schedule:
   - weeksInCycle: '1'
@@ -2231,7 +2235,7 @@ Or in the **Azure portal**: **Azure Local** -> **\<cluster\>** -> **Updates** ->
 
 > **Spotting a cluster the allow-list silently suppressed.** When a cluster's only Ready update is filtered out by `allowedUpdateVersions` (a common trap with a prerequisite OEM SBE - see the `IMPORTANT` note in [`apply-updates-schedule.example.yml`](apply-updates-schedule.example.yml)), the **Update: 1 - Assess Update Readiness** report shows its **Status** as `Up to Date *`. The `*` marker (explained by a footnote above the *All clusters detail* table) means "up to date **only** because the allow-list excluded every Ready update", and the **Available Ready updates** column lists exactly what Azure has Ready. Copy the name/version from that column into `allowedUpdateVersions:` to let the cluster proceed. The readiness run log also prints an **"Allow-list mismatches"** warning enumerating each suppressed cluster and its excluded updates.
 
-#### 8.4.4 Migrating an existing v1 schedule
+#### 8.4.4 Migrating an existing v1 or v2 schedule
 
 Use the schema migrator:
 
@@ -2243,16 +2247,35 @@ Update-AzLocalApplyUpdatesScheduleConfig `
 
 The migration is **additive and idempotent**:
 
-- Bumps `schemaVersion: 1` to `schemaVersion: 2`.
-- Inserts an active `allowedUpdateVersions: 'Latest'` line at the top of the file, immediately above the `schedule:` block, with a documented header block.
-- Adds commented per-row `# allowedUpdateVersions: '...'` examples to each schedule row.
-- Re-running on an already-v2 file is a no-op (the migrator detects the `# >>> ALLOWED-UPDATE-VERSIONS-V2 <<<` marker).
+- Walks every required hop to current schema v3. v1 adds active `allowedUpdateVersions: 'Latest'`; v2 adds active `prepareOnlyFirst: false`.
+- Saves the exact source as `apply-updates-schedule.v<old>.old.yml` before replacing the canonical file.
+- Preserves every byte from top-level `schedule:` through EOF, including row order, comments, strings, booleans, and row-level allow lists. Source LF or CRLF style is retained.
+- Validates the written v3 file through `Get-AzLocalApplyUpdatesScheduleConfig`; any write or validation failure removes the candidate and restores the exact backup.
+- Re-running an already-v3 file is a no-op. Normal `Update-Module-And-Pipelines.ps1` refresh performs this migration automatically; use `-NoPush` to review it before committing.
 
-After migration the file is a strict superset of v1 - every cluster still resolves to the same ring and update window, and the fleet-wide allow-list of `'Latest'` preserves the v0.7.88 / v1 install-latest-Ready behaviour. Replace `'Latest'` (top-level or per-row) only when you want stricter policy.
+After migration the file is a strict behavioral superset: every cluster resolves to the same ring and allow-list, `'Latest'` preserves the v1 install-latest-Ready behavior, and `prepareOnlyFirst: false` preserves the v2 direct-apply behavior. Change either policy only when you intentionally want different behavior.
 
 #### 8.4.5 Audit pipeline support
 
 `apply-updates-schedule-audit.yml` (GitHub Actions and Azure DevOps) automatically emits an **Allow-list coverage (schema v2)** section in its run summary when a `-SchedulePath` is supplied. The section surfaces the **top-level fleet default**, then a per-row table showing the effective `allowedUpdateVersions` for each schedule row (or `inherits top-level` when no row-level override is set), and recommends edit sites for rows that you might want to override. Schema v1 files get a one-line nudge to run the migrator.
+
+#### 8.4.6 Prepare before install (`prepareOnlyFirst`, schema v3)
+
+Schema v3 requires top-level `prepareOnlyFirst: false`. Keep `false` for the historical one-step apply behavior. Set it to `true` to prepare a Ready update on one scheduled firing and apply it on a later firing after Azure reports `ReadyToInstall`.
+
+```yaml
+schemaVersion: 3
+allowedUpdateVersions: 'Latest'
+prepareOnlyFirst: true
+
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon-Thu'
+    rings: 'Canary'
+    prepareOnlyFirst: false  # row override: Canary applies directly
+```
+
+Row values override the fleet default; omitted rows inherit it. Explicit values from multiple matching rows must agree or the resolver fails closed. Preparation ignores `UpdateStartWindow`, allowing download and readiness checks before the installation window, but still honors `UpdateExclusionsWindow` and `UpdateExcluded`. Once the update is `ReadyToInstall`, apply requires both normal schedule gates.
 
 ---
 

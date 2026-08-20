@@ -2,11 +2,11 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.32 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.32)
+**Latest Version:** v0.9.33 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.33)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
-Azure Local REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2026-02-01/hci.json
+Azure Local REST API specification (includes update management endpoints): https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2026-04-30/hci.json
 
 <details>
 <summary><strong>📑 Table of Contents</strong> (click to expand)</summary>
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.32](#whats-new-in-v0932)
+- [What's New in v0.9.33](#whats-new-in-v0933)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,17 +78,21 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.32
+## What's New in v0.9.33
 
-**Diagnostic artifacts now have deterministic, machine-consumable boundaries.** Every bundled GitHub Actions and Azure DevOps principal workload tracks whether transcript startup succeeded and closes that session from `finally`, so successful and failed diagnostic runs receive a complete transcript footer instead of relying on PowerShell process shutdown. Apply Updates finalizes its primary and optional retry sessions independently while continuing to append both sessions to one artifact.
+**Azure Local 2608 release exposes update preparation through a control-plane API POST action.** Preparation was already available locally through PowerShell; v0.9.33 adds remote module and pipeline orchestration through the stable `POST .../prepare?api-version=2026-04-30` action. `Start-AzLocalClusterUpdate -PrepareOnly` downloads, validates/extracts, and health-checks a Ready update without installing it. `-PrepareOnlyFirst` provides the automated two-firing policy: a Ready update is prepared, then a later run applies it after Azure reports `ReadyToInstall`. Preparation ignores `UpdateStartWindow` but still honors `UpdateExclusionsWindow` and the independent `UpdateExcluded` operator hold.
 
-**Empty pipeline collection exports are valid JSON.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, readiness-gated apply, and failed-update retry workflows now write `[]` rather than a zero-byte `.json` file. Declared apply artifacts are also created on legitimate early-return paths, preserving successful empty states while allowing downstream parsers to consume every declared JSON artifact consistently. No public function or export-count change (73); all bundled pipeline pins are `0.9.32`.
+**Apply schedule schema v3 makes prepare-first policy source-controlled.** The mandatory top-level `prepareOnlyFirst: false` preserves historical direct-apply behavior; an optional row value overrides it for that firing, and conflicting matching rows fail closed. Normal `Update-Module-And-Pipelines.ps1` refreshes migrate v1/v2 schedules through every required hop, save the exact original as `config/apply-updates-schedule.v<old>.old.yml`, preserve the operator-owned `schedule:` section and newline style byte-for-byte, validate the new canonical file, and restore the original automatically on failure.
 
-**Live release validation stays aligned with the pipeline surface.** The live-Azure suite now covers the read-only Config 1 inventory adapter, parses generated JSON, and can run as eight isolated PowerShell job shards with `Tests\Invoke-LiveTestsParallel.ps1 -ThrottleLimit 3`. An offline release gate fails when a bundled pipeline introduces an unclassified cmdlet call, requiring live, transitive, hermetic, or documented destructive-exclusion coverage.
+**Fleet reports now prefer evidence collected in the same run over stale or incomplete summary signals.** Update: 1 reports allow-list suppression only when Ready updates were actually filtered, preserves each recommended update's child state, adds `State` to the shared Ready table and CSV, and points Not-Ready operators to Monitor: 2 health detail. Monitor: 3 derives actionable counts from child updates while retaining the raw ARM count for diagnosis.
+
+**Latest-run monitoring no longer moves backward when Resource Graph omits a known run.** Update: 4 uses the durable `UpdateLastAttempt` tag to perform sparse ARM reconciliation regardless of attempt age, then replaces the stale per-cluster ARG row with the recovered newer run. The 72-hour setting still controls attempt-gap alerting only.
+
+**Empty physical-NIC exception exports retain their schema.** Monitor: 1 writes a header-only 17-column `fleet-physical-nics.csv` when no exceptions exist while preserving `[]` in JSON. No public function or export-count change (73); all bundled pipeline pins are `0.9.33`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.31`](docs/release-history.md#whats-new-in-v0931) for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.32`](docs/release-history.md#whats-new-in-v0932) for the previous release.
 
 ## Files
 
@@ -588,7 +592,15 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.32** stay above under [`What's New in v0.9.32`](#whats-new-in-v0932).
+The most recent release notes for **v0.9.33** stay above under [`What's New in v0.9.33`](#whats-new-in-v0933).
+
+### What's New in v0.9.32
+
+**Diagnostic artifacts now have deterministic, machine-consumable boundaries.** Every bundled GitHub Actions and Azure DevOps principal workload tracks whether transcript startup succeeded and closes that session from `finally`, so successful and failed diagnostic runs receive a complete transcript footer instead of relying on PowerShell process shutdown. Apply Updates finalizes its primary and optional retry sessions independently while continuing to append both sessions to one artifact.
+
+**Empty pipeline collection exports are valid JSON.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, readiness-gated apply, and failed-update retry workflows now write `[]` rather than a zero-byte `.json` file. Declared apply artifacts are also created on legitimate early-return paths, preserving successful empty states while allowing downstream parsers to consume every declared JSON artifact consistently. No public function or export-count change (73); all bundled pipeline pins are `0.9.32`.
+
+**Live release validation stays aligned with the pipeline surface.** The live-Azure suite covers the read-only Config 1 inventory adapter, parses generated JSON, and can run as eight isolated PowerShell job shards with `Tests\Invoke-LiveTestsParallel.ps1 -ThrottleLimit 3`. An offline release gate fails when a bundled pipeline introduces an unclassified cmdlet call. See [CHANGELOG.md](CHANGELOG.md#0932---2026-08-03) for full details.
 
 ### What's New in v0.9.31
 

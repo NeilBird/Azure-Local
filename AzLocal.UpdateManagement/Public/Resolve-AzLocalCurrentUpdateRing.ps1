@@ -293,6 +293,31 @@ function Resolve-AzLocalCurrentUpdateRing {
         $allowValue = ($allowArray -join ';')
     }
 
+    # ---- Resolve prepare-first policy (schema v3) ------------------
+    # Matching row overrides take precedence over the top-level default.
+    # Multiple matching rows must agree so one firing has one deterministic
+    # state-machine policy.
+    $rowPrepareValues = @($matched | ForEach-Object {
+        if ($_.PSObject.Properties.Match('PrepareOnlyFirstParsed').Count -gt 0 -and $null -ne $_.PrepareOnlyFirstParsed) {
+            [bool]$_.PrepareOnlyFirstParsed
+        }
+    } | Select-Object -Unique)
+    if ($rowPrepareValues.Count -gt 1) {
+        throw "Resolve-AzLocalCurrentUpdateRing: matching schedule rows specify conflicting prepareOnlyFirst values: $($rowPrepareValues -join ', '). Use one value for all rows that can match the same firing."
+    }
+    if ($rowPrepareValues.Count -eq 1) {
+        $prepareOnlyFirst = [bool]$rowPrepareValues[0]
+        $prepareOnlyFirstSource = 'row'
+    }
+    elseif ($Schedule.PSObject.Properties.Match('PrepareOnlyFirst').Count -gt 0) {
+        $prepareOnlyFirst = [bool]$Schedule.PrepareOnlyFirst
+        $prepareOnlyFirstSource = 'top-level'
+    }
+    else {
+        $prepareOnlyFirst = $false
+        $prepareOnlyFirstSource = 'default'
+    }
+
     $reason = if ($matched.Count -eq 0) {
         "No schedule row matches (cycleWeek=$cycleWeek of $cycleWeeks, dayOfWeek=$dowName)."
     } else {
@@ -320,5 +345,7 @@ function Resolve-AzLocalCurrentUpdateRing {
         AllowedUpdateVersions       = $allowArray
         AllowedUpdateVersionsValue  = $allowValue
         AllowedUpdateVersionsSource = $allowSource
+        PrepareOnlyFirst             = $prepareOnlyFirst
+        PrepareOnlyFirstSource       = $prepareOnlyFirstSource
     }
 }

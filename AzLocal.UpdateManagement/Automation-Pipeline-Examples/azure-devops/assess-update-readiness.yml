@@ -76,7 +76,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.32'
+    value: '0.9.33'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -200,7 +200,7 @@ stages:
               INPUT_UPDATE_RING: ${{ parameters.updateRing }}
               INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
               ARTIFACTS_PATH: $(artifactsPath)
-              # v0.9.1: optional apply-updates schedule (schema v2). When this
+              # v0.9.1+: optional apply-updates schedule (current schema v3). When this
               # file exists in the repo, its allowedUpdateVersions allow-list
               # constrains the readiness calc to the updates each ring is
               # permitted to install (per-ring override beats the top-level

@@ -38,6 +38,12 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     .PARAMETER DryRun
         Switch. When set, Start-AzLocalClusterUpdate -WhatIf is invoked so no
         updates actually start.
+    .PARAMETER PrepareOnly
+        Switch. When set, forwards -PrepareOnly so update content is downloaded,
+        validated, extracted, and health checked without starting installation.
+    .PARAMETER PrepareOnlyFirst
+        Switch. When set, forwards -PrepareOnlyFirst so Ready updates are prepared
+        first and ReadyToInstall updates are installed on a later eligible firing.
     .PARAMETER AllowedUpdateVersions
         String[] or single ';'-joined string. Allow-list resolved from
         apply-updates-schedule.yml schema-v2 'allowedUpdateVersions'. Empty =
@@ -84,6 +90,10 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         [string]$UpdateName = '',
 
         [switch]$DryRun,
+
+        [switch]$PrepareOnly,
+
+        [switch]$PrepareOnlyFirst,
 
         [Parameter(Mandatory = $false)]
         [AllowEmptyCollection()]
@@ -142,12 +152,12 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     # bindings byte-for-byte: GH uses UPPER_SNAKE, ADO uses PascalCase
     # (e.g. stageDependencies...outputs['applyUpdates.Succeeded']).
     if ($pipelineHost -eq 'AzureDevOps') {
-        $nSucceeded = 'Succeeded'; $nSkipped = 'Skipped'; $nFailed = 'Failed'
+        $nSucceeded = 'Succeeded'; $nPrepared = 'Prepared'; $nSkipped = 'Skipped'; $nFailed = 'Failed'
         $nHealth   = 'HealthBlocked'; $nSchedule = 'ScheduleBlocked'
         $nSideload = 'SideloadedBlocked'; $nExcluded = 'ExcludedByTag'
     }
     else {
-        $nSucceeded = 'SUCCEEDED'; $nSkipped = 'SKIPPED'; $nFailed = 'FAILED'
+        $nSucceeded = 'SUCCEEDED'; $nPrepared = 'PREPARED'; $nSkipped = 'SKIPPED'; $nFailed = 'FAILED'
         $nHealth   = 'HEALTH_BLOCKED'; $nSchedule = 'SCHEDULE_BLOCKED'
         $nSideload = 'SIDELOADED_BLOCKED'; $nExcluded = 'EXCLUDED_BY_TAG'
     }
@@ -159,8 +169,9 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     # the $n* variables since '& $emitCounters' is invoked from within the
     # same function.
     $emitCounters = {
-        param($s, $sk, $f, $hb, $scb, $sb, $ebt)
+        param($s, $p, $sk, $f, $hb, $scb, $sb, $ebt)
         Set-AzLocalPipelineOutput -Name $nSucceeded -Value "$s"   -CrossJob
+        Set-AzLocalPipelineOutput -Name $nPrepared  -Value "$p"   -CrossJob
         Set-AzLocalPipelineOutput -Name $nSkipped   -Value "$sk"  -CrossJob
         Set-AzLocalPipelineOutput -Name $nFailed    -Value "$f"   -CrossJob
         Set-AzLocalPipelineOutput -Name $nHealth    -Value "$hb"  -CrossJob
@@ -191,11 +202,12 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
             'AzureDevOps' { Write-Host "##vso[task.logissue type=warning]Readiness CSV reports zero clusters with ReadyForUpdate=True - nothing to apply." }
             default       { Write-Warning "Readiness CSV reports zero clusters with ReadyForUpdate=True - nothing to apply." }
         }
-        & $emitCounters 0 0 0 0 0 0 0
+        & $emitCounters 0 0 0 0 0 0 0 0
         '[]' | Out-File -FilePath $applyJsonPath -Encoding utf8 -Force -WhatIf:$false
         if ($PassThru) {
             return [pscustomobject]@{
                 Succeeded             = 0
+                Prepared              = 0
                 Skipped               = 0
                 Failed                = 0
                 HealthBlocked         = 0
@@ -237,6 +249,16 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         }
     }
 
+    if ($PrepareOnly) {
+        $applyParams['PrepareOnly'] = $true
+        Write-Host "PREPARE ONLY MODE - Update content and health checks will run, but installation will not start. UpdateStartWindow and UpdateExclusionsWindow are not evaluated."
+    }
+
+    if ($PrepareOnlyFirst) {
+        $applyParams['PrepareOnlyFirst'] = $true
+        Write-Host "PREPARE FIRST MODE - Ready updates will be prepared now; ReadyToInstall updates will install only when schedule tags permit."
+    }
+
     if ($ForceImmediateUpdate) {
         # v0.8.79 break-glass override. Surface a HIGH-VISIBILITY warning on every
         # supported pipeline host so the override is unmistakable in run logs and
@@ -253,7 +275,8 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
 
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "Applying Updates to UpdateRing: $UpdateRing" -ForegroundColor Cyan
+    $operationHeading = if ($PrepareOnly) { 'Preparing Updates for UpdateRing' } else { 'Applying Updates to UpdateRing' }
+    Write-Host "$operationHeading`: $UpdateRing" -ForegroundColor Cyan
     Write-Host "  Clusters (from readiness CSV): $($readyResourceIds.Count)" -ForegroundColor Cyan
     Write-Host "========================================" -ForegroundColor Cyan
 
@@ -263,6 +286,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     Write-Host "Update operation complete"
 
     $succeeded         = @($results | Where-Object { $_.Status -eq 'Started' -or $_.Status -eq 'Success' -or $_.Status -eq 'UpdateStarted' }).Count
+    $prepared          = @($results | Where-Object { $_.Status -in @('PreparationStarted', 'AlreadyPrepared') }).Count
     $skipped           = @($results | Where-Object { $_.Status -in @('Skipped', 'NotReady', 'NoUpdatesAvailable', 'NoReadyUpdates', 'NotFound', 'UpdateNotFound', 'NotInAllowList') }).Count
     $failed            = @($results | Where-Object { $_.Status -in @('Failed', 'Error') }).Count
     $healthBlocked     = @($results | Where-Object { $_.Status -eq 'HealthCheckBlocked' }).Count
@@ -270,7 +294,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     $sideloadedBlocked = @($results | Where-Object { $_.Status -eq 'SideloadedBlocked' }).Count
     $excludedByTag     = @($results | Where-Object { $_.Status -eq 'ExcludedByTag' }).Count
 
-    & $emitCounters $succeeded $skipped $failed $healthBlocked $scheduleBlocked $sideloadedBlocked $excludedByTag
+    & $emitCounters $succeeded $prepared $skipped $failed $healthBlocked $scheduleBlocked $sideloadedBlocked $excludedByTag
 
     # Persist per-cluster apply results to JSON for the downstream Summary step.
     $projectedResults = @($results | Select-Object ClusterName, Status, UpdateName, Duration, Message)
@@ -305,6 +329,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     if ($PassThru) {
         return [pscustomobject]@{
             Succeeded            = $succeeded
+            Prepared             = $prepared
             Skipped              = $skipped
             Failed               = $failed
             HealthBlocked        = $healthBlocked

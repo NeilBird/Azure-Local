@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.32'
+    ModuleVersion = '0.9.33'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -89,6 +89,7 @@
         'Private/Invoke-AzResourceGraphQuery.ps1',
         'Private/Invoke-AzRestJson.ps1',
         'Private/Invoke-AzLocalUpdateApply.ps1',
+        'Private/Invoke-AzLocalUpdatePrepare.ps1',
         'Private/Invoke-FleetJobsInParallel.ps1',
         'Private/Invoke-FleetOpClusterAction.ps1',
         'Private/Read-AzLocalApplyUpdatesYamlCrons.ps1',
@@ -388,6 +389,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.33 - Adds remote ARM orchestration for Azure Local 2608's existing local prepare workflow: PrepareOnly and PrepareOnlyFirst. Schedule v3 adds prepareOnlyFirst with backed-up, row-preserving migration and rollback. Preparation bypasses UpdateStartWindow but honors exclusions and UpdateExcluded. Reporting accuracy fixes included. No export change (73).
+
 ## Version 0.9.32 - Diagnostic transcripts close deterministically in finally blocks across every bundled workload, including failed runs and Apply Updates retry sessions. Empty collection JSON artifacts contain [] across connectivity, health, authentication, inventory, apply, and retry workflows. Live certification adds Config 1 inventory and JSON parsing, bounded eight-shard PowerShell job execution, and a pipeline-command coverage drift gate. No export change (73).
 
 ## Version 0.9.31 - Long-running GitHub workflows can renew expired OIDC-backed Azure CLI authentication. Large explicit fleet scopes use bounded subscription batches with exact client-side resource-ID filtering. Monitor: 3 is read-only and fails late when requested supplementary exports are incomplete, preserving available reports. The default Azure CLI subscription is clarified as authentication context, not fleet scope. No export change (73).

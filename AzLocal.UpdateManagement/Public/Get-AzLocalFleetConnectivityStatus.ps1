@@ -462,13 +462,31 @@ extensibilityresources
             @{ Rows = $clusterRows;          Name = 'fleet-cluster-connectivity' }
             @{ Rows = $arcSummary;           Name = 'fleet-arc-status-summary' }
             @{ Rows = $nonConnectedMachines; Name = 'fleet-arc-non-connected-machines' }
-            @{ Rows = $nicIssues;            Name = 'fleet-physical-nics' }
+            @{
+                Rows = $nicIssues
+                Name = 'fleet-physical-nics'
+                Columns = @(
+                    'NodeName', 'MachineId', 'ClusterName', 'ClusterId', 'MachineConnectivity',
+                    'NicName', 'NicType', 'NicStatus', 'DriverVersion', 'InterfaceDescription',
+                    'Ip4Address', 'SubnetMask', 'DefaultGateway', 'DnsServers', 'MacAddress',
+                    'ResourceGroup', 'SubscriptionId'
+                )
+            }
             @{ Rows = $nicAllRows;           Name = 'fleet-physical-nic-all' }
             @{ Rows = $nicStats;             Name = 'fleet-physical-nic-stats' }
             @{ Rows = $arbRows;              Name = 'fleet-arb-status' }
         )
         foreach ($export in $exports) {
-            $export.Rows | Export-Csv  -Path (Join-Path $ExportPath "$($export.Name).csv")  -NoTypeInformation -Force
+            $csvPath = Join-Path $ExportPath "$($export.Name).csv"
+            if ($export.Rows.Count -eq 0 -and $export.Columns) {
+                $emptyRow = [ordered]@{}
+                foreach ($column in $export.Columns) { $emptyRow[$column] = '' }
+                $csvHeader = ([pscustomobject]$emptyRow | ConvertTo-Csv -NoTypeInformation)[0]
+                $csvHeader | Set-Content -LiteralPath $csvPath -Encoding utf8 -Force
+            }
+            else {
+                $export.Rows | Export-Csv -Path $csvPath -NoTypeInformation -Force
+            }
             $jsonContent = if ($export.Rows.Count -eq 0) { '[]' } else { $export.Rows | ConvertTo-Json -Depth 20 }
             $jsonContent | Out-File -FilePath (Join-Path $ExportPath "$($export.Name).json") -Encoding utf8
         }
