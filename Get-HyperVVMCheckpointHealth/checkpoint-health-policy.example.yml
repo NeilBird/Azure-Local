@@ -1,4 +1,4 @@
-# Get-HyperVVMCheckpointHealth optional policy
+# Get-AzStackHciVMCheckpointHealth optional policy
 schemaVersion: 1
 
 storage:
