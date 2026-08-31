@@ -16,7 +16,7 @@ It is intended for experienced Hyper-V, Windows Server, and Azure Local administ
 
 > [!CAUTION]
 > Do not treat this reference as routine checkpoint maintenance or as remediation prescribed by
-> `Get-HyperVVMCheckpointHealth`. For a live customer issue, stop and open a Microsoft Support
+> `Get-AzStackHciVMCheckpointHealth`. For a live customer issue, stop and open a Microsoft Support
 > (CSS) case before changing a parent path, VM attachment, checkpoint, or virtual-disk file.
 > Preserving recoverable data is more important than returning the VM to service quickly.
 

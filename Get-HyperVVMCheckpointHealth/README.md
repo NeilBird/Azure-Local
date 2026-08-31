@@ -1,16 +1,19 @@
-# Get-HyperVVMCheckpointHealth
+# Get-AzStackHciVMCheckpointHealth
 
 > **Disclaimer:** This module is NOT a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT License](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
 ## Latest version:
 
-- Module: `Get-HyperVVMCheckpointHealth`
-- Updated: 2026-08-06
-- Version: 0.2.33
+- Module: `AzStackHci.DiagnosticSettings`
+- Updated: 2026-08-28
+- Version: 0.6.9
+- Function: `Get-AzStackHciVMCheckpointHealth`
 
 ## TL;DR
 
-An example PowerShell module providing the `Get-HyperVVMCheckpointHealth` command, which performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain, Hyper-V replication, and node event logs**. It automates the creation of a portable HTML Summary Report that highlights VMs with aged checkpoints, failing replication, and/or signals of concern that could occur during VM migration.
+The `AzStackHci.DiagnosticSettings` PowerShell module provides the `Get-AzStackHciVMCheckpointHealth` command, which performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain, Hyper-V replication, and node event logs**. It automates the creation of a portable HTML Summary Report that highlights VMs with aged checkpoints, failing replication, and/or signals of concern that could occur during VM migration.
+
+The standalone `Get-HyperVVMCheckpointHealth` module was retired after its functionality moved into `AzStackHci.DiagnosticSettings`. This legacy folder is retained so existing links continue to reach the complete documentation.
 
 This module provides insights that should be used as part of an operator investigation. It is NOT intended to troubleshoot active issues, nor does it provide a root-cause analysis (RCA). It is ONLY suitable as a tool to surface existing event data or configuration drift for VM checkpoints and/or replication issues.
 
@@ -32,7 +35,7 @@ The module is intended for Azure Local / Windows Server administrators / operato
 - [Recovery technical reference](#recovery-technical-reference)
 - [Requirements](#requirements)
 - [How it connects (no double-hop)](#how-it-connects-no-double-hop)
-- [Download and import the module](#download-and-import-the-module)
+- [Install the module](#install-the-module)
 - [Usage examples](#usage-examples)
 - [Parameters, syntax and helpful information](#parameters-syntax-and-helpful-information)
 - [What it reports](#what-it-reports)
@@ -44,8 +47,7 @@ The module is intended for Azure Local / Windows Server administrators / operato
 - [Enabling the Analytic channel](#enabling-the-analytic-channel-optional-operators-choice)
 - [Return value](#return-value)
 - [Anonymized performance observations](#anonymized-performance-observations)
-- [Release packaging](#release-packaging-maintainers)
-- [What's New](#whats-new)
+- [Historical standalone release notes](#historical-standalone-release-notes)
 - [Failure-signature reference](#failure-signature-reference)
 - [Related technical reference](#related-technical-reference)
 
@@ -60,7 +62,7 @@ The module is **read-only** with respect to the VMs, disks, checkpoints, cluster
 
 ## Recovery technical reference
 
-The separate [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) explains differencing-disk chain evidence, stop conditions, and relevant supported cmdlets for experienced administrators. It is **knowledge and informational guidance only**, not module remediation guidance or an approved customer change procedure. It is not executed or consumed by this module, is not included in the runtime release ZIP, and must not be treated as authorization to remediate a finding from the audit. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a **Microsoft Support (CSS) case before making changes**.
+The separate [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) explains differencing-disk chain evidence, stop conditions, and relevant supported cmdlets for experienced administrators. It is **knowledge and informational guidance only**, not module remediation guidance or an approved customer change procedure. It is not executed or consumed by this module and must not be treated as authorization to remediate a finding from the audit. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a **Microsoft Support (CSS) case before making changes**.
 
 ### Operational impact
 
@@ -94,28 +96,9 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
   ```
 - Rights to query the cluster, Hyper-V, and the nodes' event logs. When the VM's owning node is not the local node, WinRM to that owning node is used for a **single** hop.
 
-### Internal structure
+### Distribution
 
-Version 0.2.33 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
-
-```text
-Get-HyperVVMCheckpointHealth\
-    Get-HyperVVMCheckpointHealth.psd1   # Import-Module entry point
-    Get-HyperVVMCheckpointHealth.psm1   # exported command implementation
-    Private\
-        Get-HyperVVMCheckpointHealth.Assessment.psm1
-        Get-HyperVVMCheckpointHealth.Collection.psm1
-        Get-HyperVVMCheckpointHealth.Policy.psm1
-        Get-HyperVVMCheckpointHealth.Rendering.psm1
-        Get-HyperVVMCheckpointHealth.Storage.psm1
-    checkpoint-health-policy.example.yml
-    README.md
-    LICENSE
-```
-
-The manifest exports only `Get-HyperVVMCheckpointHealth` and declares all five private modules under `NestedModules`. The root module owns the public parameter and pipeline contract, run orchestration, retry/diagnostic services, remoting-session coordination, and artifact writes. Event policy, attribution, coverage, recovery, replication, verdict, discovery-selection, and state-comparison decisions live in the assessment module. The compact VM state collector lives in collection; optional operator policy loading and policy assessments live in policy; the self-contained HTML renderer lives in rendering; stateless VHD-chain, staleness, ownership, housekeeping, and storage-health logic lives in storage. The two cluster-wide virtual-disk inventory coordinators remain in the root because they depend on its retry, diagnostics, and pooled-session lifecycle. Import the manifest rather than the root `.psm1`; bare root-module execution is intentionally rejected.
-
-Do not download or move only the `.psm1` or `Private` files. Use the complete release ZIP so relative imports remain valid.
+The standalone source is no longer distributed from this repository. Install the complete `AzStackHci.DiagnosticSettings` 0.6.9 package from PowerShell Gallery so its manifest, command implementation, private modules, and supporting files remain together. This folder retains the detailed operator documentation, policy example, recovery reference, screenshots, and synthetic report.
 
 ## How it connects (no double-hop)
 
@@ -131,55 +114,30 @@ Two supported ways to run it, both single-hop:
 
 > **Do not** `Enter-PSSession` into a node and then run the command: if the VM is owned by a *different* node, reaching it is a **second (double) hop** and is blocked (`Access is denied` / `0x8009030e`) unless CredSSP/delegation is configured. The module detects this and tells you to run it on a node or use `-Cluster`.
 
-### Download and import the module
+### Install the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.33 release asset is `Get-HyperVVMCheckpointHealth-0.2.33.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
-
-The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). When `-ZipPath` is omitted, it looks for the versioned ZIP beside the setup script first and then in `$env:TEMP`. It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-ZipPath` to select another location, `-InstallRoot` to choose another parent directory, and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
-
-Download the ZIP, download the setup script, and run the setup script:
+Install the published module from PowerShell Gallery in **Windows PowerShell 5.1**:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.33/Get-HyperVVMCheckpointHealth-0.2.33.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.33.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.33/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Install-Module -Name AzStackHci.DiagnosticSettings `
+    -RequiredVersion 0.6.9 `
+    -Repository PSGallery `
+    -Scope CurrentUser
 ```
 
-Then run the audit separately. On a cluster node:
+Verify the package and command before running an audit:
 
 ```powershell
+Get-Module -ListAvailable AzStackHci.DiagnosticSettings |
+    Where-Object Version -eq ([version]'0.6.9') |
+    Select-Object Name, Version, Path
 
-# One VM, also writing a per-VM .txt report and events .csv into a folder
-Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
-
-# Audit all VMs:
-Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-Command Get-AzStackHciVMCheckpointHealth -Syntax
 ```
 
-From a management workstation with the RSAT Failover Clustering tools installed:
-
-```powershell
-Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
-```
+The package is published at [AzStackHci.DiagnosticSettings 0.6.9 on PowerShell Gallery](https://www.powershellgallery.com/packages/AzStackHci.DiagnosticSettings/0.6.9).
 
 `-ProcessAllVMs` and `-VMName` are mutually exclusive. Use `-VMName` to audit a subset, with optional `-IncludeDiscoveredVMs` for additional VMs found through high-risk event evidence.
-
-The release tag and all three assets must exist before the `Invoke-WebRequest` example works. Until the GitHub release is published, build or clone the repository and import the local manifest directly.
-
-To install the extracted module into the current user's standard Windows PowerShell module path and import it later by name:
-
-```powershell
-$userModuleBase = Join-Path ([Environment]::GetFolderPath('MyDocuments')) `
-    'WindowsPowerShell\Modules\Get-HyperVVMCheckpointHealth'
-$versionModuleRoot = Join-Path $userModuleBase $version
-New-Item -ItemType Directory -Path $versionModuleRoot -Force | Out-Null
-Copy-Item -Path (Join-Path $moduleRoot '*') -Destination $versionModuleRoot -Recurse -Force
-
-Import-Module Get-HyperVVMCheckpointHealth -RequiredVersion $version -Force
-Get-Module Get-HyperVVMCheckpointHealth | Select-Object Name, Version, Path
-```
-
-Install it separately for each operator account that runs the audit, or place the same versioned module directory under an organization-managed all-users module path using your normal software deployment controls.
 
 > **Names or objects:** `-VMName` accepts VM **names** *or* VM **objects** (from `Get-VM`), as an array or via the pipeline. VM objects are normalized to their `.Name` inside the command, so `-VMName $VMs`, `-VMName $VMs.Name`, and `Get-VM | ...` all work. Each VM is audited **independently** - one VM not being found (or erroring) does not stop the rest. An input that resolves to no name, or to a string >100 chars (e.g. a mistakenly joined list), is skipped with a warning.
 
@@ -187,19 +145,19 @@ Install it separately for each operator account that runs the audit, or place th
 
 ```powershell
 # Basic audit of one VM (writes the default HTML report to the current directory)
-Get-HyperVVMCheckpointHealth -VMName 'TestVM01'
+Get-AzStackHciVMCheckpointHealth -VMName 'TestVM01'
 
 # One VM, also writing a per-VM .txt report and events .csv into a folder
-Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Multiple VMs by name (array) - each gets its own .txt and .csv in the folder
-Get-HyperVVMCheckpointHealth -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Every clustered VM - ON A NODE.
-Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # A specific list of VM names (piped) - the module resolves each VM's owning node itself
-'VM01','VM02','VM03' | Get-HyperVVMCheckpointHealth -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+'VM01','VM02','VM03' | Get-AzStackHciVMCheckpointHealth -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name.
 # STEP 1 - verify the RSAT Failover Clustering tools are present on THIS workstation (see Requirements
@@ -208,42 +166,42 @@ if (Get-Module -ListAvailable FailoverClusters) { 'FailoverClusters: OK' } else 
 Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue   # should resolve; blank = tools not installed
 
 # STEP 2 - run it. -ProcessAllVMs enumerates the named cluster, so -Cluster is supplied once.
-Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Equivalent remote pipeline form (names gathered from the remote cluster, then piped in)
 Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
     Select-Object -ExpandProperty Name |
-    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+    Get-AzStackHciVMCheckpointHealth -Cluster 'CLUS01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Wider event look-back (14 days, vs the 7-day default) and a lower stale threshold (12h)
-Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -EventLookbackHours 336 -StaleHours 12
+Get-AzStackHciVMCheckpointHealth -VMName 'TestVM01' -EventLookbackHours 336 -StaleHours 12
 
 # Skip the event-log scan and the Analytic-channel check (fastest, disk/checkpoint state only)
-Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
+Get-AzStackHciVMCheckpointHealth -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
 
 # -PassThru: also emit one object per VM to the pipeline (for Where-Object / Export-Csv / roll-ups)
-$r = Get-HyperVVMCheckpointHealth -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
+$r = Get-AzStackHciVMCheckpointHealth -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
 $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 
 # HTML fleet report + results .zip are produced BY DEFAULT (into the -OutputPath run folder). The
 # console is quiet by default (one-line verdict per VM); the .txt and HTML still hold the full detail.
-Get-HyperVVMCheckpointHealth -VMName 'VM01','VM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01','VM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Full per-VM report on the console as well as the files
-Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -Quiet:$false
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -Quiet:$false
 
 # Also audit high-risk VMs DISCOVERED in the event data (uncapped unless -MaxDiscoveredVMs is supplied)
-Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -IncludeDiscoveredVMs
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -IncludeDiscoveredVMs
 
 # Audit every clustered VM EXCEPT those named in an exclusion CSV (single 'VMName' column, case-insensitive)
-Get-HyperVVMCheckpointHealth -ProcessAllVMs -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -ProcessAllVMs -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Apply an optional schema-versioned policy for image/live-mount paths, CSV free space, and HRL cadence.
 # Policy parsing is built in; no additional PowerShell module is required.
-Get-HyperVVMCheckpointHealth -VMName 'VM01' -PolicyPath '.\checkpoint-health-policy.yml' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01' -PolicyPath '.\checkpoint-health-policy.yml' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Choose the HTML location explicitly (folder or full .html path); suppress the zip and/or HTML
-Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -HtmlReportPath 'C:\Reports\audit.html' -NoZip
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -HtmlReportPath 'C:\Reports\audit.html' -NoZip
 ```
 
 ### Optional policy file
@@ -251,8 +209,8 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_R
 `checkpoint-health-policy.example.yml` is an operator template, not an automatically discovered configuration file. Downloading, extracting, renaming, or editing it does **not** change command behavior. The module reads YAML only when that exact file path is supplied with `-PolicyPath`:
 
 ```powershell
-Get-HyperVVMCheckpointHealth -VMName 'VM01' `
-    -PolicyPath 'C:\Temp\Get-HyperVVMCheckpointHealth\checkpoint-health-policy.example.yml' `
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01' `
+    -PolicyPath '.\checkpoint-health-policy.example.yml' `
     -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
@@ -284,7 +242,7 @@ storage:
 ```
 
 ```powershell
-Get-HyperVVMCheckpointHealth -VMName 'VM01' `
+Get-AzStackHciVMCheckpointHealth -VMName 'VM01' `
         -PolicyPath '.\checkpoint-health-policy.yml' `
         -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
@@ -317,14 +275,14 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 | `-OutputPath` | string | — | Optional **base folder** for reports. Each run creates a timestamped sub-folder containing per-VM `.txt` transcripts, event `.csv` files, telemetry JSON, and the default HTML report; the ZIP is written beside that folder. If omitted, no run folder, TXT, CSV, telemetry JSON, or ZIP is created, but the default HTML report is still written to the current directory unless `-NoHtml` is supplied. |
 | `-StaleHours` | int | `24` | Age (hours) at/beyond which a checkpoint or differencing disk is flagged `Stale = YES`. If your backup product legitimately keeps checkpoints for longer (e.g. a 48-hour retention window), raise this (e.g. `-StaleHours 48`) so expected long-lived checkpoints are not flagged. |
 | `-MaxReplicationAgeMinutes` | int | `60` | Absolute age guardrail. The effective age limit is the larger of this value and `FrequencySec x MaxReplicationAgeCycles`. |
-| `-MaxReplicationAgeCycles` | int | `12` | Cadence-aware age allowance, measured in relationship replication cycles. |
+| `-MaxReplicationAgeCycles` | double | `12` | Cadence-aware age allowance, measured in relationship replication cycles. |
 | `-MaxPendingReplicationMB` | long | `1024` | Absolute pending-backlog guardrail. The effective backlog limit is the larger of this value and average replication bytes x `MaxPendingReplicationCycles`. |
-| `-MaxPendingReplicationCycles` | int | `2` | Workload-relative pending-backlog allowance, measured in average replication batches. |
+| `-MaxPendingReplicationCycles` | double | `2` | Workload-relative pending-backlog allowance, measured in average replication batches. |
 | `-MaxReplicationLatencySeconds` | int | `300` | Absolute latency guardrail. The effective latency limit is the larger of this value and `FrequencySec x MaxReplicationLatencyCycles`. |
-| `-MaxReplicationLatencyCycles` | int | `2` | Cadence-aware latency allowance, measured in relationship replication cycles. |
+| `-MaxReplicationLatencyCycles` | double | `2` | Cadence-aware latency allowance, measured in relationship replication cycles. |
 | `-MaxMissedReplicationCount` | int | `0` | Absolute missed-cycle advisory threshold. A breach becomes a material concern only when the minimum count and missed-rate guardrails are also met. |
-| `-MaxMissedReplicationRatePercent` | int | `10` | Maximum missed-cycle percentage across the available Replica monitoring window. |
-| `-MinMissedReplicationCountForConcern` | int | `3` | Minimum missed count required before missed-cycle evidence becomes a material concern. An isolated miss remains advisory when product health/state is Normal. |
+| `-MaxMissedReplicationRatePercent` | double | `10` | Maximum missed-cycle percentage across the available Replica monitoring window. |
+| `-MinMissedReplicationCountForConcern` | long | `3` | Minimum missed count required before missed-cycle evidence becomes a material concern. An isolated miss remains advisory when product health/state is Normal. |
 | `-SkipWorkerEvents` | switch | off | Skip all Hyper-V Worker/VMMS event collection, including the standard lookback and targeted historic scans around orphan timestamps or old active-checkpoint creation times. |
 | `-EventLookbackHours` | int | `168` (7 days) | How far back the event scan looks (1–720). |
 | `-WorkerEventIds` | int[] | see below | Event IDs that indicate a genuine **problem** and drive the `Concern = YES` flag (node-wide match). |
@@ -333,7 +291,7 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 | `-SkipAnalyticCheck` | switch | off | Skip the per-node `Hyper-V-VMMS/Analytic` channel state check. |
 | `-PassThru` | switch | off | Emit **one `[pscustomobject]` per VM** to the pipeline (for `Where-Object` / `Export-Csv` / fleet roll-ups). Without it, **nothing** is written to the pipeline; HTML remains the primary report and `-OutputPath` also creates `.txt`/`.csv` files. See [Return value](#return-value). |
 | `-Quiet` | bool | `$true` | Console verbosity. **Quiet by default**: the full per-VM report still goes to the `.txt` and HTML, while the console shows only a concise one-line verdict per VM plus the final HTML/zip pointers. Pass `-Quiet:$false` to stream the complete per-VM report to the console too. |
-| `-HtmlReportPath` | string | — | Where to write the portable HTML fleet report. Accepts a **folder** (auto-named `VMCheckpointAudit-<Cluster>-yyyy-MM-dd.html`) or a full path ending in `.html`. Defaults to the `-OutputPath` run folder; if `-OutputPath` is omitted too, the current directory. |
+| `-HtmlReportPath` | string | — | Where to write the portable HTML fleet report. Accepts a **folder** (auto-named `VMCheckpointAudit-<Cluster>-yyyy-MM-dd.html`) or a full path ending in `.html`. Defaults to the `-OutputPath` run folder; if `-OutputPath` is omitted too, the current directory. A persistent copy is also saved under `C:\ProgramData\AzStackHci.DiagnosticSettings\Reports\VMCheckpointHealth`. |
 | `-NoHtml` | switch | off | Suppress the HTML fleet report (generated by default). |
 | `-NoZip` | switch | off | Suppress the results `.zip` bundle (created by default when `-OutputPath` is supplied). |
 | `-IncludeDiscoveredVMs` | switch | off | Also audit VMs **discovered** in the owning node's event data with a **high-risk** signal (merge interrupted/failed, sharing violation `0x80070020`, or cannot-load-config) but not in the audit list. Such VMs are **always surfaced** (console + HTML); this switch additionally audits all validated discoveries, non-recursively. |
@@ -341,8 +299,11 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 | `-ExcludedVMListCsv` | string | — | Optional path to a CSV listing VM names to **exclude** from the audit. Single column with a `VMName` header (a headerless single-column file also works). Read **once** at start; any requested / piped VM whose name matches (**case-insensitive**) is skipped **before** it is audited, and excluded VMs are **not** auto-audited via `-IncludeDiscoveredVMs` either. A relative path (e.g. `.\CheckPointAudit_Excluded_VMs.csv`, in the module folder) resolves against the current directory. There is **no** `Test-Path` parameter validation — a missing / unreadable file is a non-fatal warning (the run proceeds with no exclusions). Handy to permanently omit known-noisy or intentionally long-checkpointed VMs from a fleet run. |
 | `-PolicyPath` | string | — | Optional path to a `schemaVersion: 1` YAML policy. It can replace full-path regex lists used for image-library and backup live-mount classification, enable CSV percentage/absolute free-space thresholds, and tune cadence-aware HRL assessment. The file is loaded once before cluster collection by the built-in parser; no additional module is required. Invalid schemas, unsupported YAML, values, or regexes stop the run. Start from `checkpoint-health-policy.example.yml`. |
 | `-SkipStorageHealth` | switch | off | Skip the read-only cluster storage-health snapshot (S2D storage jobs, CSV state, virtual/physical disk health). On by default; gathered once per run. |
+| `-NoOutput` | switch | off | Suppress ordinary host report/status text. Progress, warnings, errors, report artifacts, and `-PassThru` output remain available. |
+| `-NoAutoUpdate` | switch | off | Skip the PowerShell Gallery version check, including for air-gapped or CI runs. |
+| `-AutoUpdate` | switch | off | Opt in to installing a newer PowerShell Gallery version when one is available. The default behavior checks and notifies without installing. |
 | `-AnonymizeTelemetry` | switch | off | Anonymise the internal per-step performance-telemetry JSON (v0.2.15). When set, the cluster / node / VM names in the telemetry file **and** its file name (which becomes `code_execution_perf_telemetry_anon_<stamp>.json`) are replaced with stable pseudonyms (`CLUSTER`, `NODE-01`, `VM-001`) so the timing data can be shared for performance analysis without exposing customer identifiers. Affects **only** the telemetry JSON — the `.txt` / `.csv` / `.html` are unchanged. |
-| `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = Get-HyperVVMCheckpointHealth ...`) so captured text stays readable; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
+| `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = Get-AzStackHciVMCheckpointHealth ...`) so captured text stays readable; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
 
 ## What it reports
 
@@ -411,7 +372,7 @@ By default the run produces a single **self-contained HTML fleet report** (`VMCh
 
 The source-controlled [synthetic HTML report](./examples/VMCheckpointAudit-contoso01-example.html) is generated by the current production renderer, not hand-authored HTML. It models a 10-node `contoso01` cluster with 20 VMs: 16 input VMs, 4 automatically discovered VMs, 1 active-checkpoint **HOLD STATE**, 7 **INVESTIGATE**, and 12 **OK**. Its invented findings include a confirmed historic rollback recovery case, orphaned AVHDX files, stale named checkpoints and attached layers, unhealthy Hyper-V Replica states, and review-only virtual-disk housekeeping observations. All 20 synthetic VMs have healthy VSS writers.
 
-GitHub displays repository HTML as source rather than running it. To use the interactive report, download [VMCheckpointAudit-contoso01-example.html](./examples/VMCheckpointAudit-contoso01-example.html), then open that self-contained file in a browser. Maintainers can reproduce it with [New-SyntheticExampleReport.ps1](./examples/New-SyntheticExampleReport.ps1); the generator parses `ConvertTo-VMCheckpointAuditHtml` from the module and fails if its approved synthetic identity or storage-path rules are violated.
+GitHub displays repository HTML as source rather than running it. To use the interactive report, download [VMCheckpointAudit-contoso01-example.html](./examples/VMCheckpointAudit-contoso01-example.html), then open that self-contained file in a browser.
 
 **Fleet summary and mixed verdicts**
 
@@ -520,7 +481,7 @@ wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true
 
 ## Return value
 
-By **default the command writes nothing to the pipeline**. The HTML file is the primary human-readable report; the console shows concise status, and `-OutputPath` also creates the per-VM `.txt` transcript and events `.csv`. This keeps `$x = Get-HyperVVMCheckpointHealth ...` clean.
+By **default the command writes nothing to the pipeline**. The HTML file is the primary human-readable report; the console shows concise status, and `-OutputPath` also creates the per-VM `.txt` transcript and events `.csv`. This keeps `$x = Get-AzStackHciVMCheckpointHealth ...` clean.
 
 Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** after all VM audits, run-level collection, and artifact writes complete. Every row has the same property set and references the same non-circular `RunData` snapshot:
 
@@ -552,7 +513,7 @@ Negative evidence is reassuring only when its required collection status is comp
 A row is emitted for **every** VM — including `NOT FOUND` / `ERROR` cases — so a fleet sweep always yields one object per VM:
 
 ```powershell
-$r = Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' `
+$r = Get-AzStackHciVMCheckpointHealth -Cluster 'CLUS01' `
         -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
         -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
 
@@ -565,7 +526,7 @@ $r | Export-Csv 'C:\Temp\VM_Checkpoint_Reports\fleet-summary.csv' -NoTypeInforma
 The flat top-level properties are ideal for quick `Where-Object` / `Export-Csv` roll-ups. `ReportData` contains per-VM evidence and `RunData` contains the run-level evidence that is not owned by one VM:
 
 ```powershell
-$r = Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' `
+$r = Get-AzStackHciVMCheckpointHealth -Cluster 'CLUS01' `
         -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
         -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
 
@@ -638,31 +599,9 @@ Since v0.2.23, bounded diagnostic prefetch overlaps collection across independen
 
 Applying the v0.2.23 schedule to the earlier component timings modeled opportunities of approximately 12.0 minutes for the ~20-VM run and 16.5 minutes for the ~60-VM run. Those figures are historical estimates, not measured post-change savings. Actual runtime depends on owner-node count, cluster inventory cardinality, event volume, WinRM startup, event-log service contention, CPU, storage, and VSS latency. Use the performance-telemetry JSON from representative runs in your own environment when evaluating operational impact or scheduling recurring audits; parent and child durations overlap and must not be summed.
 
-## Release packaging (maintainers)
+## Historical standalone release notes
 
-Every release from 0.2.18 onward must publish the module as a ZIP. Publishing only the root `.psm1` is unsupported because it requires the manifest and five private modules. `Build-Release.ps1` uses an explicit allow-list, validates manifest/module version parity, stages the runtime files, validates the staged manifest, and writes both a versioned ZIP and SHA256 checksum file:
-
-```powershell
-Set-Location .\Get-HyperVVMCheckpointHealth
-.\Build-Release.ps1
-```
-
-Generated assets are written to the ignored `release` directory:
-
-```text
-release\Get-HyperVVMCheckpointHealth-0.2.33.zip
-release\Get-HyperVVMCheckpointHealth-0.2.33.zip.sha256
-```
-
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.33` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
-
-1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
-2. Run the redirected Windows PowerShell 5.1 Pester suite.
-3. After every file included in the ZIP is final, run `Build-Release.ps1`; use `-Force` only when intentionally replacing a local build for the same version. Copy the resulting SHA256 into the setup script's `$expectedSha256` value. Any later change to an in-ZIP file requires rebuilding the ZIP and repinning this hash again.
-4. Extract the ZIP into a clean directory, import its manifest under Windows PowerShell 5.1, and verify `Get-Command Get-HyperVVMCheckpointHealth`.
-5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
-
-## What's New
+The following notes describe the standalone module's 0.2.x development history before the functionality moved into `AzStackHci.DiagnosticSettings`. For current releases and installation, use the [PowerShell Gallery package](https://www.powershellgallery.com/packages/AzStackHci.DiagnosticSettings/0.6.9).
 
 ### Version 0.2.33
 
@@ -701,7 +640,6 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.33` and up
 - Identifies authoritative **VM owner(s)** and **Folder-associated VM(s)** directly in placement observations, with an explicit mismatch example in the synthetic report.
 - Uses the immediate parent Storage Path as **Scope** for ownerless housekeeping findings, avoiding implied VM ownership when Azure Local VMs share a generated storage folder.
 - Keeps ownerless VHD/VHDX files classified as **Unattached base disk candidate** inside shared generated Azure Local Storage Paths; folder association alone is not a placement inconsistency.
-- Lets the standalone setup script find the versioned release ZIP beside itself before falling back to `$env:TEMP`.
 - Documents and tests `RunData.StorageHealth.CsvRedirected[].FsReason`, including the combined `IncompatibleFileSystemFilter, FileSystemReFs` evidence value.
 
 ### Version 0.2.29
