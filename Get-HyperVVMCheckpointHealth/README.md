@@ -777,7 +777,7 @@ The following notes describe the standalone module's 0.2.x development history b
 - Scoped checkpoint verdicts to events attributable to the audited VM, preventing node-wide events for other VMs from escalating a healthy VM.
 - Documented the VM state model and stopped treating bare event ID `18590` as a fork-commit signature without a confirming HRESULT.
 
-For complete historical details, see the repository history and versioned GitHub release notes. Report reproducible failures through [feedback / GitHub issues](https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback).
+For complete historical details, see the repository history. Report reproducible failures through [feedback / GitHub issues](https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback).
 
 ## Failure-signature reference
 
