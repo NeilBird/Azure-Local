@@ -142,17 +142,9 @@ function Set-AzLocalClusterTagsMerge {
             properties = [PSCustomObject]@{ tags = [PSCustomObject]$toMerge }
         }
         $mergeBody = $mergeBodyObj | ConvertTo-Json -Compress -Depth 10
-        $tempFile = [System.IO.Path]::GetTempFileName()
-        try {
-            Write-Utf8NoBomFile -Path $tempFile -Content $mergeBody
-            $patchResult = az rest --method PATCH --uri $tagsUri --body "@$tempFile" --headers "Content-Type=application/json" --only-show-errors 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                $scrubbed = ConvertTo-ScrubbedCliOutput -Text ($patchResult | Out-String).Trim()
-                throw "Set-AzLocalClusterTagsMerge: PATCH (Merge) failed for '$ClusterResourceId': $scrubbed"
-            }
-        }
-        finally {
-            if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue -WhatIf:$false }
+        $patchResponse = Invoke-AzRestJson -Uri $tagsUri -Method PATCH -Body $mergeBody -Headers @('Content-Type=application/json')
+        if (-not $patchResponse.Ok) {
+            throw "Set-AzLocalClusterTagsMerge: PATCH (Merge) failed for '$ClusterResourceId': $($patchResponse.Error)"
         }
     }
 
@@ -162,17 +154,9 @@ function Set-AzLocalClusterTagsMerge {
             properties = [PSCustomObject]@{ tags = [PSCustomObject]$toDelete }
         }
         $deleteBody = $deleteBodyObj | ConvertTo-Json -Compress -Depth 10
-        $tempFile = [System.IO.Path]::GetTempFileName()
-        try {
-            Write-Utf8NoBomFile -Path $tempFile -Content $deleteBody
-            $patchResult = az rest --method PATCH --uri $tagsUri --body "@$tempFile" --headers "Content-Type=application/json" --only-show-errors 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                $scrubbed = ConvertTo-ScrubbedCliOutput -Text ($patchResult | Out-String).Trim()
-                throw "Set-AzLocalClusterTagsMerge: PATCH (Delete) failed for '$ClusterResourceId': $scrubbed"
-            }
-        }
-        finally {
-            if (Test-Path $tempFile) { Remove-Item $tempFile -Force -ErrorAction SilentlyContinue -WhatIf:$false }
+        $patchResponse = Invoke-AzRestJson -Uri $tagsUri -Method PATCH -Body $deleteBody -Headers @('Content-Type=application/json')
+        if (-not $patchResponse.Ok) {
+            throw "Set-AzLocalClusterTagsMerge: PATCH (Delete) failed for '$ClusterResourceId': $($patchResponse.Error)"
         }
     }
 

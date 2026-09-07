@@ -5,6 +5,16 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.34] - 2026-09-07
+
+### Fixed
+
+- Config: 1 - Validate Auth and Inventory and Config: 2 - Manage UpdateRing Tags now survive expired workload-identity assertions during long fleet runs. The long-running GitHub Actions steps expose OIDC renewal metadata to the shared ARM transport, while the matching Azure DevOps `AzureCLI@2` tasks keep their Workload Identity Federation sessions active. Interrupted ARM requests are retried through the existing transport behavior instead of cascading into per-cluster access failures.
+
+### Changed
+
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.34`.
+
 ## [0.9.33] - 2026-08-20
 
 ### Added

@@ -51,6 +51,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 > **Note**: v0.8.85 consolidates the separate authentication and inventory pipelines into a single `setup-validate-and-inventory.yml` workflow.
 
+> **Behaviour change in v0.9.34 - renewable workload identity during long inventory runs**: GitHub Actions supplies the shared ARM transport with the OIDC metadata needed to obtain a fresh runner assertion and retry once after token expiry. Azure DevOps enables `AzureCLI@2` session keepalive on the inventory task, which refreshes its Workload Identity Federation login every eight minutes. The configured default subscription restores CLI context after GitHub renewal and does not narrow fleet scope.
+
 ---
 
 ## Config: 2 - Manage UpdateRing Tags
@@ -67,6 +69,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 | **RBAC** | Write to tags only. The built-in **Tag Contributor** role on the cluster scope is sufficient (`Microsoft.Resources/tags/*`). Since v0.7.65, `Set-AzLocalClusterUpdateRingTag` writes via `Microsoft.Resources/tags/default` PATCH, so the broader `Microsoft.AzureStackHCI/clusters/write` is not required. |
 | **Exit conditions** | Pipeline run is green when every CSV row is processed (added / updated / unchanged). Per-cluster tag-write failures surface in the run log; the pipeline does not currently fail on per-row errors. Re-run after triaging is safe (the cmdlet is idempotent). |
 | **ITSM** | Not supported - tag-write operation is operator-driven and idempotent; per-row failures are surfaced in the run log for direct triage rather than ticketed. |
+
+> **Behaviour change in v0.9.34 - renewable workload identity during long tag runs**: GitHub Actions supplies the shared ARM transport with the OIDC metadata needed to obtain a fresh runner assertion and retry once after token expiry. Azure DevOps enables `AzureCLI@2` session keepalive on the apply task, which refreshes its Workload Identity Federation login every eight minutes. The configured default subscription restores CLI context after GitHub renewal and does not narrow fleet scope.
 
 ---
 

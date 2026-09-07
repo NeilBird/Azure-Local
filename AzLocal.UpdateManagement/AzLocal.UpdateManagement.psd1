@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.33'
+    ModuleVersion = '0.9.34'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -389,6 +389,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.34 - Config: 1 inventory and Config: 2 tag workflows renew expired workload-identity authentication during long fleet runs on GitHub Actions and Azure DevOps. No export change (73).
+
 ## Version 0.9.33 - Adds remote ARM PrepareOnly and PrepareOnlyFirst for Azure Local 2608. Schedule v3 adds prepareOnlyFirst and allowPrepareOnlyOutsideOfUpdateStartWindow; migration preserves rows and rolls back on failure. Policy controls UpdateStartWindow bypass; exclusions and UpdateExcluded always apply. Fixes transcript reporting. Exports 73.
 
 ## Version 0.9.32 - Diagnostic transcripts close deterministically in finally blocks across every bundled workload, including failed runs and Apply Updates retry sessions. Empty collection JSON artifacts contain [] across connectivity, health, authentication, inventory, apply, and retry workflows. Live certification adds Config 1 inventory and JSON parsing, bounded eight-shard PowerShell job execution, and a pipeline-command coverage drift gate. No export change (73).
@@ -410,8 +412,6 @@
 ## Version 0.9.24 - Grouped tag admission and null-safe cloud payloads. No export change (71).
 
 ## Version 0.9.23 - Global cluster tag admission and schema migration. No export change (71).
-
-## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
 
 ## Version 0.9.21 - Monitor: 2 - Fleet Health Status: the "Cluster Counts" summary table now counts each cluster ONCE by its HIGHEST failing-check severity. The single "Unhealthy Clusters (with failing checks)" row (previously stamped with the Critical icon even when it also contained warning-only clusters) is split into a Critical row and a Warning-only row; a cluster with BOTH Critical and Warning failing checks is counted in the Critical row only. The "Other" bucket is renamed to make clear it holds clusters whose health check is In progress / Unknown with no failing detail rows. Count-table rows now use bare-glyph icons (check / cross / warning / info) so the severity word is no longer duplicated (previously rendered "Critical Critical" / "Critical Unhealthy..."). New step outputs critical_clusters + warning_only_clusters and new PassThru properties CriticalClusters + WarningOnlyClusters. Monitor: 1 - Fleet Connectivity Status: each row of the "Fleet Connectivity Status Summary" KPI table is now prefixed with a bare-glyph status indicator (green tick / red cross) for visual consistency with the other pipeline step-summary tables. No public function or export-count change (still 69). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.21'`.
 

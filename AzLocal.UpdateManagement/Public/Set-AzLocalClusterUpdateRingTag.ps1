@@ -670,36 +670,22 @@ function Set-AzLocalClusterUpdateRingTag {
                 }
                 $patchBody = $patchBodyObj | ConvertTo-Json -Compress -Depth 10
 
-                # Write body to temp file to avoid PowerShell/cmd JSON escaping issues
-                $tempFile = [System.IO.Path]::GetTempFileName()
-                try {
-                    Write-Utf8NoBomFile -Path $tempFile -Content $patchBody
+                $patchResponse = Invoke-AzRestJson -Uri $tagsUri -Method PATCH -Body $patchBody -Headers @('Content-Type=application/json')
 
-                    # Use az rest with @file syntax to avoid escaping issues
-                    $result = az rest --method PATCH --uri $tagsUri --body "@$tempFile" --headers "Content-Type=application/json" --only-show-errors 2>&1
-
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Log -Message "Successfully $($action.ToLower()) UpdateRing tag" -Level Success
-                        $status = "Success"
-                        if ($tagDeltas.Count -gt 0) {
-                            $message = "Tags $($action.ToLower()): " + ($tagDeltas -join '; ')
-                        }
-                        else {
-                            $message = "UpdateRing tag $($action.ToLower()) successfully"
-                        }
+                if ($patchResponse.Ok) {
+                    Write-Log -Message "Successfully $($action.ToLower()) UpdateRing tag" -Level Success
+                    $status = "Success"
+                    if ($tagDeltas.Count -gt 0) {
+                        $message = "Tags $($action.ToLower()): " + ($tagDeltas -join '; ')
                     }
                     else {
-                        $scrubbed = ConvertTo-ScrubbedCliOutput -Text ($result | Out-String).Trim()
-                        Write-Log -Message "Failed to apply tag: $scrubbed" -Level Error
-                        $status = "Failed"
-                        $message = "Failed to apply tag: $scrubbed"
+                        $message = "UpdateRing tag $($action.ToLower()) successfully"
                     }
                 }
-                finally {
-                    # Clean up temp file
-                    if (Test-Path $tempFile) {
-                        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue -WhatIf:$false
-                    }
+                else {
+                    Write-Log -Message "Failed to apply tag: $($patchResponse.Error)" -Level Error
+                    $status = "Failed"
+                    $message = "Failed to apply tag: $($patchResponse.Error)"
                 }
             }
             else {

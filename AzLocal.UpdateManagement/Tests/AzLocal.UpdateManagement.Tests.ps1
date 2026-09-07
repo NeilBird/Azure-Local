@@ -429,8 +429,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.33' {
-            $script:ModuleInfo.Version | Should -Be '0.9.33'
+        It 'Should have version 0.9.34' {
+            $script:ModuleInfo.Version | Should -Be '0.9.34'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -5663,12 +5663,27 @@ Describe 'Internal Helper: Repair-AzLocalAzureCliAuthentication' {
     }
 }
 
-Describe 'GitHub monitoring workflows expose OIDC renewal metadata' {
+Describe 'Tag writes use the refresh-aware ARM transport' {
+    It 'Routes every tag PATCH through Invoke-AzRestJson in <Script>' -ForEach @(
+        @{ Script = 'Public\Set-AzLocalClusterUpdateRingTag.ps1'; ExpectedPatchCalls = 1 }
+        @{ Script = 'Private\Set-AzLocalClusterTagsMerge.ps1'; ExpectedPatchCalls = 2 }
+    ) {
+        $sourcePath = Join-Path -Path $PSScriptRoot -ChildPath "..\$Script"
+        $sourceText = Get-Content -LiteralPath $sourcePath -Raw
+
+        @($sourceText | Select-String -Pattern 'Invoke-AzRestJson\s+-Uri\s+\$tagsUri\s+-Method\s+PATCH' -AllMatches).Matches.Count | Should -Be $ExpectedPatchCalls
+        $sourceText | Should -Not -Match '(?im)(?:&\s*)?az\s+rest\s+--method\s+PATCH'
+    }
+}
+
+Describe 'Long-running GitHub workflows expose OIDC renewal metadata' {
     It 'Wires renewal metadata into <Workflow>' -ForEach @(
         @{ Workflow = 'fleet-connectivity-status.yml' }
         @{ Workflow = 'fleet-health-status.yml' }
         @{ Workflow = 'fleet-update-status.yml' }
+        @{ Workflow = 'manage-updatering-tags.yml' }
         @{ Workflow = 'monitor-updates.yml' }
+        @{ Workflow = 'setup-validate-and-inventory.yml' }
     ) {
         $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\github-actions\$Workflow"
         $workflowText = Get-Content -LiteralPath $workflowPath -Raw
@@ -5678,6 +5693,19 @@ Describe 'GitHub monitoring workflows expose OIDC renewal metadata' {
         @($workflowText | Select-String -Pattern 'AZLOCAL_OIDC_SUBSCRIPTION_ID:\s*\$\{\{ vars\.AZURE_SUBSCRIPTION_ID \}\}' -AllMatches).Matches.Count | Should -Be 1
         $workflowText | Should -Match 'subscription id restores the CLI default account after login'
         $workflowText | Should -Match 'does not scope ARG queries'
+    }
+}
+
+Describe 'Long-running Azure DevOps workflows keep WIF sessions active' {
+    It 'Enables AzureCLI session renewal for <Task>' -ForEach @(
+        @{ Workflow = 'manage-updatering-tags.yml'; Task = 'Apply UpdateRing Tags' }
+        @{ Workflow = 'setup-validate-and-inventory.yml'; Task = 'Run Cluster Inventory' }
+    ) {
+        $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\azure-devops\$Workflow"
+        $workflowText = Get-Content -LiteralPath $workflowPath -Raw
+
+        @($workflowText | Select-String -Pattern 'keepAzSessionActive:\s*true' -AllMatches).Matches.Count | Should -Be 1
+        $workflowText | Should -Match "(?ms)displayName: '$([regex]::Escape($Task))'.*?keepAzSessionActive:\s*true"
     }
 }
 
@@ -5701,7 +5729,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.33'
+            $report.moduleVersion | Should -Match '^0\.9\.34'
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw

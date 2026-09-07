@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.33 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0933) `What's New in v0.9.33` section.
+> **For v0.9.34 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0934) `What's New in v0.9.34` section.
 
 ---
+
+### What's New in v0.9.34
+
+**Config: 1 inventory and Config: 2 tag management now renew expired workload-identity authentication during long fleet runs on both pipeline platforms.** Their long-running GitHub Actions steps expose the client, tenant, and default-subscription metadata required by the shared ARM transport to request a fresh runner OIDC assertion and retry the interrupted request once. Their matching Azure DevOps `AzureCLI@2` tasks enable session keepalive, refreshing Workload Identity Federation login every eight minutes. Inventory remains read-only, tag reconciliation remains idempotent, and the subscription value restores CLI context without narrowing fleet scope. No public function or export-count change (73); pipeline pins are updated to `0.9.34`. See [CHANGELOG.md](../CHANGELOG.md#0934---2026-09-07) for full details.
 
 ### What's New in v0.9.33
 
