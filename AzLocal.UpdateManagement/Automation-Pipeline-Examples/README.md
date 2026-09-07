@@ -1419,6 +1419,8 @@ Run **Config: 1 - Validate Auth and Inventory Clusters** with no parameters. It 
 - **GitHub Actions**: *Actions -> Config: 1 - Validate Auth and Inventory Clusters -> Run workflow*.
 - **Azure DevOps**: *Pipelines -> Config: 1 - Validate Auth and Inventory Clusters -> Run pipeline*.
 
+Since v0.9.34, the long inventory step keeps workload-identity authentication renewable while it scans the fleet. GitHub Actions supplies fresh OIDC login metadata to the shared ARM transport; Azure DevOps uses the `AzureCLI@2` Workload Identity Federation session keepalive. The Azure DevOps service connection for this task must use Workload Identity Federation.
+
 On GitHub Actions, use the direct **Download Inventory Artifact** link in the run summary; on Azure DevOps, open the published inventory artifact. Download `ClusterUpdateRings.csv`. It contains `SubscriptionId`, `ResourceGroup`, `SubscriptionName`, `ClusterName`, `ResourceId`, `UpdateRing`, `HasUpdateRingTag`, `UpdateStartWindow`, `UpdateExclusionsWindow` (renamed from `UpdateExclusions` in v0.7.90), `UpdateExcluded` (new in v0.7.90), and the sideloaded-workflow columns added in v0.7.1.
 
 **Initial setup:** when `config/ClusterUpdateRings.csv` does not exist yet, copy the downloaded `ClusterUpdateRings.csv` to that path, populate `UpdateRing` for every cluster you want Config: 2 to manage, review the optional managed columns, and commit it. **Steady state:** do not replace the committed desired-state file wholesale with each new live export. Review the drift report and make intentional edits to `config/ClusterUpdateRings.csv` instead.
@@ -1596,6 +1598,8 @@ Two equivalent ways to apply the edited CSV - pick whichever fits your workflow.
 1. Commit the edited CSV to your repo at `./config/ClusterUpdateRings.csv`.
 2. Run **Manage UpdateRing Tags** with its default `csv_path`, or point it at another deliberately managed CSV.
 3. Inspect the run summary - it reports added / updated / unchanged tag counts per cluster.
+
+Since v0.9.34, long Config: 2 pipeline runs keep workload-identity authentication renewable throughout the tag loop. GitHub Actions supplies fresh OIDC login metadata to the shared ARM transport; Azure DevOps uses the `AzureCLI@2` Workload Identity Federation session keepalive. The Azure DevOps service connection for this task must use Workload Identity Federation.
 
 **Option B - from PowerShell (faster for one-off changes):**
 

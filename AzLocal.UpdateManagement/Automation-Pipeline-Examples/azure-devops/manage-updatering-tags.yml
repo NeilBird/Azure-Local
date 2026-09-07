@@ -51,7 +51,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.33'
+    value: '0.9.34'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -207,6 +207,9 @@ stages:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyTags
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
               # END-AZLOCAL-CUSTOMIZE:service-connection-ApplyTags
+              # AzureCLI@2 refreshes the WIF-backed CLI session every eight
+              # minutes so long fleet runs do not hit AADSTS700024.
+              keepAzSessionActive: true
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
