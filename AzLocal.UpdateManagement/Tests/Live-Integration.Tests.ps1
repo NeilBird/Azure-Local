@@ -165,7 +165,7 @@ Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live', 'LiveFoun
         @($settings.ManagementGroups).Count | Should -Be 0
         $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
         $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
-        (Get-Content -LiteralPath $starterPath -Raw) | Should -Match '(?m)^# schemaVersion: 4\r?$'
+        (Get-Content -LiteralPath $starterPath -Raw) | Should -Match '(?m)^# schemaVersion: 5\r?$'
     }
 
     It 'Parses active reporting and ITSM settings without changing Azure scope' {
