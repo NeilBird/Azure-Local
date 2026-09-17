@@ -178,8 +178,8 @@ function Update-AzLocalPipelineExample {
 
     .PARAMETER UpgradeFleetSettingsSchema
         Retained for backward compatibility. Existing active or commented
-        config/fleet-settings.yml schema version 1, 2, or 3 files are upgraded to
-        version 4 automatically during every update. Exact original bytes are
+        config/fleet-settings.yml schema version 1, 2, 3, or 4 files are upgraded
+        to version 5 automatically during every update. Exact original bytes are
         saved as config/fleet-settings_v<old>.bak.yml. Flat schema-v2 pairs
         become named one-tag groups. Existing comments, order, and line endings
         are preserved, and top-level sections are placed in canonical v5 order.

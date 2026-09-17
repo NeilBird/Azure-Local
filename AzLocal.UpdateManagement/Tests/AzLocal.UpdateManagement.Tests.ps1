@@ -12798,6 +12798,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $parameter.ParameterType | Should -Be ([switch])
         }
 
+        It 'Documents automatic fleet-settings schema v1-v4 migration to v5' {
+            $parameterHelp = (Get-Help Update-AzLocalPipelineExample -Parameter UpgradeFleetSettingsSchema).description.Text -join ' '
+            $parameterHelp | Should -Match 'schema version 1, 2, 3, or 4 files are upgraded\s+to version 5 automatically'
+        }
+
         It 'Creates a missing starter and automatically upgrades an existing operator file' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
