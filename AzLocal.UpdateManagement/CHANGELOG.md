@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Config: 2 processes clusters in deterministic bounded waves: jobs contain at most 100 clusters, no more than the effective concurrency ceiling run together, dry runs perform only parallel GET/planning work, and approved changes use a separate bounded PATCH stage.
+- Config: 2 buffers planning and PATCH worker diagnostics and replays them through the parent in deterministic input order, preserving consolidated logs and pipeline transcripts during parallel execution.
 - Azure CLI preflight now requires version 2.78.0 or later and recommends 2.90.0 or later, with an actionable warning when an installed supported version is below the recommendation.
 - Manual Update: 3 runs on both pipeline platforms now require either the full update resource name or the explicit `latest` sentinel. Blank and numeric-only inputs fail before the apply step, while `latest` is normalized to the existing unconstrained behavior.
 - No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.35`.

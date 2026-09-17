@@ -1606,6 +1606,8 @@ Two equivalent ways to apply the edited CSV - pick whichever fits your workflow.
 
 Since v0.9.34, long Config: 2 pipeline runs keep workload-identity authentication renewable throughout the tag loop. GitHub Actions supplies fresh OIDC login metadata to the shared ARM transport; Azure DevOps uses the `AzureCLI@2` Workload Identity Federation session keepalive. The Azure DevOps service connection for this task must use Workload Identity Federation.
 
+Since v0.9.35, parallel planning and PATCH workers return their verbose and log records to the parent process, which replays them in deterministic CSV input order. The existing `pipeline-transcript.log` therefore remains consolidated and complete when Config: 2 runs more than one job concurrently.
+
 **Option B - from PowerShell (faster for one-off changes):**
 
 ```powershell

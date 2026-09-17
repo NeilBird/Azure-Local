@@ -490,6 +490,8 @@ $raw = Get-AzLocalAvailableUpdates -ClusterResourceId $cluster.id -Raw
 $raw | Where-Object { $_.properties.state -eq "Ready" }
 ```
 
+**Failure behavior:** In single-cluster mode, an unsuccessful ARM request throws an exception that retains the underlying transport error. A request failure is not reported as a successful empty update set; an empty array means ARM completed successfully and returned no available updates.
+
 ### `Get-AzLocalUpdateRuns`
 
 Gets update run history and status for one or more clusters. Returns formatted objects showing the update name, state, duration, step progress, and current/failed step.
