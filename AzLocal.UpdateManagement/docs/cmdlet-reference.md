@@ -704,6 +704,8 @@ Sets or updates the "UpdateRing" tag on Azure Local clusters for organizing upda
 - Clusters whose existing `UpdateRing` tag value differs from the target are warned and skipped unless `-Force` is specified
 - `-Force` short-circuits when all managed tags already match desired state (no wasted ARM PATCH on already-clean fleets)
 - Logs previous tag values when updating with `-Force`
+- Reconciles clusters through jobs of at most 100 items, with bounded GET/planning and PATCH stages
+- Preserves deterministic input order in returned results and CSV output even when workers finish out of order
 - Outputs results to a timestamped CSV log file; opt-in `-PassThru` returns the same rows as objects for pipeline consumption
 
 **Parameters:**
@@ -712,6 +714,7 @@ Sets or updates the "UpdateRing" tag on Azure Local clusters for organizing upda
 - `-UpdateRingValue` (Required*): Value to assign to the "UpdateRing" tag (required when using `-ClusterResourceIds`)
 - `-Force` (Optional): Overwrite existing "UpdateRing" tags (logs previous value)
 - `-LogFolderPath` (Optional): Folder path for log files. Default: `C:\ProgramData\AzLocal.UpdateManagement\`
+- `-ThrottleLimit` (Optional): Maximum concurrent jobs (`1-16`). When omitted, uses `concurrency.maxUpdateRingTagConcurrentJobs` from `fleet-settings.yml`; the built-in default is `4`. An explicit value overrides fleet settings. Use `1` for serial processing.
 - `-WhatIf` (Optional): Preview changes without applying
 
 **Output Columns (CSV Log: `UpdateRingTag_YYYYMMDD_HHmmss.csv`):**
@@ -745,6 +748,9 @@ Set-AzLocalClusterUpdateRingTag -ClusterResourceIds $resourceIds -UpdateRingValu
 
 # Preview changes without applying
 Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv" -WhatIf
+
+# Override the fleet concurrency ceiling for one run
+Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv" -ThrottleLimit 2
 
 # Force update existing tags (logs previous values)
 Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv" -Force
@@ -1257,7 +1263,7 @@ Test-AzLocalUpdateScheduleAllowed `
     -UpdateStartWindow 'Mon-Fri_22:00-02:00' `
     -TestTime ([DateTime]::UtcNow.AddHours(6))
 
-# Mirror fleet-settings schema v4 with a 20-minute early allowance only
+# Mirror fleet-settings schema v5 with a 20-minute early allowance only
 Test-AzLocalUpdateScheduleAllowed `
   -UpdateStartWindow 'Sat_02:00-06:00' `
   -AllowBeforeMinutes 20 `

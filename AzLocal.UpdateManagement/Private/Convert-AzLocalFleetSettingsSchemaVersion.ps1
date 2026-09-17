@@ -1,14 +1,16 @@
 function Convert-AzLocalFleetSettingsSchemaVersion {
     <#
     .SYNOPSIS
-        Upgrades fleet-settings.yml schema v1, v2, or v3 text to schema v4.
+        Upgrades fleet-settings.yml schema v1, v2, v3, or v4 text to schema v5.
     .DESCRIPTION
         Schema v1 receives the grouped tag-filter example. Schema v2 flat tag
         pairs are converted to named one-tag groups, preserving their OR intent.
         Schema v4 adds independent before/after allowances for UpdateStartWindow.
+        Schema v5 adds the UpdateRing tag reconciliation concurrency ceiling.
         Existing comments and line endings are preserved, while recognized
-        top-level sections are placed in the canonical v4 order: scope,
-        updateStartWindow, reporting, itsm. Schema v4 text is returned unchanged.
+        top-level sections are placed in the canonical v5 order: scope,
+        updateStartWindow, concurrency, reporting, itsm. Schema v5 text is
+        returned unchanged.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -28,7 +30,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
             return [pscustomobject]@{
                 Migrated    = $false
                 FromVersion = $null
-                ToVersion   = 4
+                ToVersion   = 5
                 NewText     = $Text
                 Reason      = 'NoSchemaDeclaration'
             }
@@ -39,30 +41,30 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
     }
 
     $currentVersion = [int]$matches[0].Groups[2].Value
-    if ($currentVersion -gt 4) {
+    if ($currentVersion -gt 5) {
         throw "Convert-AzLocalFleetSettingsSchemaVersion: '$SourcePath' uses schemaVersion $currentVersion, which is newer than this module supports."
     }
-    if ($currentVersion -eq 4) {
+    if ($currentVersion -eq 5) {
         return [pscustomobject]@{
             Migrated    = $false
-            FromVersion = 4
-            ToVersion   = 4
+            FromVersion = 5
+            ToVersion   = 5
             NewText     = $Text
             Reason      = 'Current'
         }
     }
-    if ($currentVersion -notin @(1, 2, 3)) {
+    if ($currentVersion -notin @(1, 2, 3, 4)) {
         throw "Convert-AzLocalFleetSettingsSchemaVersion: '$SourcePath' uses unsupported schemaVersion $currentVersion."
     }
 
     $match = $matches[0]
-    $replacement = $match.Groups[1].Value + '4' + $match.Groups[3].Value
+    $replacement = $match.Groups[1].Value + '5' + $match.Groups[3].Value
     $newText = $Text.Substring(0, $match.Index) + $replacement + $Text.Substring($match.Index + $match.Length)
-    $newText = [regex]::Replace($newText, '(?im)(fleet settings \(schema version )\d+(\))', '${1}4${2}')
-    $newText = [regex]::Replace($newText, '(?m)^(\s*#\s*AZLOCAL-FLEET-SETTINGS-SCHEMA-)V[123](\s*)$', '${1}V4${2}')
+    $newText = [regex]::Replace($newText, '(?im)(fleet settings \(schema version )\d+(\))', '${1}5${2}')
+    $newText = [regex]::Replace($newText, '(?m)^(\s*#\s*AZLOCAL-FLEET-SETTINGS-SCHEMA-)V[1234](\s*)$', '${1}V5${2}')
 
     $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $settingsMarker = '# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4'
+    $settingsMarker = '# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5'
     if ($currentVersion -eq 2 -and $newText -match '(?im)^\s*(?:#\s*)?clusterTagFilters\s*:') {
         $lines = [regex]::Split($newText, '\r?\n')
         $convertedLines = [System.Collections.Generic.List[string]]::new()
@@ -137,6 +139,19 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         $newText += $newline + $toleranceSettings + $newline
     }
 
+    if ($newText -notmatch '(?im)^\s*#?\s*concurrency\s*:') {
+        $concurrencySettings = @(
+            '# Optional concurrency ceiling for UpdateRing tag reconciliation.'
+            '# Accepts 1 to 16 concurrent jobs and defaults to 4.'
+            '# concurrency:'
+            '#   maxUpdateRingTagConcurrentJobs: 4'
+        ) -join $newline
+        if ($newText.Length -gt 0 -and -not $newText.EndsWith($newline)) {
+            $newText += $newline
+        }
+        $newText += $newline + $concurrencySettings + $newline
+    }
+
     # Reorder recognized top-level blocks to match fleet-settings.example.yml.
     # A contiguous documentation paragraph immediately before a heading moves
     # with that heading. A blank/comment-only separator line marks the boundary
@@ -145,7 +160,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
     $sectionLines = [regex]::Split($newText, '\r?\n')
     $sectionHeadings = [System.Collections.Generic.List[object]]::new()
     for ($lineIndex = 0; $lineIndex -lt $sectionLines.Count; $lineIndex++) {
-        if ($sectionLines[$lineIndex] -match '^(?:#\s*)?(scope|updateStartWindow|reporting|itsm)\s*:') {
+        if ($sectionLines[$lineIndex] -match '^(?:#\s*)?(scope|updateStartWindow|concurrency|reporting|itsm)\s*:') {
             [void]$sectionHeadings.Add([pscustomobject]@{
                 Name        = $Matches[1]
                 HeadingLine = $lineIndex
@@ -196,7 +211,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
             $preamble = $preamble.TrimEnd("`r", "`n")
             if ($preamble) { [void]$orderedBlocks.Add($preamble) }
         }
-        foreach ($sectionName in @('scope', 'updateStartWindow', 'reporting', 'itsm')) {
+        foreach ($sectionName in @('scope', 'updateStartWindow', 'concurrency', 'reporting', 'itsm')) {
             if ($sections.ContainsKey($sectionName)) {
                 [void]$orderedBlocks.Add(([string]$sections[$sectionName]).Trim("`r", "`n"))
             }
@@ -207,7 +222,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
     return [pscustomobject]@{
         Migrated    = $true
         FromVersion = $currentVersion
-        ToVersion   = 4
+        ToVersion   = 5
         NewText     = $newText
         Reason      = 'Upgraded'
     }

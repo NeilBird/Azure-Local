@@ -120,13 +120,20 @@ function Get-AzLocalAvailableUpdates {
     if ($PSCmdlet.ParameterSetName -eq 'SingleCluster') {
         Test-AzCliAvailable | Out-Null
         $uri = "https://management.azure.com$ClusterResourceId/updates?api-version=$ApiVersion"
+        $clusterName = ($ClusterResourceId -split '/')[-1]
         
         Write-Verbose "Getting available updates from: $uri"
         
-        $result = (Invoke-AzRestJson -Uri $uri).Data
-        if ($LASTEXITCODE -ne 0 -or -not $result.value) {
+        $response = Invoke-AzRestJson -Uri $uri
+        if (-not $response.Ok) {
+            throw "Failed to retrieve available updates for cluster '$clusterName': $($response.Error)"
+        }
+
+        $result = $response.Data
+        $hasUpdates = $result -and $result.PSObject.Properties['value'] -and @($result.value).Count -gt 0
+        if (-not $hasUpdates) {
             if (-not $Raw) {
-                Write-Log -Message "No updates returned for cluster '$(($ClusterResourceId -split '/')[-1])'." -Level Warning
+                Write-Log -Message "No updates returned for cluster '$clusterName'." -Level Warning
             }
             return @()
         }
@@ -137,7 +144,6 @@ function Get-AzLocalAvailableUpdates {
         }
 
         # Default: return enriched objects with SBE dependency info
-        $clusterName = ($ClusterResourceId -split '/')[-1]
         $rgName = ($ClusterResourceId -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
         $subId = ($ClusterResourceId -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
 

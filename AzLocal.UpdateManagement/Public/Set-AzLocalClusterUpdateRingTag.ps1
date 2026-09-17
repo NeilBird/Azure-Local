@@ -69,6 +69,12 @@ function Set-AzLocalClusterUpdateRingTag {
     .PARAMETER LogFolderPath
         Path to the folder where log files will be created. If not specified, defaults to:
         C:\ProgramData\AzLocal.UpdateManagement\
+
+    .PARAMETER ThrottleLimit
+        Maximum number of concurrent worker jobs used to process clusters.
+        When omitted, uses concurrency.maxUpdateRingTagConcurrentJobs from
+        fleet-settings.yml, which defaults to 4. Set to 1 to process clusters
+        serially. An explicit value overrides fleet settings.
     
     .PARAMETER WhatIf
         Shows what would happen if the cmdlet runs. The cmdlet is not run.
@@ -146,6 +152,10 @@ function Set-AzLocalClusterUpdateRingTag {
 
         [Parameter(Mandatory = $false)]
         [string]$LogFolderPath,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 16)]
+        [int]$ThrottleLimit,
 
         [Parameter(Mandatory = $false)]
         [switch]$PassThru
@@ -227,6 +237,7 @@ function Set-AzLocalClusterUpdateRingTag {
             
             foreach ($row in $validRows) {
                 $entry = @{
+                    InputIndex     = $clustersToTag.Count
                     ResourceId      = $row.ResourceId.Trim()
                     UpdateRingValue = $row.UpdateRing.Trim()
                 }
@@ -270,6 +281,7 @@ function Set-AzLocalClusterUpdateRingTag {
         
         foreach ($resourceId in $ClusterResourceIds) {
             $entry = @{
+                InputIndex     = $clustersToTag.Count
                 ResourceId      = $resourceId
                 UpdateRingValue = $UpdateRingValue
             }
@@ -308,8 +320,19 @@ function Set-AzLocalClusterUpdateRingTag {
         return
     }
 
+    $fleetSettings = Get-AzLocalFleetSettings
+    if (-not $PSBoundParameters.ContainsKey('ThrottleLimit')) {
+        if ($fleetSettings.PSObject.Properties['MaxUpdateRingTagConcurrentJobs']) {
+            $ThrottleLimit = [int]$fleetSettings.MaxUpdateRingTagConcurrentJobs
+        }
+        else {
+            $ThrottleLimit = 4
+        }
+    }
+
     $results = @()
 
+    if ($ThrottleLimit -le 1) {
     foreach ($clusterEntry in $clustersToTag) {
         $resourceId = $clusterEntry.ResourceId
         $currentUpdateRingValue = $clusterEntry.UpdateRingValue
@@ -429,7 +452,6 @@ function Set-AzLocalClusterUpdateRingTag {
                 continue
             }
 
-            $fleetSettings = Get-AzLocalFleetSettings
             if (-not (Test-AzLocalClusterMatchesTagFilter -Tags $clusterInfo.tags -ClusterTagFilters $fleetSettings.ClusterTagFilters)) {
                 $action = 'Skipped'
                 $status = 'GlobalFilterMismatch'
@@ -736,6 +758,210 @@ function Set-AzLocalClusterUpdateRingTag {
                 Message          = $_.Exception.Message
             }
         }
+    }
+    }
+    else {
+        $maxClustersPerJob = 100
+        $plannedJobCount = [int][Math]::Ceiling($clustersToTag.Count / [double]$maxClustersPerJob)
+        $activeJobCount = [Math]::Min($plannedJobCount, $ThrottleLimit)
+        $workerOptions = [PSCustomObject]@{
+            Force             = [bool]$Force
+            ClusterTagFilters = @($fleetSettings.ClusterTagFilters)
+            CaptureVerbose    = ($VerbosePreference -ne 'SilentlyContinue')
+        }
+
+        $planWorker = {
+            param(
+                [object[]]$Batch,
+                $Options,
+                [string]$ModulePath
+            )
+            if (-not (Get-Command -Name New-AzLocalUpdateRingTagPlan -ErrorAction SilentlyContinue)) {
+                Import-Module $ModulePath -Force -ErrorAction Stop
+            }
+            foreach ($item in $Batch) {
+                New-AzLocalUpdateRingTagPlan `
+                    -ClusterEntry $item `
+                    -ClusterTagFilters @($Options.ClusterTagFilters) `
+                    -Force ([bool]$Options.Force) `
+                    -CaptureVerbose ([bool]$Options.CaptureVerbose)
+            }
+        }
+
+        Write-Log -Message ("Planning tag reconciliation in {0} job(s), up to {1} active, maximum {2} clusters per job..." -f $plannedJobCount, $activeJobCount, $maxClustersPerJob) -Level Info
+        $planJobResults = Invoke-FleetJobsInParallel `
+            -InputItems @($clustersToTag) `
+            -ScriptBlock $planWorker `
+            -ThrottleLimit $ThrottleLimit `
+            -MaxItemsPerJob $maxClustersPerJob `
+            -ArgumentList @($workerOptions) `
+            -ActivityName 'UpdateRingTag-Plan'
+
+        $planEnvelopes = [System.Collections.Generic.List[object]]::new()
+        foreach ($jobResult in $planJobResults) {
+            if ($jobResult.Failed) {
+                foreach ($item in @($jobResult.Items)) {
+                    if ($item -is [System.Collections.IDictionary]) { $item = [PSCustomObject]$item }
+                    $itemResourceId = [string]$item.ResourceId
+                    $itemClusterName = ($itemResourceId -split '/')[-1]
+                    $itemResourceGroup = if ($itemResourceId -match '/resourceGroups/([^/]+)') { $Matches[1] } else { '' }
+                    $itemSubscriptionId = if ($itemResourceId -match '/subscriptions/([^/]+)') { $Matches[1] } else { '' }
+                    [void]$planEnvelopes.Add([PSCustomObject]@{
+                        InputIndex      = [int]$item.InputIndex
+                        ResourceId      = $itemResourceId
+                        Plan            = $null
+                        Result          = [PSCustomObject]@{
+                            ClusterName      = $itemClusterName
+                            ResourceGroup    = $itemResourceGroup
+                            SubscriptionId   = $itemSubscriptionId
+                            ResourceId       = $itemResourceId
+                            Action           = 'Error'
+                            PreviousTagValue = ''
+                            NewTagValue      = [string]$item.UpdateRingValue
+                            Status           = 'Failed'
+                            Message          = "Planning worker failed: $($jobResult.Error)"
+                        }
+                        LogEntries      = @([PSCustomObject]@{ Level = 'Error'; Message = "Planning worker failed: $($jobResult.Error)" })
+                        VerboseMessages = @()
+                    })
+                }
+            }
+            else {
+                foreach ($envelope in @($jobResult.Output)) {
+                    if ($envelope) { [void]$planEnvelopes.Add($envelope) }
+                }
+            }
+        }
+
+        $orderedPlans = @($planEnvelopes.ToArray() | Sort-Object InputIndex)
+        $resultByIndex = @{}
+        $patchPlans = [System.Collections.Generic.List[object]]::new()
+        foreach ($envelope in $orderedPlans) {
+            if ($envelope.Result) {
+                $resultByIndex[[int]$envelope.InputIndex] = $envelope.Result
+                continue
+            }
+            if (-not $envelope.Plan) {
+                continue
+            }
+
+            $plan = $envelope.Plan
+            if ($PSCmdlet.ShouldProcess([string]$plan.ResourceId, "Set UpdateRing tag to '$($plan.NewTagValue)'")) {
+                [void]$patchPlans.Add($plan)
+            }
+            else {
+                $resultByIndex[[int]$plan.InputIndex] = [PSCustomObject]@{
+                    ClusterName      = [string]$plan.ClusterName
+                    ResourceGroup    = [string]$plan.ResourceGroup
+                    SubscriptionId   = [string]$plan.SubscriptionId
+                    ResourceId       = [string]$plan.ResourceId
+                    Action           = [string]$plan.Action
+                    PreviousTagValue = [string]$plan.PreviousTagValue
+                    NewTagValue      = [string]$plan.NewTagValue
+                    Status           = 'WhatIf'
+                    Message          = [string]$plan.WhatIfMessage
+                }
+            }
+        }
+
+        $patchEnvelopeByIndex = @{}
+        if ($patchPlans.Count -gt 0) {
+            $patchWorker = {
+                param(
+                    [object[]]$Batch,
+                    [bool]$CaptureVerbose,
+                    [string]$ModulePath
+                )
+                if (-not (Get-Command -Name Invoke-AzLocalUpdateRingTagPatch -ErrorAction SilentlyContinue)) {
+                    Import-Module $ModulePath -Force -ErrorAction Stop
+                }
+                foreach ($planItem in $Batch) {
+                    Invoke-AzLocalUpdateRingTagPatch -Plan $planItem -CaptureVerbose $CaptureVerbose
+                }
+            }
+
+            Write-Log -Message "Applying $($patchPlans.Count) tag change(s) with throttle limit $ThrottleLimit..." -Level Info
+            $patchJobResults = Invoke-FleetJobsInParallel `
+                -InputItems $patchPlans.ToArray() `
+                -ScriptBlock $patchWorker `
+                -ThrottleLimit $ThrottleLimit `
+                -MaxItemsPerJob $maxClustersPerJob `
+                -ArgumentList @([bool]$workerOptions.CaptureVerbose) `
+                -ActivityName 'UpdateRingTag-Patch'
+
+            foreach ($jobResult in $patchJobResults) {
+                if ($jobResult.Failed) {
+                    foreach ($plan in @($jobResult.Items)) {
+                        $failureResult = [PSCustomObject]@{
+                            ClusterName      = [string]$plan.ClusterName
+                            ResourceGroup    = [string]$plan.ResourceGroup
+                            SubscriptionId   = [string]$plan.SubscriptionId
+                            ResourceId       = [string]$plan.ResourceId
+                            Action           = 'Error'
+                            PreviousTagValue = [string]$plan.PreviousTagValue
+                            NewTagValue      = [string]$plan.NewTagValue
+                            Status           = 'Failed'
+                            Message          = "PATCH worker failed: $($jobResult.Error)"
+                        }
+                        $patchEnvelopeByIndex[[int]$plan.InputIndex] = [PSCustomObject]@{
+                            Result          = $failureResult
+                            LogEntries      = @([PSCustomObject]@{ Level = 'Error'; Message = $failureResult.Message })
+                            VerboseMessages = @()
+                        }
+                    }
+                }
+                else {
+                    foreach ($patchEnvelope in @($jobResult.Output)) {
+                        if (-not $patchEnvelope) { continue }
+                        $patchEnvelopeByIndex[[int]$patchEnvelope.InputIndex] = $patchEnvelope
+                        $resultByIndex[[int]$patchEnvelope.InputIndex] = $patchEnvelope.Result
+                    }
+                }
+            }
+        }
+
+        $orderedResults = [System.Collections.Generic.List[object]]::new()
+        foreach ($envelope in $orderedPlans) {
+            foreach ($verboseMessage in @($envelope.VerboseMessages)) {
+                Write-Verbose ([string]$verboseMessage)
+            }
+            foreach ($logEntry in @($envelope.LogEntries)) {
+                Write-Log -Message ([string]$logEntry.Message) -Level ([string]$logEntry.Level)
+            }
+
+            $inputIndex = [int]$envelope.InputIndex
+            if ($patchEnvelopeByIndex.ContainsKey($inputIndex)) {
+                $patchEnvelope = $patchEnvelopeByIndex[$inputIndex]
+                foreach ($verboseMessage in @($patchEnvelope.VerboseMessages)) {
+                    Write-Verbose ([string]$verboseMessage)
+                }
+                foreach ($logEntry in @($patchEnvelope.LogEntries)) {
+                    Write-Log -Message ([string]$logEntry.Message) -Level ([string]$logEntry.Level)
+                }
+            }
+
+            if (-not $resultByIndex.ContainsKey($inputIndex)) {
+                $resultByIndex[$inputIndex] = [PSCustomObject]@{
+                    ClusterName      = ($envelope.ResourceId -split '/')[-1]
+                    ResourceGroup    = ''
+                    SubscriptionId   = ''
+                    ResourceId       = [string]$envelope.ResourceId
+                    Action           = 'Error'
+                    PreviousTagValue = ''
+                    NewTagValue      = ''
+                    Status           = 'Failed'
+                    Message          = 'Worker returned no result.'
+                }
+                Write-Log -Message 'Worker returned no result.' -Level Error
+            }
+
+            $result = $resultByIndex[$inputIndex]
+            [void]$orderedResults.Add($result)
+            $escapedMessage = ([string]$result.Message) -replace '"', '""'
+            $csvLine = "`"$($result.ClusterName)`",`"$($result.ResourceGroup)`",`"$($result.SubscriptionId)`",`"$($result.ResourceId)`",`"$($result.Action)`",`"$($result.PreviousTagValue)`",`"$($result.NewTagValue)`",`"$($result.Status)`",`"$escapedMessage`""
+            Add-Content -Path $csvLogPath -Value $csvLine -WhatIf:$false
+        }
+        $results = $orderedResults.ToArray()
     }
 
     # Summary

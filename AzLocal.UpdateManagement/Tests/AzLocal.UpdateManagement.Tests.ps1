@@ -27,6 +27,66 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
+Describe 'Test-AzCliAvailable version requirements' {
+    BeforeAll {
+        function global:az {
+            @(
+                "azure-cli                         $global:TestAzCliVersion"
+                "core                              $global:TestAzCliVersion"
+                'telemetry                          1.1.0'
+            )
+        }
+    }
+
+    AfterAll {
+        Remove-Item function:\az -Force -ErrorAction SilentlyContinue
+        Remove-Variable TestAzCliVersion -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'Rejects Azure CLI versions below 2.78.0' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            $global:TestAzCliVersion = '2.77.0'
+
+            { Test-AzCliAvailable } | Should -Throw '*2.78.0*'
+        }
+    }
+
+    It 'Accepts 2.78.0 and warns that 2.90.0 or later is recommended' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            $global:TestAzCliVersion = '2.78.0'
+
+            Test-AzCliAvailable | Should -BeTrue
+            Assert-MockCalled Write-Log -Times 1 -Exactly -ParameterFilter {
+                $Level -eq 'Warning' -and $Message -match '2\.90\.0'
+            }
+        }
+    }
+
+    It 'Warns for supported Azure CLI versions below 2.90.0' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            $global:TestAzCliVersion = '2.89.0'
+
+            Test-AzCliAvailable | Should -BeTrue
+            Assert-MockCalled Write-Log -Times 1 -Exactly -ParameterFilter {
+                $Level -eq 'Warning' -and $Message -match '2\.90\.0'
+            }
+        }
+    }
+
+    It 'Accepts Azure CLI 2.90.0 without a version warning' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            $global:TestAzCliVersion = '2.90.0'
+
+            Test-AzCliAvailable | Should -BeTrue
+            Assert-MockCalled Write-Log -Times 0 -Exactly -ParameterFilter { $Level -eq 'Warning' }
+        }
+    }
+}
+
 Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster tag filters' {
     BeforeEach {
         $script:fleetSettingsPath = Join-Path $env:TEMP ("fleet-settings-{0}.yml" -f [guid]::NewGuid())
@@ -51,6 +111,7 @@ Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster t
         $settings.ClusterTagFilterMode | Should -Be 'AnyGroup'
         $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
         $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
+        $settings.MaxUpdateRingTagConcurrentJobs | Should -Be 4
     }
 
     It 'Keeps defaults when the file is fully commented' {
@@ -69,6 +130,7 @@ Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster t
         $settings.MaxIncidentsPerRun | Should -Be 25
         $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
         $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
+        $settings.MaxUpdateRingTagConcurrentJobs | Should -Be 4
     }
 
     It 'Parses all supported sections and deduplicates management groups' {
@@ -113,6 +175,18 @@ updateStartWindow:
         $settings.SchemaVersion | Should -Be 4
         $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 20
         $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 15
+    }
+
+    It 'Parses the schema v5 UpdateRing tag concurrency ceiling' {
+        @'
+schemaVersion: 5
+concurrency:
+  maxUpdateRingTagConcurrentJobs: 7
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.SchemaVersion | Should -Be 5
+        $settings.MaxUpdateRingTagConcurrentJobs | Should -Be 7
     }
 
     It 'Parses schema v3 tag groups in declared order with AND-within and OR-across semantics' {
@@ -169,6 +243,9 @@ updateStartWindow:
             @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowBeforeMinutes: 61"; Expected = '*allowBeforeMinutes must be between 0 and 60*' }
             @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowAfterMinutes: -1"; Expected = '*allowAfterMinutes must be between 0 and 60*' }
             @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowAfterMinutes: 61"; Expected = '*allowAfterMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nconcurrency:`n  maxUpdateRingTagConcurrentJobs: 4"; Expected = '*concurrency settings require schemaVersion: 5*' }
+            @{ Content = "schemaVersion: 5`nconcurrency:`n  maxUpdateRingTagConcurrentJobs: 0"; Expected = '*maxUpdateRingTagConcurrentJobs must be between 1 and 16*' }
+            @{ Content = "schemaVersion: 5`nconcurrency:`n  maxUpdateRingTagConcurrentJobs: 17"; Expected = '*maxUpdateRingTagConcurrentJobs must be between 1 and 16*' }
     ) {
         param($Content, $Expected)
         Set-Content -LiteralPath $script:fleetSettingsPath -Value $Content -Encoding ASCII
@@ -429,8 +506,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.34' {
-            $script:ModuleInfo.Version | Should -Be '0.9.34'
+        It 'Should have version 0.9.35' {
+            $script:ModuleInfo.Version | Should -Be '0.9.35'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1369,6 +1446,49 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
     }
 
+    Context 'Step.6 manual update-name safeguards' {
+        BeforeAll {
+            $script:ManualUpdateGh = Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml') -Raw
+            $script:ManualUpdateAdo = Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml') -Raw
+            $script:UpdateInputLabel = "Specific full update version name to apply (type the word 'latest' to install the latest ready update)"
+        }
+
+        It 'GitHub requires an explicit update_name with no default' {
+            $updateNameBlock = [regex]::Match($script:ManualUpdateGh, '(?ms)^\s{6}update_name:\s*$.*?(?=^\s{6}[a-z_]+:\s*$)').Value
+            $updateNameBlock | Should -Match "description:\s*`"$([regex]::Escape($script:UpdateInputLabel))`""
+            $updateNameBlock | Should -Match 'required:\s*true'
+            $updateNameBlock | Should -Not -Match '(?m)^\s*default:'
+        }
+
+        It 'Azure DevOps labels updateName clearly and leaves scheduled runs unconstrained by default' {
+            $script:ManualUpdateAdo | Should -Match "name:\s*updateName[\s\S]{0,400}?displayName:\s*`"$([regex]::Escape($script:UpdateInputLabel))`"[\s\S]{0,100}?default:\s*''"
+        }
+
+        It 'GitHub rejects an empty manual update_name and a numeric-only version' {
+            $script:ManualUpdateGh | Should -Match "GITHUB_EVENT_NAME\s*-eq\s*'workflow_dispatch'[\s\S]{0,300}?IsNullOrWhiteSpace"
+            $script:ManualUpdateGh | Should -Match "full update resource name[\s\S]{0,200}?Solution12\.2608\.1003\.9"
+        }
+
+        It 'Azure DevOps rejects an empty manual updateName and a numeric-only version' {
+            $script:ManualUpdateAdo | Should -Match "BUILD_REASON\s*-eq\s*'Manual'[\s\S]{0,300}?IsNullOrWhiteSpace"
+            $script:ManualUpdateAdo | Should -Match "full update resource name[\s\S]{0,200}?Solution12\.2608\.1003\.9"
+        }
+
+        It 'Both platforms normalize latest before passing UpdateName to the module' {
+            foreach ($content in @($script:ManualUpdateGh, $script:ManualUpdateAdo)) {
+                $content | Should -Match "OrdinalIgnoreCase[\s\S]{0,150}?\`$updateName\s*=\s*''"
+                $content | Should -Match 'UpdateName\s*=\s*\$updateName'
+            }
+        }
+
+        It 'Azure DevOps passes free-text updateName through an environment variable' {
+            $applyTask = [regex]::Match($script:ManualUpdateAdo, "(?ms)^\s*- task: AzureCLI@2\s+displayName: 'Apply Updates'.*?(?=^\s*- task:|^\s*- job:|^\s*- stage:|\z)").Value
+            $applyTask | Should -Match 'UPDATE_NAME_PARAM:\s*\$\{\{\s*parameters\.updateName\s*\}\}'
+            ([regex]::Matches($script:ManualUpdateAdo, 'UPDATE_NAME_PARAM:\s*\$\{\{\s*parameters\.updateName\s*\}\}')).Count | Should -Be 1
+            $script:ManualUpdateAdo | Should -Not -Match 'UpdateName\s*=\s*"\$\{\{\s*parameters\.updateName\s*\}\}"'
+        }
+    }
+
     Context 'v0.8.79 Step.7 break-glass: force_immediate_update / forceImmediateUpdate' {
         # v0.8.79 introduces an operator-only override that bypasses the per-cluster
         # UpdateStartWindow / UpdateExclusionsWindow gate (Step 3c of Start-AzLocalClusterUpdate).
@@ -1695,6 +1815,14 @@ Describe 'Function: Start-AzLocalClusterUpdate' {
 
         It 'Should have WhatIf parameter' {
             $command.Parameters.Keys | Should -Contain 'WhatIf'
+        }
+
+        It 'Should have ThrottleLimit parameter with range validation' {
+            $param = $command.Parameters['ThrottleLimit']
+            $param | Should -Not -BeNullOrEmpty
+            $range = $param.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+            $range.MinRange | Should -Be 1
+            $range.MaxRange | Should -Be 16
         }
 
         It 'Should support ShouldProcess' {
@@ -2322,6 +2450,266 @@ Describe 'Function: Set-AzLocalClusterUpdateRingTag' {
             $script:setRingSource | Should -Match 'Format-Table[^|]+-AutoSize\s*\|\s*Out-Host'
         }
     }
+
+    Context 'Bounded parallel tag reconciliation' {
+        BeforeEach {
+            $global:_tagParallelFolder = Join-Path $env:TEMP ("tag-parallel-{0}" -f [Guid]::NewGuid())
+            New-Item -ItemType Directory -Path $global:_tagParallelFolder -Force | Out-Null
+            $global:_tagParallelCalls = @()
+            function global:az {
+                $global:LASTEXITCODE = 0
+                [PSCustomObject]@{ id = 'sub-1' }
+            }
+        }
+
+        AfterEach {
+            Remove-Item function:\az -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $global:_tagParallelFolder) {
+                Remove-Item -LiteralPath $global:_tagParallelFolder -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Variable _tagParallelFolder, _tagParallelCalls -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Returns results and CSV rows in input order when workers complete out of order' {
+            $ids = @(
+                '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha',
+                '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/beta',
+                '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/gamma'
+            )
+            $global:_tagParallelIds = $ids
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Get-AzLocalFleetSettings { [PSCustomObject]@{ ClusterTagFilters = @(); MaxUpdateRingTagConcurrentJobs = 9 } }
+                Mock Invoke-FleetJobsInParallel {
+                    $global:_tagParallelCalls += [PSCustomObject]@{ Activity = $ActivityName; Throttle = $ThrottleLimit }
+                    if ($ActivityName -eq 'UpdateRingTag-Plan') {
+                        $output = foreach ($index in @(2, 0, 1)) {
+                            $resourceId = $global:_tagParallelIds[$index]
+                            $name = ($resourceId -split '/')[-1]
+                            [PSCustomObject]@{
+                                InputIndex = $index; ResourceId = $resourceId; Result = $null
+                                Plan = [PSCustomObject]@{
+                                    InputIndex = $index; ClusterName = $name; ResourceGroup = 'rg'; SubscriptionId = 'sub-1'
+                                    ResourceId = $resourceId; Action = 'Updated'; PreviousTagValue = 'Old'; NewTagValue = 'Ring1'
+                                    PatchBody = '{}'; SuccessMessage = 'updated'; WhatIfMessage = 'would update'
+                                }
+                                LogEntries = @(); VerboseMessages = @()
+                            }
+                        }
+                    }
+                    else {
+                        $output = foreach ($plan in @($InputItems | Sort-Object InputIndex -Descending)) {
+                            [PSCustomObject]@{
+                                InputIndex = $plan.InputIndex; ResourceId = $plan.ResourceId
+                                Result = [PSCustomObject]@{
+                                    ClusterName = $plan.ClusterName; ResourceGroup = $plan.ResourceGroup; SubscriptionId = $plan.SubscriptionId
+                                    ResourceId = $plan.ResourceId; Action = $plan.Action; PreviousTagValue = $plan.PreviousTagValue
+                                    NewTagValue = $plan.NewTagValue; Status = 'Success'; Message = $plan.SuccessMessage
+                                }
+                                LogEntries = @(); VerboseMessages = @()
+                            }
+                        }
+                    }
+                    [PSCustomObject]@{ BatchIndex = 0; Items = $InputItems; Failed = $false; Output = @($output); Error = $null; DurationSeconds = 0 }
+                }
+
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds $global:_tagParallelIds -UpdateRingValue Ring1 `
+                    -Force -ThrottleLimit 4 -LogFolderPath $global:_tagParallelFolder -PassThru
+            }
+
+            @($result.ResourceId) | Should -Be $ids
+            @($result.Status | Select-Object -Unique) | Should -Be @('Success')
+            @($global:_tagParallelCalls).Count | Should -Be 2
+            @($global:_tagParallelCalls.Throttle | Select-Object -Unique) | Should -Be @(4)
+            $csv = @(Import-Csv -LiteralPath (Get-ChildItem -LiteralPath $global:_tagParallelFolder -Filter 'UpdateRingTag_*.csv').FullName)
+            @($csv.ResourceId) | Should -Be $ids
+            Remove-Variable _tagParallelIds -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Uses the fleet concurrency ceiling when ThrottleLimit is omitted' {
+            $global:_tagParallelId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Get-AzLocalFleetSettings { [PSCustomObject]@{ ClusterTagFilters = @(); MaxUpdateRingTagConcurrentJobs = 6 } }
+                Mock Invoke-FleetJobsInParallel {
+                    $global:_tagParallelCalls += [PSCustomObject]@{ Activity = $ActivityName; Throttle = $ThrottleLimit }
+                    $row = [PSCustomObject]@{
+                        ClusterName = 'alpha'; ResourceGroup = 'rg'; SubscriptionId = 'sub-1'; ResourceId = $global:_tagParallelId
+                        Action = 'NoChange'; PreviousTagValue = 'Ring1'; NewTagValue = 'Ring1'; Status = 'AlreadyInSync'; Message = 'already in sync'
+                    }
+                    [PSCustomObject]@{
+                        BatchIndex = 0; Items = $InputItems; Failed = $false; Error = $null; DurationSeconds = 0
+                        Output = @([PSCustomObject]@{ InputIndex = 0; ResourceId = $global:_tagParallelId; Result = $row; Plan = $null; LogEntries = @(); VerboseMessages = @() })
+                    }
+                }
+
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds @($global:_tagParallelId) -UpdateRingValue Ring1 `
+                    -LogFolderPath $global:_tagParallelFolder -PassThru
+            }
+
+            $result.Status | Should -Be 'AlreadyInSync'
+            @($global:_tagParallelCalls.Throttle) | Should -Be @(6)
+            Remove-Variable _tagParallelId -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Does not dispatch PATCH work for WhatIf plans' {
+            $global:_tagParallelId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Get-AzLocalFleetSettings { [PSCustomObject]@{ ClusterTagFilters = @() } }
+                Mock Invoke-FleetJobsInParallel {
+                    $global:_tagParallelCalls += $ActivityName
+                    if ($ActivityName -ne 'UpdateRingTag-Plan') { throw 'PATCH dispatch must not run under WhatIf.' }
+                    $plan = [PSCustomObject]@{
+                        InputIndex = 0; ClusterName = 'alpha'; ResourceGroup = 'rg'; SubscriptionId = 'sub-1'
+                        ResourceId = $global:_tagParallelId; Action = 'Updated'; PreviousTagValue = 'Old'; NewTagValue = 'Ring1'
+                        PatchBody = '{}'; SuccessMessage = 'updated'; WhatIfMessage = 'would update'
+                    }
+                    [PSCustomObject]@{
+                        BatchIndex = 0; Items = $InputItems; Failed = $false; Error = $null; DurationSeconds = 0
+                        Output = @([PSCustomObject]@{ InputIndex = 0; ResourceId = $global:_tagParallelId; Result = $null; Plan = $plan; LogEntries = @(); VerboseMessages = @() })
+                    }
+                }
+
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds @($global:_tagParallelId) -UpdateRingValue Ring1 `
+                    -ThrottleLimit 4 -LogFolderPath $global:_tagParallelFolder -WhatIf -PassThru
+            }
+
+            $result.Status | Should -Be 'WhatIf'
+            $result.Message | Should -Be 'would update'
+            @($global:_tagParallelCalls) | Should -Be @('UpdateRingTag-Plan')
+            Remove-Variable _tagParallelId -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Does not dispatch PATCH work for an already-in-sync plan result' {
+            $global:_tagParallelId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Get-AzLocalFleetSettings { [PSCustomObject]@{ ClusterTagFilters = @() } }
+                Mock Invoke-FleetJobsInParallel {
+                    $global:_tagParallelCalls += $ActivityName
+                    if ($ActivityName -ne 'UpdateRingTag-Plan') { throw 'PATCH dispatch must not run for no-op results.' }
+                    $row = [PSCustomObject]@{
+                        ClusterName = 'alpha'; ResourceGroup = 'rg'; SubscriptionId = 'sub-1'; ResourceId = $global:_tagParallelId
+                        Action = 'NoChange'; PreviousTagValue = 'Ring1'; NewTagValue = 'Ring1'; Status = 'AlreadyInSync'; Message = 'already in sync'
+                    }
+                    [PSCustomObject]@{
+                        BatchIndex = 0; Items = $InputItems; Failed = $false; Error = $null; DurationSeconds = 0
+                        Output = @([PSCustomObject]@{ InputIndex = 0; ResourceId = $global:_tagParallelId; Result = $row; Plan = $null; LogEntries = @(); VerboseMessages = @() })
+                    }
+                }
+
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds @($global:_tagParallelId) -UpdateRingValue Ring1 `
+                    -ThrottleLimit 4 -LogFolderPath $global:_tagParallelFolder -PassThru
+            }
+
+            $result.Status | Should -Be 'AlreadyInSync'
+            @($global:_tagParallelCalls) | Should -Be @('UpdateRingTag-Plan')
+            Remove-Variable _tagParallelId -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Converts a planning job failure into one failed result per input item' {
+            $global:_tagParallelIds = @(
+                '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha',
+                '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/beta'
+            )
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Get-AzLocalFleetSettings { [PSCustomObject]@{ ClusterTagFilters = @() } }
+                Mock Invoke-FleetJobsInParallel {
+                    [PSCustomObject]@{ BatchIndex = 0; Items = $InputItems; Failed = $true; Output = $null; Error = 'worker crashed'; DurationSeconds = 0 }
+                }
+
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds $global:_tagParallelIds -UpdateRingValue Ring1 `
+                    -ThrottleLimit 4 -LogFolderPath $global:_tagParallelFolder -PassThru
+            }
+
+            @($result).Count | Should -Be 2
+            @($result.Status | Select-Object -Unique) | Should -Be @('Failed')
+            @($result.Message | Select-Object -Unique) | Should -Be @('Planning worker failed: worker crashed')
+            Remove-Variable _tagParallelIds -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Uses the original inline loop and no job dispatcher when ThrottleLimit is 1' {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Invoke-FleetJobsInParallel { throw 'Parallel dispatcher should not be called.' }
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds @('not-a-resource-id') -UpdateRingValue Ring1 `
+                    -ThrottleLimit 1 -LogFolderPath $global:_tagParallelFolder -PassThru
+            }
+
+            $result.Status | Should -Be 'Failed'
+            $result.Message | Should -Be 'Invalid Resource ID format'
+        }
+    }
+}
+
+Describe 'Internal Helper: UpdateRing tag workers' {
+    It 'Returns an already-in-sync terminal result without a PATCH plan' {
+        $global:_tagWorkerRestCalls = 0
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzRestJson {
+                $global:_tagWorkerRestCalls++
+                [PSCustomObject]@{
+                    Ok = $true; Error = $null
+                    Data = [PSCustomObject]@{ name = 'alpha'; type = 'Microsoft.AzureStackHCI/clusters'; tags = [PSCustomObject]@{ UpdateRing = 'Ring1'; UpdateExcluded = 'False' } }
+                }
+            }
+            Mock Test-AzLocalClusterMatchesTagFilter { $true }
+            $entry = [PSCustomObject]@{
+                InputIndex = 0; ResourceId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'; UpdateRingValue = 'Ring1'
+            }
+            New-AzLocalUpdateRingTagPlan -ClusterEntry $entry
+        }
+
+        $result.Result.Status | Should -Be 'AlreadyInSync'
+        $result.Plan | Should -BeNullOrEmpty
+        $global:_tagWorkerRestCalls | Should -Be 1
+        Remove-Variable _tagWorkerRestCalls -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'Builds a PATCH plan containing only managed desired tags' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzRestJson {
+                [PSCustomObject]@{
+                    Ok = $true; Error = $null
+                    Data = [PSCustomObject]@{ name = 'alpha'; type = 'Microsoft.AzureStackHCI/clusters'; tags = [PSCustomObject]@{ UpdateRing = 'Old'; Unmanaged = 'Keep' } }
+                }
+            }
+            Mock Test-AzLocalClusterMatchesTagFilter { $true }
+            $entry = [PSCustomObject]@{
+                InputIndex = 3; ResourceId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                UpdateRingValue = 'Ring1'; UpdateStartWindowValue = 'Mon_22:00-23:00'
+            }
+            New-AzLocalUpdateRingTagPlan -ClusterEntry $entry -Force $true
+        }
+
+        $result.Result | Should -BeNullOrEmpty
+        $result.Plan.InputIndex | Should -Be 3
+        $body = $result.Plan.PatchBody | ConvertFrom-Json
+        $body.operation | Should -Be 'Merge'
+        $body.properties.tags.UpdateRing | Should -Be 'Ring1'
+        $body.properties.tags.UpdateStartWindow | Should -Be 'Mon_22:00-23:00'
+        $body.properties.tags.UpdateExcluded | Should -Be 'False'
+        $body.properties.tags.PSObject.Properties.Name | Should -Not -Contain 'Unmanaged'
+    }
+
+    It 'Returns a failed result when the PATCH response fails' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzRestJson { [PSCustomObject]@{ Ok = $false; Data = $null; Error = 'HTTP 429' } }
+            $plan = [PSCustomObject]@{
+                InputIndex = 1; ClusterName = 'alpha'; ResourceGroup = 'rg'; SubscriptionId = 'sub-1'
+                ResourceId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                Action = 'Updated'; PreviousTagValue = 'Old'; NewTagValue = 'Ring1'; PatchBody = '{}'
+                SuccessMessage = 'updated'; WhatIfMessage = 'would update'
+            }
+            Invoke-AzLocalUpdateRingTagPatch -Plan $plan
+        }
+
+        $result.InputIndex | Should -Be 1
+        $result.Result.Status | Should -Be 'Failed'
+        $result.Result.Message | Should -Match 'HTTP 429'
+    }
 }
 
 Describe 'Function: Get-AzLocalClusterInfo' {
@@ -2449,6 +2837,49 @@ Describe 'Function: Get-AzLocalAvailableUpdates' {
             $command.ParameterSets.Name | Should -Contain 'ByName'
             $command.ParameterSets.Name | Should -Contain 'ByResourceId'
             $command.ParameterSets.Name | Should -Contain 'ByTag'
+        }
+    }
+
+    Context 'Single-cluster REST response handling' {
+        It 'Throws the Azure REST error instead of reporting no updates' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable { $true }
+                Mock Invoke-AzRestJson {
+                    [pscustomobject]@{
+                        Ok    = $false
+                        Data  = $null
+                        Error = "Subscription 'sub-1234' not found."
+                    }
+                }
+                Mock Write-Log {}
+
+                { Get-AzLocalAvailableUpdates -ClusterResourceId '/subscriptions/sub-1234/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster01' } |
+                    Should -Throw "*Subscription 'sub-1234' not found*"
+                Assert-MockCalled Write-Log -Times 0 -Exactly -ParameterFilter {
+                    $Level -eq 'Warning' -and $Message -match 'No updates returned'
+                }
+            }
+        }
+
+        It 'Returns an empty array with a warning for a successful empty response' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable { $true }
+                Mock Invoke-AzRestJson {
+                    [pscustomobject]@{
+                        Ok    = $true
+                        Data  = [pscustomobject]@{ value = @() }
+                        Error = $null
+                    }
+                }
+                Mock Write-Log {}
+
+                $result = @(Get-AzLocalAvailableUpdates -ClusterResourceId '/subscriptions/sub-1234/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster01')
+
+                $result.Count | Should -Be 0
+                Assert-MockCalled Write-Log -Times 1 -Exactly -ParameterFilter {
+                    $Level -eq 'Warning' -and $Message -match 'No updates returned'
+                }
+            }
         }
     }
 }
@@ -5623,6 +6054,10 @@ Describe 'Internal Helper: Repair-AzLocalAzureCliAuthentication' {
                 function az {
                     param([Parameter(ValueFromRemainingArguments = $true)][object[]]$RemainingArgs)
                     [void]$script:AzRenewalCalls.Add(($RemainingArgs -join ' '))
+                    if ($RemainingArgs[0] -eq 'account' -and $RemainingArgs[1] -eq 'get-access-token') {
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
                     $global:LASTEXITCODE = 0
                 }
                 Mock Invoke-RestMethod { return [pscustomobject]@{ value = 'fresh-assertion' } }
@@ -5633,9 +6068,49 @@ Describe 'Internal Helper: Repair-AzLocalAzureCliAuthentication' {
                     $Uri -match 'audience=api%3A%2F%2FAzureADTokenExchange' -and
                     $Headers.Authorization -eq 'Bearer request-token'
                 }
-                $script:AzRenewalCalls | Should -HaveCount 2
-                $script:AzRenewalCalls[0] | Should -Match '^login --service-principal .*--username client-id .*--tenant tenant-id .*--federated-token fresh-assertion'
-                $script:AzRenewalCalls[1] | Should -Be 'account set --subscription subscription-id'
+                $script:AzRenewalCalls | Should -HaveCount 3
+                $script:AzRenewalCalls[0] | Should -Be 'account get-access-token --resource https://management.azure.com/ --output none --only-show-errors'
+                $script:AzRenewalCalls[1] | Should -Match '^login --service-principal .*--username client-id .*--tenant tenant-id .*--federated-token fresh-assertion'
+                $script:AzRenewalCalls[2] | Should -Be 'account set --subscription subscription-id'
+            }
+            finally {
+                foreach ($entry in $savedEnvironment.GetEnumerator()) {
+                    [Environment]::SetEnvironmentVariable([string]$entry.Key, $entry.Value, 'Process')
+                }
+            }
+        }
+    }
+
+    It 'Skips redundant OIDC login when another worker repaired the shared token cache' {
+        InModuleScope AzLocal.UpdateManagement {
+            $savedEnvironment = @{
+                GITHUB_ACTIONS                 = $env:GITHUB_ACTIONS
+                ACTIONS_ID_TOKEN_REQUEST_URL   = $env:ACTIONS_ID_TOKEN_REQUEST_URL
+                ACTIONS_ID_TOKEN_REQUEST_TOKEN = $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN
+                AZLOCAL_OIDC_CLIENT_ID         = $env:AZLOCAL_OIDC_CLIENT_ID
+                AZLOCAL_OIDC_TENANT_ID         = $env:AZLOCAL_OIDC_TENANT_ID
+                AZLOCAL_OIDC_SUBSCRIPTION_ID   = $env:AZLOCAL_OIDC_SUBSCRIPTION_ID
+            }
+            try {
+                $env:GITHUB_ACTIONS = 'true'
+                $env:ACTIONS_ID_TOKEN_REQUEST_URL = 'https://token.actions.example/oidc?api-version=1'
+                $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = 'request-token'
+                $env:AZLOCAL_OIDC_CLIENT_ID = 'client-id'
+                $env:AZLOCAL_OIDC_TENANT_ID = 'tenant-id'
+                $env:AZLOCAL_OIDC_SUBSCRIPTION_ID = 'subscription-id'
+                $script:AzRenewalCalls = [System.Collections.Generic.List[string]]::new()
+                function az {
+                    param([Parameter(ValueFromRemainingArguments = $true)][object[]]$RemainingArgs)
+                    [void]$script:AzRenewalCalls.Add(($RemainingArgs -join ' '))
+                    $global:LASTEXITCODE = 0
+                }
+                Mock Invoke-RestMethod { throw 'OIDC endpoint must not be called when the cache is already usable.' }
+
+                Repair-AzLocalAzureCliAuthentication | Should -BeTrue
+
+                $script:AzRenewalCalls | Should -HaveCount 1
+                $script:AzRenewalCalls[0] | Should -Be 'account get-access-token --resource https://management.azure.com/ --output none --only-show-errors'
+                Assert-MockCalled Invoke-RestMethod -Times 0 -Exactly
             }
             finally {
                 foreach ($entry in $savedEnvironment.GetEnumerator()) {
@@ -5729,7 +6204,7 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
-            $report.moduleVersion | Should -Match '^0\.9\.34'
+            $report.moduleVersion | Should -Be $script:ModuleVersion
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
             { [datetime]$report.startedUtc | Out-Null } | Should -Not -Throw
@@ -6379,6 +6854,23 @@ Describe 'Internal Helper: Invoke-FleetJobsInParallel' {
                 $result | Should -HaveCount 1
                 $result[0].Failed | Should -Be $true
                 $result[0].Error | Should -Match 'boom'
+            }
+        }
+
+        It 'Partitions 2200 items into 22 ordered jobs of 100 items' {
+            InModuleScope AzLocal.UpdateManagement {
+                $sb = {
+                    param([object[]]$Batch, [string]$ModPath)
+                    [PSCustomObject]@{ Count = $Batch.Count; First = $Batch[0]; Last = $Batch[-1] }
+                }
+                $result = Invoke-FleetJobsInParallel -InputItems @(1..2200) -ScriptBlock $sb `
+                    -ThrottleLimit 1 -MaxItemsPerJob 100
+
+                $result | Should -HaveCount 22
+                @($result.BatchIndex) | Should -Be @(0..21)
+                @($result | ForEach-Object { $_.Items.Count } | Select-Object -Unique) | Should -Be @(100)
+                $result[0].Output.First | Should -Be 1
+                $result[-1].Output.Last | Should -Be 2200
             }
         }
     }
@@ -10140,7 +10632,8 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             Test-Path -LiteralPath $settingsPath | Should -BeTrue
             (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
             $starterText = Get-Content -LiteralPath $settingsPath -Raw
-            $starterText | Should -Match '(?m)^# schemaVersion: 4\r?$'
+            $starterText | Should -Match '(?m)^# schemaVersion: 5\r?$'
+            $starterText | Should -Match '(?m)^#   maxUpdateRingTagConcurrentJobs: 4\r?$'
             $starterText | Should -Match '(?m)^# updateStartWindow:\r?$'
             $starterText | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
             $starterText | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
@@ -12317,7 +12810,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -12354,9 +12847,10 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 $after = [IO.File]::ReadAllText($settingsPath)
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# schemaVersion: 4\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 5\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$'
+                $after | Should -Match '(?m)^#   maxUpdateRingTagConcurrentJobs: 4\r?$'
                 $after | Should -Match '(?m)^# updateStartWindow:\r?$'
                 (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 1
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
@@ -12379,19 +12873,51 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
                 $backupPath = Join-Path (Split-Path -Parent $settingsPath) 'fleet-settings_v1.bak.yml'
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^schemaVersion: 4\r$'
+                $after | Should -Match '(?m)^schemaVersion: 5\r$'
                 $after | Should -Match '(?m)^scope:\r$'
                 $after | Should -Match '(?m)^  managementGroups:\r$'
                 $after | Should -Match '(?m)^    - group-a\r$'
                 $after | Should -Match '(?m)^# OPERATOR SENTINEL\r$'
                 $after | Should -Not -Match '(?<!\r)\n'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
                 $after | Should -Match '(?m)^#     - name: Production\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#           value: Production\r?$'
-                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$')).Count | Should -Be 1
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
+                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$')).Count | Should -Be 1
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Upgrades active schema v4 to v5 without activating the concurrency override' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-v4-upgrade-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            $backupPath = Join-Path $repoRoot 'config\fleet-settings_v4.bak.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            $before = "schemaVersion: 4`r`nupdateStartWindow:`r`n  allowBeforeMinutes: 20`r`n  allowAfterMinutes: 15`r`n# OPERATOR SENTINEL`r`n"
+            [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                $after = [IO.File]::ReadAllText($settingsPath)
+                $settings = Get-AzLocalFleetSettings -Path $settingsPath
+
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+                $settings.SchemaVersion | Should -Be 5
+                $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 20
+                $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 15
+                $settings.MaxUpdateRingTagConcurrentJobs | Should -Be 4
+                $after | Should -Match '(?m)^# concurrency:\r?$'
+                $after | Should -Match '(?m)^#   maxUpdateRingTagConcurrentJobs: 4\r?$'
+                $after | Should -Match '(?m)^# OPERATOR SENTINEL\r?$'
 
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
@@ -12426,11 +12952,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 4\)\r?$'
-                $after | Should -Match '(?m)^# schemaVersion: 4\r?$'
+                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 5\)\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 5\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#         - name: Live-Environment\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$'
                 $after | Should -Not -Match 'SCHEMA-V2'
                 @($after -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }).Count | Should -Be 0
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
@@ -12494,7 +13020,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterFleetSettings -Confirm:$false 6>$null 4>$null | Out-Null
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
             }
             finally {
@@ -12502,7 +13028,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             }
         }
 
-        It 'Upgrades jumbled active schema v3 to canonical v4 order with comments attached' {
+        It 'Upgrades jumbled active schema v3 to canonical v5 order with comments attached' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-v3-order-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
@@ -12528,7 +13054,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
                 $after | Should -Match '# Scope guidance\r?\nscope:'
                 $after | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
                 $after | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
@@ -12536,10 +13062,12 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after | Should -Match '# ITSM guidance\r?\nitsm:'
                 $scopeIndex = $after.IndexOf('scope:')
                 $windowIndex = $after.IndexOf('# updateStartWindow:')
+                $concurrencyIndex = $after.IndexOf('# concurrency:')
                 $reportingIndex = $after.IndexOf('reporting:')
                 $itsmIndex = $after.IndexOf('itsm:')
                 $scopeIndex | Should -BeLessThan $windowIndex
-                $windowIndex | Should -BeLessThan $reportingIndex
+                $windowIndex | Should -BeLessThan $concurrencyIndex
+                $concurrencyIndex | Should -BeLessThan $reportingIndex
                 $reportingIndex | Should -BeLessThan $itsmIndex
 
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
@@ -14788,6 +15316,10 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.76 ARG mv-expand 128-cap
 
     Context 'Client-side step-tree walk bypasses the ARG mv-expand cap' {
 
+        BeforeEach {
+            Mock Test-AzCliAvailable -ModuleName AzLocal.UpdateManagement { return $true }
+        }
+
         It 'Surfaces the deepest errorMessage from sibling index 150 of a 200-sibling step level (past the historical 128-row cap)' {
             InModuleScope AzLocal.UpdateManagement {
                 # Build a step tree where level 2 has 200 siblings and the
@@ -15104,6 +15636,10 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
 Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-detail columns (BS9 - BS12)' {
 
     Context 'BS9 - Detail view exposes the new Status / CurrentStep / Duration / LastUpdated / UpdateRunPortalUrl columns' {
+
+        BeforeEach {
+            Mock Test-AzCliAvailable -ModuleName AzLocal.UpdateManagement { return $true }
+        }
 
         It 'BS9: Output row exposes all new columns' {
             InModuleScope AzLocal.UpdateManagement {
@@ -18976,6 +19512,28 @@ beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clus
             $p = $global:_s2_payload.Params
             [void](Set-AzLocalClusterUpdateRingTagFromCsv @p)
             Should -Invoke Set-AzLocalClusterUpdateRingTag -Times 1 -Exactly -ParameterFilter { $Force -eq $true -and $PassThru }
+        }
+    }
+
+    It 'Propagates -ThrottleLimit to Set-AzLocalClusterUpdateRingTag' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; ThrottleLimit = 6; PassThru = $true } }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            [void](Set-AzLocalClusterUpdateRingTagFromCsv @p)
+            Should -Invoke Set-AzLocalClusterUpdateRingTag -Times 1 -Exactly -ParameterFilter { $ThrottleLimit -eq 6 -and $PassThru }
+        }
+    }
+
+    It 'Omits -ThrottleLimit so the inner cmdlet can use fleet settings' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            [void](Set-AzLocalClusterUpdateRingTagFromCsv @p)
+            Should -Invoke Set-AzLocalClusterUpdateRingTag -Times 1 -Exactly -ParameterFilter {
+                -not $PSBoundParameters.ContainsKey('ThrottleLimit') -and $PassThru
+            }
         }
     }
 

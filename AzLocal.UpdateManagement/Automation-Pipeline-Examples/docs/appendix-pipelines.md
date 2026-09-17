@@ -60,7 +60,7 @@ The table below is the ground truth for what each shipped YAML does **out of the
 | Aspect | Value |
 |---|---|
 | **Purpose** | Bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, and `UpdateExcluded` tags from a CSV. Blank optional cells preserve existing live values. An explicit `UpdateExcluded=False` clears a live exclusion; when the tag is absent both live and in the CSV, the cmdlet default-stamps `False` (v0.7.90) so the operator hard-override is discoverable in the Azure portal. |
-| **Inputs** | `csv_path` (required). |
+| **Inputs** | `csv_path` (required). Optional `config/fleet-settings.yml` schema-v5 `concurrency.maxUpdateRingTagConcurrentJobs` (`1-16`, default `4`) controls simultaneous jobs; direct cmdlet calls can override it with `-ThrottleLimit`. |
 | **Trigger** | Manual only (`workflow_dispatch` / **Run pipeline** button). No schedule shipped - this is a deliberate change-controlled operation that should follow a CSV edit + review. Add a `schedule:` / `schedules:` block if your CSV is auto-generated and you want periodic re-application. |
 | **Cmdlets invoked** | `Set-AzLocalClusterUpdateRingTag`. Pipeline guard (v0.9.12): `Assert-AzLocalAzureSubscriptionAccess` (after login). |
 | **Depends on** | Config: 1 produces `ClusterUpdateRings.csv`. During initial setup the operator copies it to `config/ClusterUpdateRings.csv`, edits managed values in a PR, and commits it. Later runs use Config: 1 drift findings to drive intentional source edits rather than replacing desired state wholesale. `HasUpdateRingTag` is ignored on import. |
@@ -71,6 +71,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 | **ITSM** | Not supported - tag-write operation is operator-driven and idempotent; per-row failures are surfaced in the run log for direct triage rather than ticketed. |
 
 > **Behaviour change in v0.9.34 - renewable workload identity during long tag runs**: GitHub Actions supplies the shared ARM transport with the OIDC metadata needed to obtain a fresh runner assertion and retry once after token expiry. Azure DevOps enables `AzureCLI@2` session keepalive on the apply task, which refreshes its Workload Identity Federation login every eight minutes. The configured default subscription restores CLI context after GitHub renewal and does not narrow fleet scope.
+
+> **Behaviour change in v0.9.35 - bounded Config: 2 concurrency**: the fleet is divided into deterministic jobs of at most 100 clusters, with up to four active jobs by default. Fleet settings schema v5 can set `concurrency.maxUpdateRingTagConcurrentJobs` from 1 to 16, and an explicit cmdlet `-ThrottleLimit` wins. Dry runs parallelize GET/planning only; apply runs submit only parent-approved changes to a separate bounded PATCH stage. Concurrent GitHub OIDC recovery is serialized so workers recheck the shared token cache before attempting another federated login.
 
 ---
 
@@ -200,7 +202,7 @@ The table below is the ground truth for what each shipped YAML does **out of the
 | Aspect | Value |
 |---|---|
 | **Purpose** | Apply updates to clusters filtered by `UpdateRing` tag value. The actual mutation step; every other pipeline in this folder is either preparation, monitoring, or reporting. |
-| **Inputs** | `update_ring` (required), `update_name` (optional - leave blank for latest), `dry_run` (optional), `throttle_limit` (optional). **v0.7.4 adds** `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create` (all optional, defaults preserve existing behaviour). |
+| **Inputs** | `update_ring` (required), `update_name` (required on manual runs: enter `latest` or a full update resource name), `dry_run` (optional), `throttle_limit` (optional). **v0.7.4 adds** `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create` (all optional, defaults preserve existing behaviour). |
 | **Trigger** | **Manual only by default** (`workflow_dispatch` / **Run pipeline** button). **No schedule is shipped** - you must add one. See the **mandatory customisation note below** and the schedule-alignment guidance in [section 8](../README.md#8-scheduling-maintenance-windows-and-change-freeze-periods). |
 | **Cmdlets invoked** | `Get-AzLocalApplyUpdatesScheduleConfig`, `Get-AzLocalClusterUpdateReadiness`, `Start-AzLocalClusterUpdate`. When ITSM is enabled: `Get-AzLocalItsmConfig`. Pipeline guard (v0.9.12): `Assert-AzLocalAzureSubscriptionAccess` (after login). |
 | **Depends on** | Config: 1 (`UpdateRing` tags present), Update: 1 (readiness reviewed for the wave). Config: 3 (schedule coverage audit) should be green so the cron(s) that start this pipeline actually fire at every tagged `UpdateStartWindow`. |
@@ -209,6 +211,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 | **RBAC** | Write to clusters required. Covered by the `Azure Stack HCI Update Operator (custom)` custom role (`Microsoft.AzureStackHCI/clusters/updates/apply/action` + cluster-update reads). |
 | **Exit conditions** | Pipeline run is green when every in-scope cluster either succeeds or is correctly classified as `ScheduleBlocked` / `SideloadedBlocked` / `ExcludedByTag` (these are skips, not failures - rendered as JUnit `<skipped>` from v0.8.78). Per-cluster update failures and `HealthCheckBlocked` outcomes surface as JUnit `<failure>` entries; long-running runs are tracked by Update: 4. |
 | **ITSM** | Supported (opt-in via `raise_itsm_ticket=true` / `raiseItsmTicket=true`). When enabled, one ServiceNow incident is raised per cluster whose update run finished with a failure state; classification skips (`ScheduleBlocked` / `SideloadedBlocked` / `ExcludedByTag`) do not generate tickets. `itsm_dry_run` builds payloads without creating tickets; `itsm_force_create` bypasses dedupe. |
+
+> **Behaviour change in v0.9.35 - explicit manual update selection**: manual runs on both platforms require either the full update resource name (for example `Solution12.2608.1003.9`) or `latest`. Blank and numeric-only values fail before the apply cmdlet is called. The `latest` sentinel is normalized to the existing unconstrained behavior; scheduled runs retain their schedule-controlled selection.
 
 > **MANDATORY CUSTOMISATION: the Apply Updates pipeline does not ship with a schedule.** The cluster `UpdateStartWindow` / `UpdateExclusionsWindow` tags **only gate updates *while the pipeline is already running***; they do **not** start the pipeline. If you (a) use `UpdateStartWindow` tags to define when updates may be installed and (b) leave the shipped `apply-updates.yml` with `workflow_dispatch` only (GH) / `trigger: none` (ADO), **no updates will ever be applied automatically** - the pipeline will simply never start during the window.
 >

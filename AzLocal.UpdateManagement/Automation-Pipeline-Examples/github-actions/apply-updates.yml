@@ -80,9 +80,8 @@ on:
         required: false
         default: ''
       update_name:
-        description: 'Specific update version to apply (leave empty for latest ready update)'
-        required: false
-        default: ''
+        description: "Specific full update version name to apply (type the word 'latest' to install the latest ready update)"
+        required: true
       update_operation:
         description: 'Update operation: Apply starts installation; PrepareOnly downloads content and runs health checks without installing. UpdateExclusionsWindow remains enforced.'
         required: false
@@ -172,7 +171,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.34'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.35'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -567,10 +566,22 @@ jobs:
             Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
         }
           try {
+          $updateName = ([string]$env:INPUT_UPDATE_NAME).Trim()
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            if ([string]::IsNullOrWhiteSpace($updateName)) {
+              throw "Manual runs require update_name. Enter the full update resource name or 'latest'."
+            }
+            if (-not [string]::Equals($updateName, 'latest', [System.StringComparison]::OrdinalIgnoreCase) -and $updateName -notmatch '^[A-Za-z]') {
+              throw "Manual update_name must be a full update resource name, for example 'Solution12.2608.1003.9', or 'latest'. Received '$updateName'."
+            }
+          }
+          if ([string]::Equals($updateName, 'latest', [System.StringComparison]::OrdinalIgnoreCase)) {
+            $updateName = ''
+          }
         $params = @{
             ReadinessCsvPath      = './artifacts/readiness-report.csv'
             UpdateRing            = $env:INPUT_UPDATE_RING
-            UpdateName            = $env:INPUT_UPDATE_NAME
+            UpdateName            = $updateName
             AllowedUpdateVersions = $env:INPUT_ALLOWED_UPDATE_VERSIONS
             OutputDirectory       = './artifacts'
         }

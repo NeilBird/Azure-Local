@@ -1492,12 +1492,12 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 
 > **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
 
-#### 6.1.2 (Optional) Configure fleet scope, update-window allowances, and reporting
+#### 6.1.2 (Optional) Configure fleet scope, update-window allowances, concurrency, and reporting
 
 Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
 
 ```yaml
-schemaVersion: 4
+schemaVersion: 5
 scope:
   managementGroups:
     - contoso-platform
@@ -1516,6 +1516,8 @@ scope:
 updateStartWindow:
   allowBeforeMinutes: 0
   allowAfterMinutes: 0
+concurrency:
+  maxUpdateRingTagConcurrentJobs: 4
 reporting:
   maxRowsPerTable: 100
   maxSummaryBytes: 900000
@@ -1527,9 +1529,10 @@ YAML indentation is part of the schema. Use spaces only (never tabs) and preserv
 
 | Level | Exact indentation | Property |
 |---|---:|---|
-| Document root | 0 spaces | `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, `itsm` |
+| Document root | 0 spaces | `schemaVersion`, `scope`, `updateStartWindow`, `concurrency`, `reporting`, `itsm` |
 | Scope property | 2 spaces | `managementGroups`, `clusterTagFilters` |
 | Update-window allowance | 2 spaces | `allowBeforeMinutes`, `allowAfterMinutes` |
+| Concurrency ceiling | 2 spaces | `maxUpdateRingTagConcurrentJobs` |
 | Management-group item | 4 spaces | `- <management-group-id>` |
 | Filter group | 4 spaces | `- name: <group-name>` |
 | Group tag collection | 6 spaces | `tags:` |
@@ -1553,9 +1556,11 @@ For `UpdateStartWindow=Sat_02:00-06:00`:
 
 The allowance controls only when the module may **start** an update attempt; it does not wait, queue, stop, or cancel an update at either boundary. The setting applies fleet-wide, including overnight windows and day-boundary crossings. Keep the values as small as operationally necessary, and leave `allowAfterMinutes` at `0` when the tagged closing time is a hard prohibition on starting new work. `UpdateExclusionsWindow` and the `UpdateExcluded` operator override remain higher-priority blocks and are not widened by these values. The manual break-glass `force_immediate_update` option still bypasses schedule tags entirely.
 
+`concurrency.maxUpdateRingTagConcurrentJobs` controls Config: 2 ARM fan-out. It accepts `1-16` and defaults to `4`; `1` selects serial processing. An explicit `Set-AzLocalClusterUpdateRingTag -ThrottleLimit` value overrides the fleet setting for that invocation. The module fixes each job at no more than 100 clusters, so this value controls simultaneous jobs rather than batch size. For example, 2,200 clusters produce 22 jobs; at the default ceiling, at most four run together across six waves. Dry runs use the same bounded GET/planning waves but do not launch PATCH jobs.
+
 At the start of each pipeline report, the shared version banner records the effective management-group IDs and grouped tag filters as a **run snapshot**. This remains attached to the historic GitHub Actions or Azure DevOps run even if `fleet-settings.yml` later changes. The install step also emits compact JSON outputs named `management_groups` and `cluster_tag_filters`; the latter preserves each group and its nested tags. When the optional file is missing, empty, fully commented, or contains no scope selectors, no fleet-scope block is rendered.
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v4 starter when the file is missing. During a normal Update, schema v1, v2, or v3 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml`, `config/fleet-settings_v2.bak.yml`, or `config/fleet-settings_v3.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs remain `OR` alternatives. The migrated top-level order matches the v4 starter: `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, `itsm`; comments associated with each section move with it. The new allowance values are added as commented defaults, so migration does not widen any window until an operator explicitly activates them. Existing values and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schemas v1, v3, and v4; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope and exact window enforcement. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v5 starter when the file is missing. During a normal Update, schema v1, v2, v3, or v4 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml`, `config/fleet-settings_v2.bak.yml`, `config/fleet-settings_v3.bak.yml`, or `config/fleet-settings_v4.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs remain `OR` alternatives. The migrated top-level order matches the v5 starter: `schemaVersion`, `scope`, `updateStartWindow`, `concurrency`, `reporting`, `itsm`; comments associated with each section move with it. New settings are added as commented defaults, so migration does not widen an update window or change the four-job default until an operator explicitly activates them. Existing values and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schemas v1, v3, v4, and v5; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope, exact window enforcement, and the four-job Config: 2 ceiling. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
 
 Management-group and grouped-tag settings govern **fleet discovery/admission**. After a pipeline has admitted explicit cluster resource IDs, large-fleet child-resource reads query only those IDs' represented subscriptions in groups of 40 and exact-filter every returned row back to the admitted ID set; they do not repeat the management-group scope on each child query. This is a transport optimization, not a scope expansion. Supplying `-SubscriptionId` explicitly overrides both configured management groups and represented-subscription derivation, so do not pass one default subscription for a fleet whose IDs span multiple subscriptions. Direct calls to `Get-AzLocalUpdateSummary`, `Get-AzLocalAvailableUpdates`, or `Get-AzLocalUpdateRuns -ClusterResourceIds` trust the caller-supplied ID list; use IDs from filtered inventory/readiness when `clusterTagFilters` must remain authoritative. Without explicit IDs or configured management groups, discovery remains implicit and is subject to the 1,000-accessible-subscription limit described above.
 
@@ -1677,7 +1682,7 @@ For each ring in turn (Wave1 -> validate -> Wave2 -> validate -> Production), ru
 | Input | Value |
 |---|---|
 | `update_ring` | The ring to target (e.g. `Wave1`). |
-| `update_name` | Leave blank to apply the latest ready update; set explicitly to pin a version. |
+| `update_name` / `updateName` | Required for manual runs. Enter `latest` to apply the latest ready update, or the full update resource name (for example, `Solution12.2608.1003.9`) to pin an update. A numeric version alone is not an update resource name. |
 | `update_operation` / `updateOperation` | Manual runs: choose `Apply` (default) or `PrepareOnly`. Scheduled runs resolve `prepareOnlyFirst` from the schema-v3 schedule instead. |
 | `allow_prepare_only_outside_of_update_start_window` / `allowPrepareOnlyOutsideOfUpdateStartWindow` | Manual runs without schedule-file resolution: `true` allows PrepareOnly before or outside `UpdateStartWindow`; `false` enforces it. Scheduled and manual-with-schedule runs resolve this policy from the schema-v3 schedule. |
 | `dry_run` | `true` for the first run of any new ring - prints the cluster list and intended actions without starting an update. |
@@ -2344,13 +2349,14 @@ Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2
 
 ### Where `-ThrottleLimit` still applies
 
-Only the **apply-side fan-out** still uses parallelism control, because applying updates is a per-cluster ARM PUT and benefits from bounded concurrency:
+Config: 2 tag reconciliation and apply-side update operations use bounded ARM fan-out:
 
 | Function | `-ThrottleLimit` exposed | Used by pipeline |
 |---|---|---|
+| `Set-AzLocalClusterUpdateRingTag` | Public `1-16`; explicit parameter overrides `concurrency.maxUpdateRingTagConcurrentJobs`, whose default is `4`. | Config: 2 Manage UpdateRing Tags. |
 | `Start-AzLocalClusterUpdate` (apply-side fleet ops) | Internal via `Invoke-FleetJobsInParallel`; no user-facing `-ThrottleLimit` parameter. | Update: 3 Apply Updates. |
 
-The apply-side parallelism is bounded internally by the module's own job-pool helper; there is no operator-facing throttle knob to tune.
+Config: 2 divides the fleet into jobs of at most 100 clusters and runs no more than the effective throttle concurrently. The dry-run path parallelizes only GET/planning work; the apply path runs approved PATCH plans in a second bounded stage. Results, logs, and CSV rows are restored to deterministic input order in the parent process. Keep the default `4` unless measured ARM throttling justifies reducing it; use an explicit cmdlet value for one-off diagnostics rather than changing the fleet setting.
 
 ### Throttling on the read side (ARG 429 / `Retry-After`)
 
@@ -2482,7 +2488,7 @@ Before sharing an artifact, review it for cluster names, Azure resource IDs, loc
 | Apply Updates reports `ExcludedByTag` for an unexpected cluster (v0.7.90) | The cluster has `UpdateExcluded = True` set as an operator hard override. | Flip `UpdateExcluded` to `False` on the cluster (Azure portal or `az tag update --operation Merge`) once the hold is lifted; re-run the pipeline. |
 | Apply Updates reports `SideloadedBlocked` | Cluster has `UpdateSideloaded=False`. | Operator must stage the sideloaded payload and flip the tag, or run `Reset-AzLocalSideloadedTag` after the next successful run. |
 | Fleet Update Status leaves a cluster's update missing from `update-runs.csv` | Pre-v0.7.2: `cp1252` warnings on `az rest` output corrupted JSON parsing. | Upgrade to v0.7.2+ (`--only-show-errors` is now passed everywhere). |
-| `429 TooManyRequests` from ARM during fleet operations | Throttle limit too high for the subscription topology. | Reduce `throttle_limit`; consider matrix-by-subscription (section 9). |
+| `429 TooManyRequests` from ARM during Config: 2 | UpdateRing tag job concurrency is too high for the subscription topology. | Reduce `concurrency.maxUpdateRingTagConcurrentJobs` in `fleet-settings.yml`, or pass a lower explicit `-ThrottleLimit` for an ad-hoc run (section 9). |
 | ITSM step always creates duplicates | `u_azlocal_dedupe_key` column was not indexed during ServiceNow setup. | Index it. See [ITSM/README.md section 3.2](../ITSM/README.md#32-add-the-five-custom-fields-on-the-incident-table). |
 
 For ITSM-specific failures, the troubleshooting matrix in [`ITSM/README.md` section 9](../ITSM/README.md#9-troubleshooting) is more specific.

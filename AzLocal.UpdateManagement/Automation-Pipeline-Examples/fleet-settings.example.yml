@@ -1,4 +1,4 @@
-# AzLocal.UpdateManagement fleet settings (schema version 4)
+# AzLocal.UpdateManagement fleet settings (schema version 5)
 #
 # This starter is intentionally fully commented. In this state, every pipeline
 # keeps the existing behavior and queries the subscriptions visible to its Azure
@@ -8,7 +8,7 @@
 # management groups are supported. The pipeline identity needs Reader access (or
 # equivalent resource read permissions) at each configured scope.
 #
-# schemaVersion: 4
+# schemaVersion: 5
 # scope:
 #   managementGroups:
 #     - contoso-platform
@@ -43,6 +43,14 @@
 # updateStartWindow:
 #   allowBeforeMinutes: 0
 #   allowAfterMinutes: 0
+#
+# Optional concurrency ceiling for UpdateRing tag reconciliation. Clusters are
+# divided into internal jobs of at most 100 clusters. This setting limits how
+# many jobs run at once. Accepts 1 to 16 and defaults to 4; use 1 for serial
+# processing. An explicit cmdlet -ThrottleLimit value overrides this setting.
+#
+# concurrency:
+#   maxUpdateRingTagConcurrentJobs: 4
 #
 # Optional pipeline-summary controls. Full CSV/JSON/JUnit artifacts are never
 # truncated by these values.

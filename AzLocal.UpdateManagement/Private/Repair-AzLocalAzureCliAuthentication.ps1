@@ -14,7 +14,35 @@ function Repair-AzLocalAzureCliAuthentication {
         return $false
     }
 
+    $repairMutex = $null
+    $mutexAcquired = $false
     try {
+        $createdNew = $false
+        $repairMutex = [System.Threading.Mutex]::new(
+            $false,
+            'AzLocal.UpdateManagement.AzureCliOidcRepair',
+            [ref]$createdNew
+        )
+        try {
+            $mutexAcquired = $repairMutex.WaitOne([TimeSpan]::FromMinutes(2))
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            $mutexAcquired = $true
+        }
+        if (-not $mutexAcquired) {
+            Write-Verbose 'Azure CLI OIDC renewal timed out waiting for another worker to finish authentication repair.'
+            return $false
+        }
+
+        $null = & az account get-access-token `
+            --resource 'https://management.azure.com/' `
+            --output none `
+            --only-show-errors 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Verbose 'Azure CLI authentication is already usable after waiting for the shared repair lock.'
+            return $true
+        }
+
         $separator = if ($env:ACTIONS_ID_TOKEN_REQUEST_URL.Contains('?')) { '&' } else { '?' }
         $requestUri = '{0}{1}audience={2}' -f $env:ACTIONS_ID_TOKEN_REQUEST_URL, $separator, [Uri]::EscapeDataString('api://AzureADTokenExchange')
         $oidcResponse = Invoke-RestMethod -Method Get -Uri $requestUri -Headers @{
@@ -48,5 +76,13 @@ function Repair-AzLocalAzureCliAuthentication {
     catch {
         Write-Verbose "Azure CLI OIDC renewal failed: $(ConvertTo-ScrubbedCliOutput -Text $_.Exception.Message)"
         return $false
+    }
+    finally {
+        if ($mutexAcquired -and $null -ne $repairMutex) {
+            $repairMutex.ReleaseMutex()
+        }
+        if ($null -ne $repairMutex) {
+            $repairMutex.Dispose()
+        }
     }
 }
