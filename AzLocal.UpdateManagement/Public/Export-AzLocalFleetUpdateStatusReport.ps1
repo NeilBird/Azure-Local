@@ -924,7 +924,7 @@ function Export-AzLocalFleetUpdateStatusReport {
             -StepNumber 27 `
             -StepName 'Query update run history' `
             -Enabled $timingEnabled `
-            -ScriptBlock { Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru -SkipSideloadedReset }
+            -ScriptBlock { Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru -SkipSideloadedReset 6>$null }
         $allRunsList = @($allRuns)
         $latestPerCluster = @($allRunsList | Group-Object ClusterName | ForEach-Object {
             @($_.Group | Sort-Object @{ Expression = 'EndTimeUtc'; Descending = $true }, @{ Expression = 'StartTime'; Descending = $true })[0]

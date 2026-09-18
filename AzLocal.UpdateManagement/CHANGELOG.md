@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Config: 2 GitHub Actions and Azure DevOps pipelines publish summaries and artifacts first, then fail the run when one or more per-cluster results have `Status='Failed'`. Missing or invalid `failed_count` output also fails closed.
 - Monitor 2 and Monitor 3 pipeline documentation now reflects that read-side fleet collection uses internal ARG batching and has no `throttle_limit` input.
+- Monitor 3 suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while retaining its CSV artifact, pass-through rows, warnings, errors, and diagnostic streams.
 - No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.36`.
 
 ### Fixed

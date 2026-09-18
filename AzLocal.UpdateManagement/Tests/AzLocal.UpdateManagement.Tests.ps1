@@ -20914,6 +20914,59 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         }
     }
 
+    It 'Suppresses update-run host output while preserving the CSV artifact and pass-through rows' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $resourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='alpha'; ResourceId=$resourceId })
+            Readiness = @([pscustomobject]@{
+                ClusterName='alpha'; ResourceGroup='rg1'; SubscriptionId='s1'; ResourceId=$resourceId
+                UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                RecommendedUpdate=''; CurrentVersion='12.2510.0.123'
+            })
+            Runs = @([pscustomobject]@{
+                ClusterName='alpha'; UpdateName='Solution12.2510.0.999'; State='Succeeded'
+                StartTime='2026-06-10 10:00'; EndTime='2026-06-10 11:00'
+                EndTimeUtc=[datetime]'2026-06-10T11:00:00Z'; RunId='run-1'; Duration='1 hour'; Progress='100%'
+            })
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+
+        $capture = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Mock Get-AzLocalUpdateRuns {
+                Write-Host 'FLEET-WIDE-RUN-DUMP-SENTINEL'
+                [System.IO.File]::WriteAllText($ExportPath, "ClusterName,State`r`nalpha,Succeeded`r`n")
+                @($global:_s8_payload.Runs)
+            }
+
+            $streamOutput = @(Export-AzLocalFleetUpdateStatusReport `
+                -OutputDirectory $global:_s8_payload.OutDir `
+                -Now $global:_s8_payload.Now `
+                -IncludeUpdateRuns $true `
+                -PassThru 6>&1)
+            $report = @($streamOutput | Where-Object { $_.PSObject.Properties['RunsCsvPath'] })[0]
+            Assert-MockCalled Get-AzLocalUpdateRuns -Times 1 -Exactly -ParameterFilter {
+                $PassThru -and $SkipSideloadedReset -and $ExportPath -like '*update-runs.csv'
+            }
+            [pscustomobject]@{ Report = $report; StreamOutput = @($streamOutput) }
+        }
+
+        (@($capture.StreamOutput | ForEach-Object { $_.ToString() }) -join "`n") | Should -Not -Match 'FLEET-WIDE-RUN-DUMP-SENTINEL'
+        Test-Path -LiteralPath $capture.Report.RunsCsvPath -PathType Leaf | Should -BeTrue
+        (Get-Content -LiteralPath $capture.Report.RunsCsvPath -Raw) | Should -Match 'alpha,Succeeded'
+        (Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw) | Should -Match 'recently_completed_48h=1'
+    }
+
     It 'UpdateFailed cluster emits a failure testcase and increments update_failed step output' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile

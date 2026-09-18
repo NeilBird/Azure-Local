@@ -14,6 +14,8 @@
 
 **Config: 2 pipeline status now reflects per-cluster failures after evidence is preserved.** GitHub Actions and Azure DevOps publish summaries and artifacts before a final `failed_count` gate fails the run, and the GitHub summary links directly to the diagnostics ZIP when upload succeeds. No public function or export-count change (73); pipeline pins are updated to `0.9.36`. See [CHANGELOG.md](../CHANGELOG.md#0936---2026-09-18) for full details.
 
+**Monitor collection costs are now visible without changing concurrency.** Monitor 1-3 append internal query and collection-stage durations to `pipeline-timings.json`. Monitor 3 also suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while preserving its CSV artifact and pass-through rows. The pipeline reference removes stale Monitor 2/3 `throttle_limit` inputs because these collectors use internal ARG batching.
+
 ### What's New in v0.9.35
 
 **Config: 2 now reconciles UpdateRing tags through deterministic bounded parallel work.** Jobs contain at most 100 clusters and no more than the effective concurrency ceiling run together. Fleet settings schema v5 adds `concurrency.maxUpdateRingTagConcurrentJobs` (`1-16`, default `4`), with an explicit `Set-AzLocalClusterUpdateRingTag -ThrottleLimit` taking precedence. Dry runs perform parallel GET/planning work only; approved changes use a separate bounded PATCH stage while parent-side `ShouldProcess` and deterministic output ordering remain intact.
