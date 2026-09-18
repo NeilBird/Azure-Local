@@ -5,6 +5,26 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.36] - 2026-09-18
+
+### Added
+
+- Config: 2 GitHub Actions summaries include a direct **Download diagnostic log ZIP** link when the diagnostics artifact was created, providing a fallback to GitHub's built-in Artifacts table.
+- Monitor 1-3 append internal query and collection-stage durations to the existing `pipeline-timings.json` artifact, exposing the expensive stages before any concurrency changes are considered.
+- Pipeline timing artifacts include non-secret source/run context and structured per-operation ARG diagnostics: query fingerprints, aggregate scope counts, row/page totals, page sizing, truncation, cooldown, and retry counters. Full KQL and subscription or management-group identifiers are not stored.
+
+### Changed
+
+- Config: 2 GitHub Actions and Azure DevOps pipelines publish summaries and artifacts first, then fail the run when one or more per-cluster results have `Status='Failed'`. Missing or invalid `failed_count` output also fails closed.
+- Monitor 2 and Monitor 3 pipeline documentation now reflects that read-side fleet collection uses internal ARG batching and has no `throttle_limit` input.
+- Monitor 3 suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while retaining its CSV artifact, pass-through rows, warnings, errors, and diagnostic streams.
+- Diagnostic ZIP documentation classifies the artifacts as support-sensitive operational data, and transcript regression coverage verifies credential-shaped ARM and ARG failures remain scrubbed.
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.36`.
+
+### Fixed
+
+- Config: 2 `Start-Job` planning and PATCH workers now invoke private tag helpers through the imported module's session state. The default parallel path no longer fails with `New-AzLocalUpdateRingTagPlan is not recognized` or the equivalent private PATCH-helper error.
+
 ## [0.9.35] - 2026-09-17
 
 ### Added

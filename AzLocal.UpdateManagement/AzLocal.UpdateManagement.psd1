@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.35'
+    ModuleVersion = '0.9.36'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -390,6 +390,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.36 - Fixes Config: 2 parallel workers calling private helpers outside module scope. Per-cluster failures now fail after evidence is published. Monitor 1-3 add internal timings; timing artifacts add non-secret run context and structured, scrubbed ARG diagnostics without KQL or scope identifiers. Monitor 3 suppresses its redundant fleet-wide host dump; stale Monitor 2/3 throttle docs are corrected. No export change (73).
+
 ## Version 0.9.35 - Config: 2 adds 100-cluster jobs, fleet schema v5 concurrency control, and serialized OIDC repair. Azure CLI version, available-update error, and manual Apply input safeguards are hardened. No export change (73).
 
 ## Version 0.9.34 - Renews expired workload-identity authentication during long Config: 1 inventory and Config: 2 tag runs. No export change (73).
@@ -422,7 +424,7 @@
 
 ## Version 0.9.18 - Follow-up strict-mode hardening after v0.9.17. A live re-run of Update: 3 - Apply Updates showed the failed-update single-retry STILL crashed on one cluster with "The property 'steps' cannot be found on this object". v0.9.17 guarded only the TOP-LEVEL progress.steps read in Format-AzLocalUpdateRun; the recursive step-tree walkers it calls (Get-DeepestActiveStep, Get-CurrentStepPath, Get-DeepestErrorMessage, Find-DeepestError) still read $step.steps/status/name/errorMessage BARE and threw under Set-StrictMode -Version Latest on a LEAF step omitting `steps`. All walker reads are now guarded; a broader strict-mode audit hardened more optional-field bare reads across Get-AzLocalUpdateSummary, Get-AzLocalAvailableUpdates, Get-AzLocalClusterUpdateReadiness, Get-AzLocalFleetStatusData, Get-AzLocalUpdateRunHealthEvidence and Get-AzLocalFleetHealthFailures. Also new: a Support disclaimer footer (new exported helper Add-AzLocalPipelineSupportFooter, wired as a final if:always() step in all 20 templates) renders at the bottom of every pipeline run summary, plus a caveat line on the install-step version banner. Export count 68 -> 69. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.18'`.
 
-## Version 0.9.17 - PSGallery install-step retry hardened to survive a PROLONGED search-index outage. After a customer hit a PSGallery blip that outlasted the v0.9.16 5-attempt / ~2.5-min window (all 5 attempts failed with "No match was found ... 'AzLocal.UpdateManagement'"), the shared install step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries up to 25 attempts (~25 min) with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap). This is ONE uniform mechanism on BOTH platforms - a single long-retry run - deliberately chosen over a self-re-queue so GitHub Actions and Azure DevOps behave identically and no extra permissions (GH 'actions: write' / ADO Queue-builds) are required. ~25 min stays under the ADO 60-min hosted-agent job cap; GitHub-hosted runners have a 6-hour cap. Normal-path behaviour is unchanged (a healthy install returns on the first attempt) and the latest module version is still installed. ALSO in this release: the Update: 3 - Apply Updates step summaries (readiness gate + apply) now open, on scheduled/cron runs, with a banner making it explicit that the targeted UpdateRing(s) are derived from the operator's own apply-updates-schedule.yml (path + current cycle day + matched rings), with the Apply banner recommending Config: 3 - Apply-Updates Schedule Coverage Audit for the full per-day cycle (new Private helper Get-AzLocalApplyScheduleSourceBanner; renders nothing on manual runs); the Apply-Updates "Cluster Readiness" table gains an UpdateRing column after Cluster (plus a matching UpdateRing field on every readiness row / readiness-report.csv); and a Set-StrictMode -Version Latest crash retrying a failed update whose ARM run omits `location` or `progress.steps` (Format-AzLocalUpdateRun, also hardened in Get-AzLocalFleetStatusData + Get-LastUpdateRunErrorSummary) is fixed with PSObject.Properties guards. No public function or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.17'`.
+
 
 For full release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md

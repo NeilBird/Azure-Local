@@ -4,9 +4,17 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.35 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0935) `What's New in v0.9.35` section.
+> **For v0.9.36 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0936) `What's New in v0.9.36` section.
 
 ---
+
+### What's New in v0.9.36
+
+**Config: 2 parallel workers now execute private planning and PATCH helpers through the imported module's session state.** This fixes the v0.9.35 default-concurrency regression where fresh `Start-Job` processes imported the root module but could not resolve `New-AzLocalUpdateRingTagPlan` or the private PATCH helper.
+
+**Config: 2 pipeline status now reflects per-cluster failures after evidence is preserved.** GitHub Actions and Azure DevOps publish summaries and artifacts before a final `failed_count` gate fails the run, and the GitHub summary links directly to the diagnostics ZIP when upload succeeds. No public function or export-count change (73); pipeline pins are updated to `0.9.36`. See [CHANGELOG.md](../CHANGELOG.md#0936---2026-09-18) for full details.
+
+**Monitor collection costs are now visible without changing concurrency.** Monitor 1-3 append internal query and collection-stage durations to `pipeline-timings.json`. The same artifact adds non-secret run context and structured per-operation ARG fingerprints, aggregate scope counts, row/page totals, page sizing, truncation, cooldown, and retry diagnostics without storing KQL or scope identifiers. Monitor 3 also suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while preserving its CSV artifact and pass-through rows. The pipeline reference removes stale Monitor 2/3 `throttle_limit` inputs because these collectors use internal ARG batching. Transcript regression coverage verifies credential-shaped ARM and ARG failures remain scrubbed.
 
 ### What's New in v0.9.35
 

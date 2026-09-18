@@ -777,7 +777,18 @@ function Set-AzLocalClusterUpdateRingTag {
                 [string]$ModulePath
             )
             if (-not (Get-Command -Name New-AzLocalUpdateRingTagPlan -ErrorAction SilentlyContinue)) {
-                Import-Module $ModulePath -Force -ErrorAction Stop
+                $workerModule = Import-Module $ModulePath -Force -PassThru -ErrorAction Stop
+                & $workerModule {
+                    param([object[]]$WorkerBatch, $WorkerOptions)
+                    foreach ($item in $WorkerBatch) {
+                        New-AzLocalUpdateRingTagPlan `
+                            -ClusterEntry $item `
+                            -ClusterTagFilters @($WorkerOptions.ClusterTagFilters) `
+                            -Force ([bool]$WorkerOptions.Force) `
+                            -CaptureVerbose ([bool]$WorkerOptions.CaptureVerbose)
+                    }
+                } $Batch $Options
+                return
             }
             foreach ($item in $Batch) {
                 New-AzLocalUpdateRingTagPlan `
@@ -873,7 +884,14 @@ function Set-AzLocalClusterUpdateRingTag {
                     [string]$ModulePath
                 )
                 if (-not (Get-Command -Name Invoke-AzLocalUpdateRingTagPatch -ErrorAction SilentlyContinue)) {
-                    Import-Module $ModulePath -Force -ErrorAction Stop
+                    $workerModule = Import-Module $ModulePath -Force -PassThru -ErrorAction Stop
+                    & $workerModule {
+                        param([object[]]$WorkerBatch, [bool]$WorkerCaptureVerbose)
+                        foreach ($planItem in $WorkerBatch) {
+                            Invoke-AzLocalUpdateRingTagPatch -Plan $planItem -CaptureVerbose $WorkerCaptureVerbose
+                        }
+                    } $Batch $CaptureVerbose
+                    return
                 }
                 foreach ($planItem in $Batch) {
                     Invoke-AzLocalUpdateRingTagPatch -Plan $planItem -CaptureVerbose $CaptureVerbose

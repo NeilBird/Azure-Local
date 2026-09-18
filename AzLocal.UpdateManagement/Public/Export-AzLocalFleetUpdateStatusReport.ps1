@@ -256,6 +256,7 @@ function Export-AzLocalFleetUpdateStatusReport {
     )
 
     $pipelineHost = Get-AzLocalPipelineHost
+    $timingEnabled = -not [string]::IsNullOrWhiteSpace([string]$env:AZLOCAL_PIPELINE_TIMING_PATH)
 
     # v0.8.81: shared status-icon map (host-aware) - replaces the inline
     # GitHub shortcodes that previously rendered as literal text on Azure
@@ -294,7 +295,12 @@ function Export-AzLocalFleetUpdateStatusReport {
 
     # ---- Step 1: cluster inventory ----------------------------------------
     Write-Host "Step 1: Getting cluster inventory..." -ForegroundColor Yellow
-    $inventory = Get-AzLocalClusterInventory -ExportPath $inventoryCsv -PassThru
+    $inventory = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-update-status' `
+        -StepNumber 21 `
+        -StepName 'Query cluster inventory' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Get-AzLocalClusterInventory -ExportPath $inventoryCsv -PassThru }
     $inventoryCount = @($inventory).Count
     Write-Host "Found $inventoryCount total cluster(s)" -ForegroundColor Green
 
@@ -371,7 +377,12 @@ function Export-AzLocalFleetUpdateStatusReport {
     else {
         $readinessParams['ClusterResourceIds'] = @($inventory | Select-Object -ExpandProperty ResourceId)
     }
-    $readiness = @(Get-AzLocalClusterUpdateReadiness @readinessParams)
+    $readiness = @(Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-update-status' `
+        -StepNumber 22 `
+        -StepName 'Query update readiness' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Get-AzLocalClusterUpdateReadiness @readinessParams })
     $totalTests = $readiness.Count
 
     # v0.8.97: map ClusterResourceId -> UpdateRing tag from inventory so the
@@ -509,7 +520,12 @@ function Export-AzLocalFleetUpdateStatusReport {
     $supportedYymms        = @()
     try {
         Write-Host "Querying $manifestUrl for the latest released Azure Local solution version..."
-        $manifestProbe = Get-AzLocalLatestSolutionVersion -ErrorAction Stop
+        $manifestProbe = Invoke-AzLocalPipelineTimedOperation `
+            -PipelineName 'fleet-update-status' `
+            -StepNumber 23 `
+            -StepName 'Query latest solution version' `
+            -Enabled $timingEnabled `
+            -ScriptBlock { Get-AzLocalLatestSolutionVersion -ErrorAction Stop }
         $supportedYymms        = @($manifestProbe.SupportedYYMMs)
         $supportSource         = 'Microsoft manifest'
         $latestReleasedYymm    = [string]$manifestProbe.LatestYYMM
@@ -563,7 +579,12 @@ function Export-AzLocalFleetUpdateStatusReport {
     Write-Host "Step 3b: Collecting Update Run History + Verbose Error Details (ARG-first, fleet-scale)..." -ForegroundColor Yellow
     $runFailures = @()
     try {
-        $runFailures = @(Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved -Since $Now.AddDays(-1 * $RunHistorySinceDays))
+        $runFailures = @(Invoke-AzLocalPipelineTimedOperation `
+            -PipelineName 'fleet-update-status' `
+            -StepNumber 24 `
+            -StepName 'Query unresolved update failures' `
+            -Enabled $timingEnabled `
+            -ScriptBlock { Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved -Since $Now.AddDays(-1 * $RunHistorySinceDays) })
     }
     catch {
         Write-Warning "Get-AzLocalUpdateRunFailures threw: $($_.Exception.Message). Continuing with empty run-history section."
@@ -838,12 +859,22 @@ function Export-AzLocalFleetUpdateStatusReport {
 
     Write-Host ""
     Write-Host "Step 4a: Collecting fleet update summaries..." -ForegroundColor Yellow
-    $summaries = Get-AzLocalUpdateSummary -ClusterResourceIds $fleetResourceIds -ExportPath $summariesCsv -PassThru
+    $summaries = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-update-status' `
+        -StepNumber 25 `
+        -StepName 'Query fleet update summaries' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Get-AzLocalUpdateSummary -ClusterResourceIds $fleetResourceIds -ExportPath $summariesCsv -PassThru }
     Write-Host "Update summaries collected for $(@($summaries).Count) cluster(s)" -ForegroundColor Green
 
     Write-Host ""
     Write-Host "Step 4b: Collecting available updates..." -ForegroundColor Yellow
-    $available = Get-AzLocalAvailableUpdates -ClusterResourceIds $fleetResourceIds -ExportPath $availableCsv -PassThru
+    $available = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-update-status' `
+        -StepNumber 26 `
+        -StepName 'Query available updates' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Get-AzLocalAvailableUpdates -ClusterResourceIds $fleetResourceIds -ExportPath $availableCsv -PassThru }
     Write-Host "Found $(@($available).Count) available update(s) across fleet" -ForegroundColor Green
 
     # The updateSummary availableUpdates field can lag or remain zero even when
@@ -888,7 +919,12 @@ function Export-AzLocalFleetUpdateStatusReport {
         # the prior console-summary semantics.
         # Monitor 3 is read-only. Auto-reset performs one ARM tag GET per cluster
         # and belongs in update execution/reconciliation paths, not daily reporting.
-        $allRuns = Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru -SkipSideloadedReset
+        $allRuns = Invoke-AzLocalPipelineTimedOperation `
+            -PipelineName 'fleet-update-status' `
+            -StepNumber 27 `
+            -StepName 'Query update run history' `
+            -Enabled $timingEnabled `
+            -ScriptBlock { Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru -SkipSideloadedReset 6>$null }
         $allRunsList = @($allRuns)
         $latestPerCluster = @($allRunsList | Group-Object ClusterName | ForEach-Object {
             @($_.Group | Sort-Object @{ Expression = 'EndTimeUtc'; Descending = $true }, @{ Expression = 'StartTime'; Descending = $true })[0]

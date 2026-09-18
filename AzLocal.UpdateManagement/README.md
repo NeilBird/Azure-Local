@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.35 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.35)
+**Latest Version:** v0.9.36 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.36)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.35](#whats-new-in-v0935)
+- [What's New in v0.9.36](#whats-new-in-v0936)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,15 +78,17 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.35
+## What's New in v0.9.36
 
-**Config: 2 now reconciles UpdateRing tags through deterministic bounded parallel work.** The module divides the fleet into jobs of at most 100 clusters and runs no more than the effective concurrency ceiling together. Fleet settings schema v5 adds `concurrency.maxUpdateRingTagConcurrentJobs` (`1-16`, default `4`), while an explicit `Set-AzLocalClusterUpdateRingTag -ThrottleLimit` value takes precedence. Dry runs parallelize only GET/planning work; approved changes run through a separate bounded PATCH stage, with parent-side `ShouldProcess` and deterministic result ordering preserved. Worker verbose and log records are replayed by the parent in input order, keeping parallel-run logs and diagnostic transcripts consolidated and deterministic.
+**Config: 2 parallel reconciliation works in fresh worker processes.** Planning and PATCH jobs now invoke their private helpers through the imported module's session state, fixing the v0.9.35 default-concurrency failure where `New-AzLocalUpdateRingTagPlan` was not recognized. A regression test crosses the real `Start-Job` boundary so mocked or inline execution cannot hide this contract again.
 
-**Authentication and input failures now fail clearly.** Concurrent GitHub Actions workers serialize OIDC repair and recheck the shared Azure CLI token cache before logging in again. Azure CLI preflight requires 2.78.0 or later and recommends 2.90.0 or later. Failed single-cluster available-update reads retain their ARM error instead of becoming an empty result, and manual Apply runs require either a full update resource name or `latest`. No public function or export-count change (73); all bundled pipeline pins are `0.9.35`.
+**Pipeline outcomes now match per-cluster results.** Config: 2 publishes its summary and artifacts before failing when any result is `Failed`; missing count output also fails closed. GitHub summaries include a direct diagnostics ZIP link when upload succeeds. No public function or export-count change (73); all bundled pipeline pins are `0.9.36`.
+
+**Monitor bottlenecks are now measurable.** Monitor 1-3 append their internal query and collection-stage durations to the existing `pipeline-timings.json` artifact. The report now also captures non-secret run context and structured per-operation ARG fingerprints, scope counts, row/page totals, page sizing, and retry diagnostics without storing KQL or scope identifiers. Monitor 3 suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while preserving its CSV and pass-through data. The pipeline reference removes stale Monitor 2/3 `throttle_limit` inputs; these read-side fleet collectors use internal ARG batching. Transcript regression coverage verifies credential-shaped ARM and ARG failures remain scrubbed.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.34`](docs/release-history.md#whats-new-in-v0934) for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.35`](docs/release-history.md#whats-new-in-v0935) for the previous release.
 
 ## Files
 
@@ -586,7 +588,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.35** stay above under [`What's New in v0.9.35`](#whats-new-in-v0935).
+The most recent release notes for **v0.9.36** stay above under [`What's New in v0.9.36`](#whats-new-in-v0936).
+
+### What's New in v0.9.35
+
+**Config: 2 now reconciles UpdateRing tags through deterministic bounded parallel work.** The module divides the fleet into jobs of at most 100 clusters and runs no more than the effective concurrency ceiling together. Fleet settings schema v5 adds `concurrency.maxUpdateRingTagConcurrentJobs` (`1-16`, default `4`), while an explicit `Set-AzLocalClusterUpdateRingTag -ThrottleLimit` value takes precedence. Dry runs parallelize only GET/planning work; approved changes run through a separate bounded PATCH stage, with parent-side `ShouldProcess` and deterministic result ordering preserved. Worker verbose and log records are replayed by the parent in input order, keeping parallel-run logs and diagnostic transcripts consolidated and deterministic.
+
+**Authentication and input failures now fail clearly.** Concurrent GitHub Actions workers serialize OIDC repair and recheck the shared Azure CLI token cache before logging in again. Azure CLI preflight requires 2.78.0 or later and recommends 2.90.0 or later. Failed single-cluster available-update reads retain their ARM error instead of becoming an empty result, and manual Apply runs require either a full update resource name or `latest`. No public function or export-count change (73); all bundled pipeline pins are `0.9.35`. See [CHANGELOG.md](CHANGELOG.md#0935---2026-09-17) for full details.
 
 ### What's New in v0.9.34
 
