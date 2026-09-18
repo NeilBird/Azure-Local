@@ -82,6 +82,13 @@ function Invoke-AzLocalPipelineTimedOperation {
     $platform = if ($env:GITHUB_ACTIONS -eq 'true') { 'GitHubActions' } elseif ($env:TF_BUILD -eq 'True') { 'AzureDevOps' } else { 'Local' }
     $runId = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_RUN_ID } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_BUILDID } else { '' }
     $runAttempt = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_RUN_ATTEMPT } elseif ($platform -eq 'AzureDevOps') { [string]$env:SYSTEM_JOBATTEMPT } else { '' }
+    $sourceVersion = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_SHA } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_SOURCEVERSION } else { '' }
+    $sourceRef = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_REF } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_SOURCEBRANCH } else { '' }
+    $trigger = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_EVENT_NAME } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_REASON } else { '' }
+    $runnerOs = if ($platform -eq 'GitHubActions') { [string]$env:RUNNER_OS } elseif ($platform -eq 'AzureDevOps') { [string]$env:AGENT_OS } else { [string][System.Environment]::OSVersion.Platform }
+    $diagnosticsEnabled = $env:DEBUG_VERBOSE -eq 'true' -or
+        $env:DEBUG_VERBOSE_SETTING -eq 'true' -or
+        ($platform -eq 'AzureDevOps' -and $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true')
 
     $operation = [ordered]@{
         stepNumber  = $StepNumber
@@ -93,6 +100,13 @@ function Invoke-AzLocalPipelineTimedOperation {
         status      = 'Running'
         errorType   = $null
         errorMessage = $null
+        resourceGraphQueryCount = 0
+        resourceGraphRows = 0
+        resourceGraphPages = 0
+        resourceGraphThrottleRetries = 0
+        resourceGraphNetworkRetries = 0
+        resourceGraphPayloadReductions = 0
+        resourceGraphQueries = @()
     }
 
     $writeReport = {
@@ -136,6 +150,11 @@ function Invoke-AzLocalPipelineTimedOperation {
                 platform = $platform
                 runId = $runId
                 runAttempt = $runAttempt
+                sourceVersion = $sourceVersion
+                sourceRef = $sourceRef
+                trigger = $trigger
+                runnerOs = $runnerOs
+                diagnosticsEnabled = $diagnosticsEnabled
                 moduleVersion = $moduleVersion
                 powerShellVersion = [string]$PSVersionTable.PSVersion
                 powerShellEdition = [string]$PSVersionTable.PSEdition
@@ -160,6 +179,9 @@ function Invoke-AzLocalPipelineTimedOperation {
     & $writeReport $operation
     Write-Verbose ("Pipeline timing started: pipeline='{0}', step={1}, name='{2}', invocationId={3}." -f $PipelineName, $StepNumber, $StepName, $invocationId)
 
+    $hadPreviousTimingInvocation = Test-Path Variable:script:CurrentPipelineTimingInvocationId
+    $previousTimingInvocationId = if ($hadPreviousTimingInvocation) { [string]$script:CurrentPipelineTimingInvocationId } else { '' }
+    $script:CurrentPipelineTimingInvocationId = $invocationId
     try {
         & $ScriptBlock
         $operation.status = 'Succeeded'
@@ -171,6 +193,27 @@ function Invoke-AzLocalPipelineTimedOperation {
         throw
     }
     finally {
+        if (Test-Path Variable:script:ResourceGraphQueryTelemetry) {
+            $matchingQueries = @($script:ResourceGraphQueryTelemetry.ToArray() | Where-Object { $_.timingInvocationId -eq $invocationId })
+            $operation.resourceGraphQueryCount = $matchingQueries.Count
+            $operation.resourceGraphRows = [int64](($matchingQueries | Measure-Object -Property rows -Sum).Sum)
+            $operation.resourceGraphPages = [int64](($matchingQueries | Measure-Object -Property pages -Sum).Sum)
+            $operation.resourceGraphThrottleRetries = [int](($matchingQueries | Measure-Object -Property throttleRetries -Sum).Sum)
+            $operation.resourceGraphNetworkRetries = [int](($matchingQueries | Measure-Object -Property networkRetries -Sum).Sum)
+            $operation.resourceGraphPayloadReductions = [int](($matchingQueries | Measure-Object -Property payloadReductions -Sum).Sum)
+            $operation.resourceGraphQueries = @($matchingQueries | Select-Object * -ExcludeProperty timingInvocationId)
+            for ($index = $script:ResourceGraphQueryTelemetry.Count - 1; $index -ge 0; $index--) {
+                if ($script:ResourceGraphQueryTelemetry[$index].timingInvocationId -eq $invocationId) {
+                    $script:ResourceGraphQueryTelemetry.RemoveAt($index)
+                }
+            }
+        }
+        if ($hadPreviousTimingInvocation) {
+            $script:CurrentPipelineTimingInvocationId = $previousTimingInvocationId
+        }
+        else {
+            Remove-Variable -Name CurrentPipelineTimingInvocationId -Scope Script -ErrorAction SilentlyContinue
+        }
         $endedUtc = [datetime]::UtcNow
         $operation.endedUtc = $endedUtc.ToString('o')
         $operation.durationMs = [int64][math]::Round(($endedUtc - $startedUtc).TotalMilliseconds, 0)

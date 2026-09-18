@@ -243,6 +243,16 @@ function Invoke-AzResourceGraphQuery {
         $queryTable, $queryFingerprint, $Query.Length, $script:LastResourceGraphScopeMode,
         $script:LastResourceGraphScopeCount, $First, $MaxPages)
 
+    $queryStartedUtc = [datetime]::UtcNow
+    $queryStatus = 'Running'
+    $queryErrorType = $null
+    $queryErrorMessage = $null
+    $allRows = $null
+    $pages = 0
+    $effectiveFirst = $First
+    $timingInvocationId = if (Test-Path Variable:script:CurrentPipelineTimingInvocationId) { [string]$script:CurrentPipelineTimingInvocationId } else { '' }
+
+    try {
     # Reset the truncation flag at the start of every call so a caller checking
     # $script:LastResourceGraphQueryTruncated sees only THIS call's outcome.
     $script:LastResourceGraphQueryTruncated = $false
@@ -529,5 +539,46 @@ function Invoke-AzResourceGraphQuery {
     # inner array, which silently collapses N rows to 1 row of property-arrays.
     # Use `$x = Invoke-AzResourceGraphQuery ...` directly; the result is always
     # an array.
+    $queryStatus = 'Succeeded'
     return , $allRows.ToArray()
+    }
+    catch {
+        $queryStatus = 'Failed'
+        $queryErrorType = $_.Exception.GetType().FullName
+        $queryErrorMessage = ConvertTo-ScrubbedCliOutput -Text $_.Exception.Message
+        throw
+    }
+    finally {
+        if (-not [string]::IsNullOrWhiteSpace($timingInvocationId)) {
+            if (-not (Test-Path Variable:script:ResourceGraphQueryTelemetry)) {
+                $script:ResourceGraphQueryTelemetry = [System.Collections.Generic.List[object]]::new()
+            }
+            $queryEndedUtc = [datetime]::UtcNow
+            $rowCount = if ($null -ne $allRows) { [int64]$allRows.Count } else { 0 }
+            [void]$script:ResourceGraphQueryTelemetry.Add([pscustomobject][ordered]@{
+                timingInvocationId = $timingInvocationId
+                table = $queryTable
+                fingerprint = $queryFingerprint
+                queryLength = $Query.Length
+                scopeMode = [string]$script:LastResourceGraphScopeMode
+                scopeCount = [int]$script:LastResourceGraphScopeCount
+                requestedPageSize = $First
+                effectivePageSize = $effectiveFirst
+                maxPages = $MaxPages
+                rows = $rowCount
+                pages = $pages
+                truncated = [bool]$script:LastResourceGraphQueryTruncated
+                throttleRetries = [int]$script:LastResourceGraphRetryCount
+                networkRetries = [int]$script:LastResourceGraphTransientRetryCount
+                payloadReductions = [int]$script:LastResourceGraphPayloadRetryCount
+                crossCallCooldownSeconds = [double]$script:LastResourceGraphCrossCallCooldownSeconds
+                startedUtc = $queryStartedUtc.ToString('o')
+                endedUtc = $queryEndedUtc.ToString('o')
+                durationMs = [int64][math]::Round(($queryEndedUtc - $queryStartedUtc).TotalMilliseconds, 0)
+                status = $queryStatus
+                errorType = $queryErrorType
+                errorMessage = $queryErrorMessage
+            })
+        }
+    }
 }

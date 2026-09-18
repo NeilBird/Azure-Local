@@ -1172,7 +1172,7 @@ az pipelines variable-group variable update `
   --value true
 ```
 
-Every run writes `pipeline-timings.json`, regardless of the diagnostics setting. An enabled diagnostic run additionally sets PowerShell verbose output for AzLocal cmdlets and writes `pipeline-transcript.log`. Each successfully started transcript is explicitly closed from a `finally` block before artifact upload, including when the principal workload fails. It does not enable `az --debug`, print authentication tokens, or dump successful ARM payloads. The artifact is published even when the workload fails:
+Every run writes `pipeline-timings.json`, regardless of the diagnostics setting. The timing report includes non-secret source/run context and structured ARG query summaries, including fingerprints, row/page counts, effective page size, and retry counts. An enabled diagnostic run additionally sets PowerShell verbose output for AzLocal cmdlets and writes `pipeline-transcript.log`. Each successfully started transcript is explicitly closed from a `finally` block before artifact upload, including when the principal workload fails. It does not enable `az --debug`, print authentication tokens, or dump successful ARM payloads. The artifact is published even when the workload fails:
 
 - **GitHub Actions:** download `azlocal-<pipeline>-diagnostics_<run-id>_<attempt>` from the run's **Artifacts** section. Config: 2 also writes a direct **Download diagnostic log ZIP** link into its summary when upload succeeds. Set repository variable `DEBUG_RETENTION_DAYS` to a whole number from 1-90; when unset, retention defaults to 14 days. Repository or organization policy can impose a lower maximum.
 - **Azure DevOps:** download `azlocal-<pipeline>-diagnostics-<build-id>-<job-attempt>` from the run's **Related > Published** artifacts. `PublishPipelineArtifact@1` has no per-artifact retention input, so retention follows the project's pipeline-retention policy. `DEBUG_RETENTION_DAYS` is therefore GitHub-only; Azure DevOps administrators should configure **Project settings > Pipelines > Settings > Retention**.
@@ -1181,7 +1181,7 @@ Normal runs therefore publish one file (`pipeline-timings.json`); diagnostic run
 
 For the exact capture contract and a step-by-step guide to empty or unexpected query results, see [Troubleshooting pipelines](#12-troubleshooting-pipelines).
 
-> **Sharing caution:** transcripts are designed to avoid credentials, but they can contain cluster names, Azure resource IDs, module paths, and service error text. Review them before sharing outside the support boundary, then set `DEBUG_VERBOSE=false` again after scheduled-run troubleshooting.
+> **Support-sensitive artifact:** timing reports and transcripts are designed to avoid credentials and full query text, but they can contain source refs, cluster names, Azure resource IDs, aggregate scope sizes, module paths, and service error text. Keep retention no longer than operationally necessary, review the artifact before sharing outside the support boundary, then set `DEBUG_VERBOSE=false` again after scheduled-run troubleshooting.
 
 ### 5.3 Optional configuration (_not recommended_): pin the module version
 
@@ -2448,11 +2448,14 @@ The top-level JSON fields are:
 | `schemaVersion` | Report contract version; currently `1`. |
 | `pipelineName`, `pipelineVersion` | Stable template identity and the version it was generated against. |
 | `platform`, `runId`, `runAttempt` | `GitHubActions`, `AzureDevOps`, or `Local`, plus native run correlation values. |
+| `sourceVersion`, `sourceRef`, `trigger`, `runnerOs`, `diagnosticsEnabled` | Non-secret source revision, ref, trigger, runner platform, and transcript-capture state needed to reproduce the run context. |
 | `moduleVersion`, `powerShellVersion`, `powerShellEdition` | Runtime versions needed when comparing performance. |
 | `startedUtc`, `lastUpdatedUtc`, `wallClockDurationMs` | Report time span. Wall clock includes the gaps between recorded operations in the same report, not just their summed execution time. |
 | `status`, `operationCount`, `operations` | Aggregate state and the ordered operation records. |
 
-Each operation records `stepNumber`, `stepName`, `invocationId`, start/end UTC timestamps, `durationMs`, `status`, `errorType`, and a scrubbed `errorMessage`. Step numbers are loose ordering keys (`10`, `20`, `30`) so later releases can insert operations without renumbering the report. A completed operation is `Succeeded` or `Failed`. If the PowerShell process or runner is terminated after the initial atomic write but before `finally`, the valid last report retains `Running`, a null end/duration, and its invocation ID; compare that record with the platform timeout or cancellation event.
+Each operation records `stepNumber`, `stepName`, `invocationId`, start/end UTC timestamps, `durationMs`, `status`, `errorType`, and a scrubbed `errorMessage`. It also records `resourceGraphQueryCount`, aggregate row/page and retry totals, and `resourceGraphQueries`. Each structured query entry contains table/fingerprint identity, query length, aggregate scope mode/count, requested/effective page size, safety cap, rows/pages, truncation and retry counters, cooldown time, timestamps, status, and scrubbed failure details. Full KQL and subscription or management-group identifiers are never stored. Nested operations attribute each query only to the innermost active operation, avoiding duplicate totals under both a principal step and its internal Monitor step.
+
+Step numbers are loose ordering keys (`10`, `20`, `30`) so later releases can insert operations without renumbering the report. A completed operation is `Succeeded` or `Failed`. If the PowerShell process or runner is terminated after the initial atomic write but before `finally`, the valid last report retains `Running`, a null end/duration, and its invocation ID; compare that record with the platform timeout or cancellation event.
 
 For a long but successful run, compare reports for the same `pipelineName`, `pipelineVersion`, module version, scope, and trigger shape. Sort or chart `operations[].durationMs` by `stepNumber`; this separates a slower principal workload from platform queue time, module installation, authentication, artifact upload, or other unwrapped setup. `wallClockDurationMs` is not the full native job duration unless the first and last recorded operations span that job.
 
@@ -2478,7 +2481,7 @@ There is one important PowerShell boundary: a transcript records emitted data; i
 4. For update runs omitted by ARG, inspect the direct ARM lines. `resultCount=0` is a valid empty collection; `ARM request failed` is an authorization, API, authentication, or transport failure. Update-run reconciliation requires `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read`.
 5. Compare the generated CSV/JSON report and pipeline summary with the transcript counts. If a successful query returned rows but a later report omitted them, search forward from that fingerprint for tag admission, normalization, and reconciliation messages.
 
-Before sharing an artifact, review it for cluster names, Azure resource IDs, local paths, and service error text. The scrubber protects credential-shaped values, but operational identifiers remain intentionally visible for diagnosis.
+Treat the ZIP as support-sensitive operational data. Before sharing an artifact, review it for source refs, cluster names, Azure resource IDs, aggregate scope sizes, local paths, and service error text. The scrubber protects credential-shaped values, but operational identifiers remain intentionally visible for diagnosis. GitHub defaults to 14-day retention through `DEBUG_RETENTION_DAYS`; Azure DevOps follows the project pipeline-retention policy.
 
 ### 12.5 Common failures
 

@@ -390,7 +390,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.36 - Fixes Config: 2 parallel workers calling private helpers outside module scope. Per-cluster failures now fail after evidence is published. Monitor 1-3 add internal collection timings; Monitor 3 suppresses its redundant fleet-wide host dump; stale Monitor 2/3 throttle docs are corrected. No export change (73).
+## Version 0.9.36 - Fixes Config: 2 parallel workers calling private helpers outside module scope. Per-cluster failures now fail after evidence is published. Monitor 1-3 add internal timings; timing artifacts add non-secret run context and structured, scrubbed ARG diagnostics without KQL or scope identifiers. Monitor 3 suppresses its redundant fleet-wide host dump; stale Monitor 2/3 throttle docs are corrected. No export change (73).
 
 ## Version 0.9.35 - Config: 2 adds 100-cluster jobs, fleet schema v5 concurrency control, and serialized OIDC repair. Azure CLI version, available-update error, and manual Apply input safeguards are hardened. No export change (73).
 

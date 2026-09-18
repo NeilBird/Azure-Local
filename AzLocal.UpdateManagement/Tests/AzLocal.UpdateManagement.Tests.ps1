@@ -6020,6 +6020,33 @@ Describe 'Internal Helper: Invoke-AzRestJson diagnostics' {
         }
     }
 
+    It 'Keeps credential canaries out of a real ARM and ARG diagnostic transcript' {
+        InModuleScope AzLocal.UpdateManagement {
+            $transcriptPath = Join-Path $TestDrive 'pipeline-transcript.log'
+            $transcriptStarted = $false
+            function az {
+                $global:LASTEXITCODE = 1
+                return 'Authorization failed. access_token=transcript-secret-canary'
+            }
+            try {
+                Start-Transcript -Path $transcriptPath -Force | Out-Null
+                $transcriptStarted = $true
+
+                $armResult = Invoke-AzRestJson -Uri 'https://management.azure.com/subscriptions/sub-1/resourceGroups/rg-1?api-version=2025-01-01' -Verbose
+                $armResult.Ok | Should -BeFalse
+                { Invoke-AzResourceGraphQuery -Query 'resources' -DisableCrossCallCooldown -Verbose } |
+                    Should -Throw -ExpectedMessage '*Azure Resource Graph query failed*'
+            }
+            finally {
+                if ($transcriptStarted) { Stop-Transcript | Out-Null }
+            }
+
+            $transcript = Get-Content -LiteralPath $transcriptPath -Raw
+            $transcript | Should -Match 'access_token=<redacted>'
+            $transcript | Should -Not -Match 'transcript-secret-canary'
+        }
+    }
+
     It 'Renews GitHub OIDC authentication after an expired assertion and retries once' {
         InModuleScope AzLocal.UpdateManagement {
             $script:RestCalls = 0
@@ -6257,6 +6284,11 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.platform | Should -Be 'Local'
             $report.runId | Should -Be ''
             $report.runAttempt | Should -Be ''
+            $report.sourceVersion | Should -Be ''
+            $report.sourceRef | Should -Be ''
+            $report.trigger | Should -Be ''
+            $report.runnerOs | Should -Not -BeNullOrEmpty
+            $report.diagnosticsEnabled | Should -BeFalse
             $report.moduleVersion | Should -Be $script:ModuleVersion
             $report.powerShellVersion | Should -Not -BeNullOrEmpty
             $report.powerShellEdition | Should -Not -BeNullOrEmpty
@@ -6274,6 +6306,49 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report.operations[0].durationMs | Should -BeGreaterOrEqual 0
             $report.operations[0].errorType | Should -BeNullOrEmpty
             $report.operations[0].errorMessage | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Records non-secret GitHub run context without requiring diagnostics' {
+        InModuleScope AzLocal.UpdateManagement {
+            $savedEnvironment = @{
+                GITHUB_ACTIONS = $env:GITHUB_ACTIONS
+                GITHUB_RUN_ID = $env:GITHUB_RUN_ID
+                GITHUB_RUN_ATTEMPT = $env:GITHUB_RUN_ATTEMPT
+                GITHUB_SHA = $env:GITHUB_SHA
+                GITHUB_REF = $env:GITHUB_REF
+                GITHUB_EVENT_NAME = $env:GITHUB_EVENT_NAME
+                RUNNER_OS = $env:RUNNER_OS
+                DEBUG_VERBOSE = $env:DEBUG_VERBOSE
+            }
+            try {
+                $env:GITHUB_ACTIONS = 'true'
+                $env:GITHUB_RUN_ID = '12345'
+                $env:GITHUB_RUN_ATTEMPT = '2'
+                $env:GITHUB_SHA = '0123456789abcdef'
+                $env:GITHUB_REF = 'refs/heads/main'
+                $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+                $env:RUNNER_OS = 'Windows'
+                $env:DEBUG_VERBOSE = 'false'
+                $path = Join-Path $TestDrive 'github-context\pipeline-timings.json'
+
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 20 -StepName 'Collect status' -Path $path -ScriptBlock { } | Out-Null
+
+                $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+                $report.platform | Should -Be 'GitHubActions'
+                $report.runId | Should -Be '12345'
+                $report.runAttempt | Should -Be '2'
+                $report.sourceVersion | Should -Be '0123456789abcdef'
+                $report.sourceRef | Should -Be 'refs/heads/main'
+                $report.trigger | Should -Be 'workflow_dispatch'
+                $report.runnerOs | Should -Be 'Windows'
+                $report.diagnosticsEnabled | Should -BeFalse
+            }
+            finally {
+                foreach ($entry in $savedEnvironment.GetEnumerator()) {
+                    [Environment]::SetEnvironmentVariable([string]$entry.Key, $entry.Value, 'Process')
+                }
+            }
         }
     }
 
@@ -6315,6 +6390,60 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
             $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
             @($report.operations.stepNumber) | Should -Be @(20, 21)
             @($report.operations.status | Select-Object -Unique) | Should -Be @('Succeeded')
+        }
+    }
+
+    It 'Attaches structured ARG diagnostics to the innermost timed operation without storing KQL' {
+        InModuleScope AzLocal.UpdateManagement {
+            function az {
+                $global:LASTEXITCODE = 0
+                return '{"data":[{"id":"one"},{"id":"two"}]}'
+            }
+            $path = Join-Path $TestDrive 'arg-telemetry\pipeline-timings.json'
+
+            Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 20 -StepName 'Collect fleet update status' -Path $path -ScriptBlock {
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-update-status' -StepNumber 21 -StepName 'Query cluster inventory' -Path $path -ScriptBlock {
+                    [void](Invoke-AzResourceGraphQuery -Query 'resources | where name == "do-not-capture"' -DisableCrossCallCooldown)
+                }
+            } | Out-Null
+
+            $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $outerOperation = @($report.operations | Where-Object stepNumber -eq 20)[0]
+            $queryOperation = @($report.operations | Where-Object stepNumber -eq 21)[0]
+            $outerOperation.resourceGraphQueryCount | Should -Be 0
+            $queryOperation.resourceGraphQueryCount | Should -Be 1
+            $queryOperation.resourceGraphRows | Should -Be 2
+            $queryOperation.resourceGraphPages | Should -Be 1
+            $queryOperation.resourceGraphQueries[0].table | Should -Be 'resources'
+            $queryOperation.resourceGraphQueries[0].fingerprint | Should -Match '^[0-9a-f]{12}$'
+            $queryOperation.resourceGraphQueries[0].scopeMode | Should -Not -BeNullOrEmpty
+            $queryOperation.resourceGraphQueries[0].rows | Should -Be 2
+            $queryOperation.resourceGraphQueries[0].status | Should -Be 'Succeeded'
+            $queryOperation.resourceGraphQueries[0].errorMessage | Should -BeNullOrEmpty
+            $report | ConvertTo-Json -Depth 10 | Should -Not -Match 'do-not-capture|where name'
+        }
+    }
+
+    It 'Records scrubbed structured ARG diagnostics when a query fails' {
+        InModuleScope AzLocal.UpdateManagement {
+            function az {
+                $global:LASTEXITCODE = 1
+                return 'Authorization failed. access_token=secret-value'
+            }
+            $path = Join-Path $TestDrive 'arg-failure\pipeline-timings.json'
+
+            {
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-health-status' -StepNumber 21 -StepName 'Query fleet health failures' -Path $path -ScriptBlock {
+                    [void](Invoke-AzResourceGraphQuery -Query 'healthresources' -DisableCrossCallCooldown)
+                }
+            } | Should -Throw -ExpectedMessage '*Azure Resource Graph query failed*'
+
+            $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            $report.operations[0].resourceGraphQueryCount | Should -Be 1
+            $report.operations[0].resourceGraphQueries[0].status | Should -Be 'Failed'
+            $report.operations[0].resourceGraphQueries[0].errorType | Should -Not -BeNullOrEmpty
+            $report.operations[0].resourceGraphQueries[0].errorMessage | Should -Match 'access_token=<redacted>'
+            $report | ConvertTo-Json -Depth 10 | Should -Not -Match 'secret-value'
         }
     }
 

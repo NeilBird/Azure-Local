@@ -84,7 +84,7 @@ If you are new to this module, work through these in order from a regular PowerS
 
 **Pipeline outcomes now match per-cluster results.** Config: 2 publishes its summary and artifacts before failing when any result is `Failed`; missing count output also fails closed. GitHub summaries include a direct diagnostics ZIP link when upload succeeds. No public function or export-count change (73); all bundled pipeline pins are `0.9.36`.
 
-**Monitor bottlenecks are now measurable.** Monitor 1-3 append their internal query and collection-stage durations to the existing `pipeline-timings.json` artifact. Monitor 3 also suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while preserving its CSV and pass-through data. The pipeline reference removes stale Monitor 2/3 `throttle_limit` inputs; these read-side fleet collectors use internal ARG batching.
+**Monitor bottlenecks are now measurable.** Monitor 1-3 append their internal query and collection-stage durations to the existing `pipeline-timings.json` artifact. The report now also captures non-secret run context and structured per-operation ARG fingerprints, scope counts, row/page totals, page sizing, and retry diagnostics without storing KQL or scope identifiers. Monitor 3 suppresses the redundant fleet-wide `Get-AzLocalUpdateRuns` host dump while preserving its CSV and pass-through data. The pipeline reference removes stale Monitor 2/3 `throttle_limit` inputs; these read-side fleet collectors use internal ARG batching. Transcript regression coverage verifies credential-shaped ARM and ARG failures remain scrubbed.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
