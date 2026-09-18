@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.34'
+    ModuleVersion = '0.9.35'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -90,6 +90,7 @@
         'Private/Invoke-AzRestJson.ps1',
         'Private/Invoke-AzLocalUpdateApply.ps1',
         'Private/Invoke-AzLocalUpdatePrepare.ps1',
+        'Private/Invoke-AzLocalUpdateRingTagWorker.ps1',
         'Private/Invoke-FleetJobsInParallel.ps1',
         'Private/Invoke-FleetOpClusterAction.ps1',
         'Private/Read-AzLocalApplyUpdatesYamlCrons.ps1',
@@ -389,7 +390,9 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.34 - Config: 1 inventory and Config: 2 tag workflows renew expired workload-identity authentication during long fleet runs on GitHub Actions and Azure DevOps. No export change (73).
+## Version 0.9.35 - Config: 2 adds 100-cluster jobs, fleet schema v5 concurrency control, and serialized OIDC repair. Azure CLI version, available-update error, and manual Apply input safeguards are hardened. No export change (73).
+
+## Version 0.9.34 - Renews expired workload-identity authentication during long Config: 1 inventory and Config: 2 tag runs. No export change (73).
 
 ## Version 0.9.33 - Adds remote ARM PrepareOnly and PrepareOnlyFirst for Azure Local 2608. Schedule v3 adds prepareOnlyFirst and allowPrepareOnlyOutsideOfUpdateStartWindow; migration preserves rows and rolls back on failure. Policy controls UpdateStartWindow bypass; exclusions and UpdateExcluded always apply. Fixes transcript reporting. Exports 73.
 

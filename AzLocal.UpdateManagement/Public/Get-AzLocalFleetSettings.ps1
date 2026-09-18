@@ -8,7 +8,7 @@ function Get-AzLocalFleetSettings {
         empty, or fully commented file returns the existing implicit Azure
         subscription scope used by earlier module versions.
 
-        Schema versions 1, 3, and 4 support scope.managementGroups. When one or more
+        Schema versions 1, 3, 4, and 5 support scope.managementGroups. When one or more
         management-group IDs are configured, Azure Resource Graph queries that
         do not already specify an explicit subscription use those management
         groups as their query scope.
@@ -21,6 +21,10 @@ function Get-AzLocalFleetSettings {
         updateStartWindow.allowAfterMinutes. Each independently widens the UTC
         runtime gate by 0 to 60 minutes and defaults to 0.
 
+        Schema version 5 adds concurrency.maxUpdateRingTagConcurrentJobs. It
+        limits concurrent jobs used to reconcile UpdateRing tags, accepts 1 to
+        16, and defaults to 4.
+
         The parser is deliberately limited to this small operator-owned schema
         so the core fleet pipelines do not require powershell-yaml.
     .PARAMETER Path
@@ -28,7 +32,8 @@ function Get-AzLocalFleetSettings {
         AZLOCAL_FLEET_SETTINGS_PATH, then to ./config/fleet-settings.yml.
     .OUTPUTS
         PSCustomObject with Path, FileFound, SchemaVersion, ScopeMode,
-        ManagementGroups, and ClusterTagFilters properties.
+        ManagementGroups, ClusterTagFilters, and
+        MaxUpdateRingTagConcurrentJobs properties.
     .EXAMPLE
         Get-AzLocalFleetSettings
 
@@ -96,6 +101,7 @@ function Get-AzLocalFleetSettings {
         ClusterTagFilterMode = 'AnyGroup'
         UpdateStartWindowAllowBeforeMinutes = 0
         UpdateStartWindowAllowAfterMinutes  = 0
+        MaxUpdateRingTagConcurrentJobs = 4
         MaxRowsPerTable    = 100
         MaxSummaryBytes    = 900000
         MaxIncidentsPerRun = 25
@@ -121,6 +127,7 @@ function Get-AzLocalFleetSettings {
     $inClusterTagFilters = $false
     $clusterTagFiltersDeclared = $false
     $updateStartWindowDeclared = $false
+    $concurrencyDeclared = $false
     $activeSection = ''
     $managementGroups = [System.Collections.Generic.List[string]]::new()
     $clusterTagFilters = [System.Collections.Generic.List[object]]::new()
@@ -143,6 +150,16 @@ function Get-AzLocalFleetSettings {
         }
         if ($line -match '^reporting\s*:\s*(?:#.*)?$') {
             $activeSection = 'reporting'
+            $inScope = $false
+            $inManagementGroups = $false
+            $inClusterTagFilters = $false
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
+            continue
+        }
+        if ($line -match '^concurrency\s*:\s*(?:#.*)?$') {
+            $activeSection = 'concurrency'
+            $concurrencyDeclared = $true
             $inScope = $false
             $inManagementGroups = $false
             $inClusterTagFilters = $false
@@ -250,6 +267,10 @@ function Get-AzLocalFleetSettings {
             $result.MaxRowsPerTable = [int]$Matches[1]
             continue
         }
+        if ($activeSection -eq 'concurrency' -and $line -match '^\s{2}maxUpdateRingTagConcurrentJobs\s*:\s*(-?[0-9]+)\s*(?:#.*)?$') {
+            $result.MaxUpdateRingTagConcurrentJobs = [int]$Matches[1]
+            continue
+        }
         if ($activeSection -eq 'updateStartWindow' -and $line -match '^\s{2}allowBeforeMinutes\s*:\s*(-?[0-9]+)\s*(?:#.*)?$') {
             $result.UpdateStartWindowAllowBeforeMinutes = [int]$Matches[1]
             continue
@@ -271,16 +292,19 @@ function Get-AzLocalFleetSettings {
     }
 
     if ($null -eq $schemaVersion) {
-        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1, 3, or 4."
+        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1, 3, 4, or 5."
     }
-    if ($schemaVersion -notin @(1, 3, 4)) {
-        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1, 3, and 4."
+    if ($schemaVersion -notin @(1, 3, 4, 5)) {
+        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1, 3, 4, and 5."
     }
     if ($schemaVersion -eq 1 -and $clusterTagFiltersDeclared) {
         throw "Get-AzLocalFleetSettings: scope.clusterTagFilters requires schemaVersion: 3."
     }
-    if ($schemaVersion -ne 4 -and $updateStartWindowDeclared) {
-        throw "Get-AzLocalFleetSettings: updateStartWindow allowances require schemaVersion: 4."
+    if ($schemaVersion -lt 4 -and $updateStartWindowDeclared) {
+        throw "Get-AzLocalFleetSettings: updateStartWindow allowances require schemaVersion: 4 or later."
+    }
+    if ($schemaVersion -lt 5 -and $concurrencyDeclared) {
+        throw "Get-AzLocalFleetSettings: concurrency settings require schemaVersion: 5."
     }
     if ($clusterTagFiltersDeclared -and $clusterTagFilters.Count -eq 0) {
         throw "Get-AzLocalFleetSettings: scope.clusterTagFilters must contain at least one named group."
@@ -339,6 +363,9 @@ function Get-AzLocalFleetSettings {
     }
     if ($result.MaxRowsPerTable -lt 1 -or $result.MaxRowsPerTable -gt 2000) {
         throw "Get-AzLocalFleetSettings: reporting.maxRowsPerTable must be between 1 and 2000."
+    }
+    if ($result.MaxUpdateRingTagConcurrentJobs -lt 1 -or $result.MaxUpdateRingTagConcurrentJobs -gt 16) {
+        throw "Get-AzLocalFleetSettings: concurrency.maxUpdateRingTagConcurrentJobs must be between 1 and 16."
     }
     if ($result.UpdateStartWindowAllowBeforeMinutes -lt 0 -or $result.UpdateStartWindowAllowBeforeMinutes -gt 60) {
         throw "Get-AzLocalFleetSettings: updateStartWindow.allowBeforeMinutes must be between 0 and 60."

@@ -5,6 +5,25 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.35] - 2026-09-17
+
+### Added
+
+- Fleet settings schema v5 adds `concurrency.maxUpdateRingTagConcurrentJobs` (`1-16`, default `4`) for Config: 2 UpdateRing tag reconciliation. An explicit `Set-AzLocalClusterUpdateRingTag -ThrottleLimit` value takes precedence.
+
+### Changed
+
+- Config: 2 processes clusters in deterministic bounded waves: jobs contain at most 100 clusters, no more than the effective concurrency ceiling run together, dry runs perform only parallel GET/planning work, and approved changes use a separate bounded PATCH stage.
+- Config: 2 buffers planning and PATCH worker diagnostics and replays them through the parent in deterministic input order, preserving consolidated logs and pipeline transcripts during parallel execution.
+- Azure CLI preflight now requires version 2.78.0 or later and recommends 2.90.0 or later, with an actionable warning when an installed supported version is below the recommendation.
+- Manual Update: 3 runs on both pipeline platforms now require either the full update resource name or the explicit `latest` sentinel. Blank and numeric-only inputs fail before the apply step, while `latest` is normalized to the existing unconstrained behavior.
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.35`.
+
+### Fixed
+
+- Concurrent GitHub Actions workers serialize Azure CLI OIDC repair through a cross-process mutex and recheck the shared token cache after acquiring it, preventing redundant federated logins when several requests encounter token expiry together.
+- `Get-AzLocalAvailableUpdates` now throws the underlying ARM transport error for a failed single-cluster request instead of misreporting the failure as a successful empty update set.
+
 ## [0.9.34] - 2026-09-07
 
 ### Fixed

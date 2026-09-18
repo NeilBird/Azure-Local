@@ -78,6 +78,13 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
         on Azure DevOps and Local hosts. Default
         `updatering-tag-summary.md`.
 
+    .PARAMETER ThrottleLimit
+        Maximum number of concurrent workers used by
+        `Set-AzLocalClusterUpdateRingTag`. When omitted, the inner cmdlet uses
+        concurrency.maxUpdateRingTagConcurrentJobs from fleet-settings.yml,
+        which defaults to 4. Set to 1 for serial processing. An explicit value
+        overrides fleet settings.
+
     .PARAMETER PassThru
         When set, returns a single PSCustomObject summarising the run
         (TotalCount, CreatedCount, UpdatedCount, AlreadyInSyncCount,
@@ -140,6 +147,10 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
         [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
         [string]$SummaryFileName = 'updatering-tag-summary.md',
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 16)]
+        [int]$ThrottleLimit,
 
         [Parameter(Mandatory = $false)]
         [switch]$PassThru
@@ -207,6 +218,9 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
         InputCsvPath  = $InputCsvPath
         LogFolderPath = $OutputDirectory
         PassThru      = $true
+    }
+    if ($PSBoundParameters.ContainsKey('ThrottleLimit')) {
+        $applyParams['ThrottleLimit'] = $ThrottleLimit
     }
     if ($Force) {
         $applyParams['Force'] = $true

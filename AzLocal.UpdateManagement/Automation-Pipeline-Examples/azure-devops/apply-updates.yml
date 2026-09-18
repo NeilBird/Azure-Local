@@ -76,7 +76,7 @@ parameters:
     default: ''
 
   - name: updateName
-    displayName: 'Specific update version (leave empty for latest ready update)'
+    displayName: "Specific full update version name to apply (type the word 'latest' to install the latest ready update)"
     type: string
     default: ''
 
@@ -147,7 +147,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.34'
+    value: '0.9.35'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -529,6 +529,7 @@ stages:
               RESOLVED_ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW: $(resolvedAllowPrepareOnlyOutsideOfUpdateStartWindow)
               ALLOW_PREPARE_ONLY_OUTSIDE_OF_UPDATE_START_WINDOW_PARAM: ${{ parameters.allowPrepareOnlyOutsideOfUpdateStartWindow }}
               UPDATE_OPERATION_PARAM: ${{ parameters.updateOperation }}
+              UPDATE_NAME_PARAM: ${{ parameters.updateName }}
               USE_SCHEDULE_FILE_PARAM: ${{ parameters.useScheduleFile }}
               # v0.8.79 break-glass override - parameter value + Build.Reason guard.
               # The runtime check below collapses force=true on Schedule/CI runs to
@@ -561,10 +562,22 @@ stages:
                     Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
                 }
                   try {
+                  $updateName = ([string]$env:UPDATE_NAME_PARAM).Trim()
+                  if ($env:BUILD_REASON -eq 'Manual') {
+                    if ([string]::IsNullOrWhiteSpace($updateName)) {
+                      throw "Manual runs require updateName. Enter the full update resource name or 'latest'."
+                    }
+                    if (-not [string]::Equals($updateName, 'latest', [System.StringComparison]::OrdinalIgnoreCase) -and $updateName -notmatch '^[A-Za-z]') {
+                      throw "Manual updateName must be a full update resource name, for example 'Solution12.2608.1003.9', or 'latest'. Received '$updateName'."
+                    }
+                  }
+                  if ([string]::Equals($updateName, 'latest', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $updateName = ''
+                  }
                 $params = @{
                     ReadinessCsvPath      = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                     UpdateRing            = $env:RESOLVED_UPDATE_RING
-                    UpdateName            = "${{ parameters.updateName }}"
+                    UpdateName            = $updateName
                     AllowedUpdateVersions = $env:RESOLVED_ALLOWED_UPDATE_VERSIONS
                     OutputDirectory       = "$(Build.ArtifactStagingDirectory)"
                 }

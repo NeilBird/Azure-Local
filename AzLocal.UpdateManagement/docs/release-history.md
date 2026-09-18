@@ -4,9 +4,15 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.34 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0934) `What's New in v0.9.34` section.
+> **For v0.9.35 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0935) `What's New in v0.9.35` section.
 
 ---
+
+### What's New in v0.9.35
+
+**Config: 2 now reconciles UpdateRing tags through deterministic bounded parallel work.** Jobs contain at most 100 clusters and no more than the effective concurrency ceiling run together. Fleet settings schema v5 adds `concurrency.maxUpdateRingTagConcurrentJobs` (`1-16`, default `4`), with an explicit `Set-AzLocalClusterUpdateRingTag -ThrottleLimit` taking precedence. Dry runs perform parallel GET/planning work only; approved changes use a separate bounded PATCH stage while parent-side `ShouldProcess` and deterministic output ordering remain intact.
+
+**Reliability failures now remain explicit and coordinated.** Concurrent GitHub Actions workers serialize OIDC repair and recheck the shared Azure CLI token cache before logging in again. Azure CLI preflight requires 2.78.0 or later and recommends 2.90.0 or later. Failed single-cluster available-update reads propagate their ARM error, and manual Apply runs require a full update resource name or `latest`. No public function or export-count change (73); pipeline pins are updated to `0.9.35`. See [CHANGELOG.md](../CHANGELOG.md#0935---2026-09-17) for full details.
 
 ### What's New in v0.9.34
 
