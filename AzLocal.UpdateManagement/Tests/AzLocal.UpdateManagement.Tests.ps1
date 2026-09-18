@@ -506,8 +506,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.35' {
-            $script:ModuleInfo.Version | Should -Be '0.9.35'
+        It 'Should have version 0.9.36' {
+            $script:ModuleInfo.Version | Should -Be '0.9.36'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -2628,6 +2628,23 @@ Describe 'Function: Set-AzLocalClusterUpdateRingTag' {
             @($result.Status | Select-Object -Unique) | Should -Be @('Failed')
             @($result.Message | Select-Object -Unique) | Should -Be @('Planning worker failed: worker crashed')
             Remove-Variable _tagParallelIds -Scope Global -ErrorAction SilentlyContinue
+        }
+
+        It 'Executes private planning helpers through real Start-Job module boundaries' {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Set-AzLocalClusterUpdateRingTag `
+                    -ClusterResourceIds @('invalid-resource-one', 'invalid-resource-two') `
+                    -UpdateRingValue Ring1 `
+                    -ThrottleLimit 2 `
+                    -LogFolderPath $global:_tagParallelFolder `
+                    -PassThru
+            }
+
+            @($result).Count | Should -Be 2
+            @($result.Status | Select-Object -Unique) | Should -Be @('Failed')
+            @($result.Message | Select-Object -Unique) | Should -Be @('Invalid Resource ID format')
+            @($result.Message | Where-Object { $_ -match 'Planning worker failed|not recognized' }).Count | Should -Be 0
         }
 
         It 'Uses the original inline loop and no job dispatcher when ThrottleLimit is 1' {
@@ -6181,6 +6198,42 @@ Describe 'Long-running Azure DevOps workflows keep WIF sessions active' {
 
         @($workflowText | Select-String -Pattern 'keepAzSessionActive:\s*true' -AllMatches).Matches.Count | Should -Be 1
         $workflowText | Should -Match "(?ms)displayName: '$([regex]::Escape($Task))'.*?keepAzSessionActive:\s*true"
+    }
+}
+
+Describe 'Config: 2 pipelines fail after publishing per-cluster failure evidence' {
+    It 'GitHub Actions adds the diagnostics artifact download link to the job summary' {
+        $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\manage-updatering-tags.yml'
+        $workflowText = Get-Content -LiteralPath $workflowPath -Raw
+
+        $workflowText | Should -Match '(?ms)- name: Upload pipeline performance diagnostics\s+id: upload-diagnostics'
+        $workflowText | Should -Match "if: always\(\) && steps\.upload-diagnostics\.outputs\.artifact-url != ''"
+        $workflowText | Should -Match 'DIAGNOSTICS_ARTIFACT_URL:\s*\$\{\{ steps\.upload-diagnostics\.outputs\.artifact-url \}\}'
+        $workflowText | Should -Match '\[Download diagnostic log ZIP\]\(\$env:DIAGNOSTICS_ARTIFACT_URL\)'
+    }
+
+    It 'GitHub Actions checks failed_count after uploading log artifacts' {
+        $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\manage-updatering-tags.yml'
+        $workflowText = Get-Content -LiteralPath $workflowPath -Raw
+
+        $artifactIndex = $workflowText.IndexOf('- name: Upload Log Artifacts')
+        $failureGateIndex = $workflowText.IndexOf('- name: Fail on tag reconciliation errors')
+        $artifactIndex | Should -BeGreaterThan -1
+        $failureGateIndex | Should -BeGreaterThan $artifactIndex
+        $workflowText | Should -Match 'FAILED_COUNT:\s*\$\{\{ steps\.apply-tags\.outputs\.failed_count \}\}'
+        $workflowText | Should -Match 'Config: 2 reported \$failedCount failed cluster\(s\)'
+    }
+
+    It 'Azure DevOps checks failed_count after publishing log artifacts' {
+        $workflowPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\manage-updatering-tags.yml'
+        $workflowText = Get-Content -LiteralPath $workflowPath -Raw
+
+        $artifactIndex = $workflowText.IndexOf("displayName: 'Publish Log Artifacts'")
+        $failureGateIndex = $workflowText.IndexOf("displayName: 'Fail on tag reconciliation errors'")
+        $artifactIndex | Should -BeGreaterThan -1
+        $failureGateIndex | Should -BeGreaterThan $artifactIndex
+        $workflowText | Should -Match '\[int\]::TryParse\("\$\(failed_count\)"'
+        $workflowText | Should -Match 'Config: 2 reported \$failedCount failed cluster\(s\)'
     }
 }
 

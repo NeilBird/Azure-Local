@@ -1174,7 +1174,7 @@ az pipelines variable-group variable update `
 
 Every run writes `pipeline-timings.json`, regardless of the diagnostics setting. An enabled diagnostic run additionally sets PowerShell verbose output for AzLocal cmdlets and writes `pipeline-transcript.log`. Each successfully started transcript is explicitly closed from a `finally` block before artifact upload, including when the principal workload fails. It does not enable `az --debug`, print authentication tokens, or dump successful ARM payloads. The artifact is published even when the workload fails:
 
-- **GitHub Actions:** download `azlocal-<pipeline>-diagnostics_<run-id>_<attempt>` from the run's **Artifacts** section. Set repository variable `DEBUG_RETENTION_DAYS` to a whole number from 1-90; when unset, retention defaults to 14 days. Repository or organization policy can impose a lower maximum.
+- **GitHub Actions:** download `azlocal-<pipeline>-diagnostics_<run-id>_<attempt>` from the run's **Artifacts** section. Config: 2 also writes a direct **Download diagnostic log ZIP** link into its summary when upload succeeds. Set repository variable `DEBUG_RETENTION_DAYS` to a whole number from 1-90; when unset, retention defaults to 14 days. Repository or organization policy can impose a lower maximum.
 - **Azure DevOps:** download `azlocal-<pipeline>-diagnostics-<build-id>-<job-attempt>` from the run's **Related > Published** artifacts. `PublishPipelineArtifact@1` has no per-artifact retention input, so retention follows the project's pipeline-retention policy. `DEBUG_RETENTION_DAYS` is therefore GitHub-only; Azure DevOps administrators should configure **Project settings > Pipelines > Settings > Retention**.
 
 Normal runs therefore publish one file (`pipeline-timings.json`); diagnostic runs publish two (`pipeline-timings.json` and `pipeline-transcript.log`). Apply Updates appends its separately guarded retry session to the same transcript and finalizes both sessions independently. Monitor In-Flight Updates disables its idle short-circuit while diagnostics are enabled so the transcript includes the full ARM/Resource Graph reconciliation pass.
@@ -1607,6 +1607,8 @@ Two equivalent ways to apply the edited CSV - pick whichever fits your workflow.
 Since v0.9.34, long Config: 2 pipeline runs keep workload-identity authentication renewable throughout the tag loop. GitHub Actions supplies fresh OIDC login metadata to the shared ARM transport; Azure DevOps uses the `AzureCLI@2` Workload Identity Federation session keepalive. The Azure DevOps service connection for this task must use Workload Identity Federation.
 
 Since v0.9.35, parallel planning and PATCH workers return their verbose and log records to the parent process, which replays them in deterministic CSV input order. The existing `pipeline-transcript.log` therefore remains consolidated and complete when Config: 2 runs more than one job concurrently.
+
+Since v0.9.36, fresh planning and PATCH jobs invoke their private helpers inside the imported module session, restoring the default parallel path. Both pipeline platforms publish result evidence before failing when any per-cluster result is `Failed`; GitHub also adds a direct diagnostics ZIP link to the summary when upload succeeds.
 
 **Option B - from PowerShell (faster for one-off changes):**
 
