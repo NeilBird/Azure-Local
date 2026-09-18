@@ -130,6 +130,7 @@ function Get-AzLocalFleetConnectivityStatus {
     if ($PSBoundParameters.ContainsKey('SubscriptionId') -and $SubscriptionId) {
         $invokeArgs['SubscriptionId'] = $SubscriptionId
     }
+    $timingEnabled = -not [string]::IsNullOrWhiteSpace([string]$env:AZLOCAL_PIPELINE_TIMING_PATH)
 
     # ------------------------------------------------------------------
     # 1. Cluster connectivity
@@ -149,7 +150,12 @@ $globalTagFilter
           ReportedNodes = properties.reportedProperties.nodes
 | order by id asc
 "@
-    $clusterRaw = Invoke-AzResourceGraphQuery -Query $clusterKql @invokeArgs
+    $clusterRaw = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-connectivity-status' `
+        -StepNumber 21 `
+        -StepName 'Query cluster connectivity' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Invoke-AzResourceGraphQuery -Query $clusterKql @invokeArgs }
 
     $clusterRows = @($clusterRaw | ForEach-Object {
         $r = $_
@@ -215,7 +221,12 @@ $globalTagFilter
     Write-Log -Message '[2/5] Querying update summaries for cluster versions...' -Level Info
 
     $versionKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | project id, CurrentVersion = tostring(properties.currentVersion) | order by id asc"
-    $versionRaw = Invoke-AzResourceGraphQuery -Query $versionKql @invokeArgs
+    $versionRaw = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-connectivity-status' `
+        -StepNumber 22 `
+        -StepName 'Query cluster update summaries' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Invoke-AzResourceGraphQuery -Query $versionKql @invokeArgs }
 
     $clusterVersionMap = @{}
     foreach ($us in $versionRaw) {
@@ -252,7 +263,12 @@ resources
           LastStatusChange = tostring(properties.lastStatusChange)
 | order by id asc
 "@
-    $machinesRaw = Invoke-AzResourceGraphQuery -Query $machinesKql @invokeArgs
+    $machinesRaw = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-connectivity-status' `
+        -StepNumber 23 `
+        -StepName 'Query Arc machine status' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Invoke-AzResourceGraphQuery -Query $machinesKql @invokeArgs }
 
     $allMachines = @($machinesRaw | ForEach-Object {
         $m = $_
@@ -339,7 +355,12 @@ extensibilityresources
           DefaultGateway, DnsServers, MacAddress
 | order by id asc, NicName asc
 '@
-    $nicRaw = Invoke-AzResourceGraphQuery -Query $nicKql @invokeArgs
+    $nicRaw = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-connectivity-status' `
+        -StepNumber 24 `
+        -StepName 'Query NIC inventory' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Invoke-AzResourceGraphQuery -Query $nicKql @invokeArgs }
 
     $nicAllRows = @($nicRaw | ForEach-Object {
         $n = $_
@@ -396,7 +417,12 @@ extensibilityresources
     # every ARB regardless of status. The extend guarantees the column is present
     # in the row dictionary (empty string if truly missing).
     $arbKql = "resources | where type =~ 'microsoft.resourceconnector/appliances' | extend lastModifiedAt = tostring(systemData.lastModifiedAt) | project id, name, resourceGroup, subscriptionId, ArbStatus = tostring(properties.status), lastModifiedAt | order by id asc"
-    $arbRaw  = Invoke-AzResourceGraphQuery -Query $arbKql @invokeArgs
+    $arbRaw = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-connectivity-status' `
+        -StepNumber 25 `
+        -StepName 'Query Resource Bridge status' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Invoke-AzResourceGraphQuery -Query $arbKql @invokeArgs }
 
     $arbRows = @($arbRaw | ForEach-Object {
         $a  = $_

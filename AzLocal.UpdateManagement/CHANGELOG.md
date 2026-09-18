@@ -10,10 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Config: 2 GitHub Actions summaries include a direct **Download diagnostic log ZIP** link when the diagnostics artifact was created, providing a fallback to GitHub's built-in Artifacts table.
+- Monitor 1-3 append internal query and collection-stage durations to the existing `pipeline-timings.json` artifact, exposing the expensive stages before any concurrency changes are considered.
 
 ### Changed
 
 - Config: 2 GitHub Actions and Azure DevOps pipelines publish summaries and artifacts first, then fail the run when one or more per-cluster results have `Status='Failed'`. Missing or invalid `failed_count` output also fails closed.
+- Monitor 2 and Monitor 3 pipeline documentation now reflects that read-side fleet collection uses internal ARG batching and has no `throttle_limit` input.
 - No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.36`.
 
 ### Fixed

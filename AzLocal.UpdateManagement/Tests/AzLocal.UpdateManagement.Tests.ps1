@@ -6290,6 +6290,34 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
         }
     }
 
+    It 'Preserves two-row output while an internal operation coexists with its outer pipeline operation' {
+        InModuleScope AzLocal.UpdateManagement {
+            $path = Join-Path $TestDrive 'nested\pipeline-timings.json'
+            $result = @(Invoke-AzLocalPipelineTimedOperation `
+                -PipelineName 'fleet-health-status' `
+                -StepNumber 20 `
+                -StepName 'Collect fleet health status' `
+                -Path $path `
+                -ScriptBlock {
+                    Invoke-AzLocalPipelineTimedOperation `
+                        -PipelineName 'fleet-health-status' `
+                        -StepNumber 21 `
+                        -StepName 'Query fleet health failures' `
+                        -Path $path `
+                        -ScriptBlock {
+                            [pscustomobject]@{ ClusterName = 'alpha' }
+                            [pscustomobject]@{ ClusterName = 'bravo' }
+                        }
+                })
+
+            $result.Count | Should -Be 2
+            @($result.ClusterName) | Should -Be @('alpha', 'bravo')
+            $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+            @($report.operations.stepNumber) | Should -Be @(20, 21)
+            @($report.operations.status | Select-Object -Unique) | Should -Be @('Succeeded')
+        }
+    }
+
     It 'Clears a handled native failure exit code when the workload succeeds' {
         InModuleScope AzLocal.UpdateManagement {
             $path = Join-Path $TestDrive 'handled-native-failure\pipeline-timings.json'
@@ -6391,6 +6419,35 @@ Describe 'v0.9.22 fleet-scale ARG payload contracts' {
 
     It 'Every fleet connectivity wire query has deterministic ordering' {
         @([regex]::Matches($script:connectivitySource, '\| order by ')).Count | Should -Be 5
+    }
+
+    It 'Monitor 1 records each logical ARG query when pipeline timing is enabled' {
+        InModuleScope AzLocal.UpdateManagement {
+            $savedTimingPath = $env:AZLOCAL_PIPELINE_TIMING_PATH
+            $timingPath = Join-Path $TestDrive 'monitor1-timings.json'
+            $env:AZLOCAL_PIPELINE_TIMING_PATH = $timingPath
+            try {
+                Mock Invoke-AzResourceGraphQuery { @() }
+
+                $result = Get-AzLocalFleetConnectivityStatus
+
+                @($result.ClusterRows).Count | Should -Be 0
+                $report = Get-Content -LiteralPath $timingPath -Raw | ConvertFrom-Json
+                @($report.operations.stepNumber) | Should -Be @(21, 22, 23, 24, 25)
+                @($report.operations.stepName) | Should -Be @(
+                    'Query cluster connectivity'
+                    'Query cluster update summaries'
+                    'Query Arc machine status'
+                    'Query NIC inventory'
+                    'Query Resource Bridge status'
+                )
+                @($report.operations | Where-Object { $_.status -ne 'Succeeded' }).Count | Should -Be 0
+            }
+            finally {
+                if ($null -ne $savedTimingPath) { $env:AZLOCAL_PIPELINE_TIMING_PATH = $savedTimingPath }
+                else { Remove-Item Env:\AZLOCAL_PIPELINE_TIMING_PATH -ErrorAction SilentlyContinue }
+            }
+        }
     }
 }
 
@@ -20809,6 +20866,54 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $result.UnsupportedClusters | Should -Be 0
     }
 
+    It 'Records all seven Monitor 3 collection operations when pipeline timing is enabled' {
+        $savedTimingPath = $env:AZLOCAL_PIPELINE_TIMING_PATH
+        $timingPath = Join-Path $TestDrive 'monitor3-timings.json'
+        $env:AZLOCAL_PIPELINE_TIMING_PATH = $timingPath
+        $resourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='alpha'; ResourceId=$resourceId })
+            Readiness = @([pscustomobject]@{
+                ClusterName='alpha'; ResourceGroup='rg1'; SubscriptionId='s1'; ResourceId=$resourceId
+                UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                RecommendedUpdate=''; CurrentVersion='12.2510.0.123'
+            })
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        try {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+                Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+                Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+                Mock Get-AzLocalUpdateSummary          { @() }
+                Mock Get-AzLocalAvailableUpdates       { @() }
+                Mock Get-AzLocalUpdateRuns             { @() }
+                Mock Get-AzLocalUpdateRunFailures      { @() }
+                Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+            }
+
+            $result.TotalClusters | Should -Be 1
+            $report = Get-Content -LiteralPath $timingPath -Raw | ConvertFrom-Json
+            @($report.operations.stepNumber) | Should -Be @(21, 22, 23, 24, 25, 26, 27)
+            @($report.operations.stepName) | Should -Be @(
+                'Query cluster inventory'
+                'Query update readiness'
+                'Query latest solution version'
+                'Query unresolved update failures'
+                'Query fleet update summaries'
+                'Query available updates'
+                'Query update run history'
+            )
+            @($report.operations | Where-Object { $_.status -ne 'Succeeded' }).Count | Should -Be 0
+        }
+        finally {
+            if ($null -ne $savedTimingPath) { $env:AZLOCAL_PIPELINE_TIMING_PATH = $savedTimingPath }
+            else { Remove-Item Env:\AZLOCAL_PIPELINE_TIMING_PATH -ErrorAction SilentlyContinue }
+        }
+    }
+
     It 'UpdateFailed cluster emits a failure testcase and increments update_failed step output' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
@@ -21639,6 +21744,30 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         # v0.9.12: with no reported health checks the Knowledge note is suppressed.
         $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
         $summary | Should -Not -Match '\*\*Knowledge:\*\*'
+    }
+
+    It 'Records both Monitor 2 fleet queries when pipeline timing is enabled' {
+        $savedTimingPath = $env:AZLOCAL_PIPELINE_TIMING_PATH
+        $timingPath = Join-Path $TestDrive 'monitor2-timings.json'
+        $env:AZLOCAL_PIPELINE_TIMING_PATH = $timingPath
+        $global:_s9_payload = @{ Detail = @(); Overview = @(); OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        try {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+                Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+                Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+            }
+
+            $result.TotalFailures | Should -Be 0
+            $report = Get-Content -LiteralPath $timingPath -Raw | ConvertFrom-Json
+            @($report.operations.stepNumber) | Should -Be @(21, 22)
+            @($report.operations.stepName) | Should -Be @('Query fleet health failures', 'Query fleet health overview')
+            @($report.operations | Where-Object { $_.status -ne 'Succeeded' }).Count | Should -Be 0
+        }
+        finally {
+            if ($null -ne $savedTimingPath) { $env:AZLOCAL_PIPELINE_TIMING_PATH = $savedTimingPath }
+            else { Remove-Item Env:\AZLOCAL_PIPELINE_TIMING_PATH -ErrorAction SilentlyContinue }
+        }
     }
 
     It 'Critical+Warning mixed fleet emits one testcase per failing check, correct bucket counts, and plain anchor cluster links plus a Ctrl-click tip in the markdown summary' {
@@ -24550,18 +24679,20 @@ Describe 'v0.8.6 functional regression: Export-AzLocalAuthValidationReport prese
 
 Describe 'v0.8.6 functional regression: Export-AzLocalFleetHealthStatusReport preserves all detail rows from unary-comma helper' {
 
-    It 'Step.9 assigns Get-AzLocalFleetHealthFailures directly (no @() wrap that collapses 81 rows to 1)' {
+    It 'Step.9 assigns the timed Get-AzLocalFleetHealthFailures operation directly (no outer @() wrap)' {
         $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Export-AzLocalFleetHealthStatusReport.ps1'
         $content = Get-Content -LiteralPath $path -Raw
-        $content | Should -Match '(?m)^\s*\$detail\s*=\s*Get-AzLocalFleetHealthFailures\s+-View\s+Detail'
-        $content | Should -Not -Match '\$detail\s*=\s*@\(\s*Get-AzLocalFleetHealthFailures'
+        $content | Should -Match '(?m)^\s*\$detail\s*=\s*Invoke-AzLocalPipelineTimedOperation\b'
+        $content | Should -Match '-ScriptBlock\s*\{\s*Get-AzLocalFleetHealthFailures\s+-View\s+Detail'
+        $content | Should -Not -Match '\$detail\s*=\s*@\(\s*Invoke-AzLocalPipelineTimedOperation'
     }
 
-    It 'Step.9 assigns Get-AzLocalFleetHealthOverview directly (no @() wrap that collapses fleet rows to 1)' {
+    It 'Step.9 assigns the timed Get-AzLocalFleetHealthOverview operation directly (no outer @() wrap)' {
         $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Export-AzLocalFleetHealthStatusReport.ps1'
         $content = Get-Content -LiteralPath $path -Raw
-        $content | Should -Match '(?m)^\s*\$overview\s*=\s*Get-AzLocalFleetHealthOverview\b'
-        $content | Should -Not -Match '\$overview\s*=\s*@\(\s*Get-AzLocalFleetHealthOverview'
+        $content | Should -Match '(?m)^\s*\$overview\s*=\s*Invoke-AzLocalPipelineTimedOperation\b'
+        $content | Should -Match '-ScriptBlock\s*\{\s*Get-AzLocalFleetHealthOverview\b'
+        $content | Should -Not -Match '\$overview\s*=\s*@\(\s*Invoke-AzLocalPipelineTimedOperation'
     }
 }
 

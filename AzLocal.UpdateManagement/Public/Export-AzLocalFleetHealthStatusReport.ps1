@@ -250,6 +250,7 @@ function Export-AzLocalFleetHealthStatusReport {
     )
 
     $pipelineHost = Get-AzLocalPipelineHost
+    $timingEnabled = -not [string]::IsNullOrWhiteSpace([string]$env:AZLOCAL_PIPELINE_TIMING_PATH)
 
     if (-not $OutputDirectory) {
         if ($pipelineHost -eq 'AzureDevOps' -and $env:BUILD_ARTIFACTSTAGINGDIRECTORY) {
@@ -286,7 +287,12 @@ function Export-AzLocalFleetHealthStatusReport {
     Write-Host "Step 1: Collecting fleet health failure rows (Detail view)..." -ForegroundColor Yellow
     # NOTE: Get-AzLocalFleetHealthFailures uses unary-comma return (`return , $output`).
     # Direct assignment only - never @() wrap, or the entire row set collapses to Object[1].
-    $detail = Get-AzLocalFleetHealthFailures -View Detail @argSplat -ExportPath $detailCsv -PassThru
+    $detail = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-health-status' `
+        -StepNumber 21 `
+        -StepName 'Query fleet health failures' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Get-AzLocalFleetHealthFailures -View Detail @argSplat -ExportPath $detailCsv -PassThru }
     if ($null -eq $detail) { $detail = @() }
     if (-not $detail) { $detail = @() }
     $detailJsonContent = if ($detail.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($detail) -Depth 6 }
@@ -336,7 +342,12 @@ function Export-AzLocalFleetHealthStatusReport {
     if ($Scope -eq 'by-update-ring' -and $UpdateRing) { $overviewArgs['UpdateRingTag'] = $UpdateRing }
     # NOTE: Get-AzLocalFleetHealthOverview uses unary-comma return (`return , $output`).
     # Direct assignment only - never @() wrap, or the entire row set collapses to Object[1].
-    $overview = Get-AzLocalFleetHealthOverview @overviewArgs -ExportPath $overviewCsv -PassThru
+    $overview = Invoke-AzLocalPipelineTimedOperation `
+        -PipelineName 'fleet-health-status' `
+        -StepNumber 22 `
+        -StepName 'Query fleet health overview' `
+        -Enabled $timingEnabled `
+        -ScriptBlock { Get-AzLocalFleetHealthOverview @overviewArgs -ExportPath $overviewCsv -PassThru }
     if ($null -eq $overview) { $overview = @() }
     if (-not $overview) { $overview = @() }
     $overviewJsonContent = if ($overview.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($overview) -Depth 6 }

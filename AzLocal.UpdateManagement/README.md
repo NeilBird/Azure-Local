@@ -84,6 +84,8 @@ If you are new to this module, work through these in order from a regular PowerS
 
 **Pipeline outcomes now match per-cluster results.** Config: 2 publishes its summary and artifacts before failing when any result is `Failed`; missing count output also fails closed. GitHub summaries include a direct diagnostics ZIP link when upload succeeds. No public function or export-count change (73); all bundled pipeline pins are `0.9.36`.
 
+**Monitor bottlenecks are now measurable.** Monitor 1-3 append their internal query and collection-stage durations to the existing `pipeline-timings.json` artifact. The pipeline reference also removes stale Monitor 2/3 `throttle_limit` inputs; these read-side fleet collectors use internal ARG batching.
+
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.35`](docs/release-history.md#whats-new-in-v0935) for the previous release.
