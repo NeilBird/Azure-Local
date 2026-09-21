@@ -156,8 +156,12 @@ its schema version. Existing active tasks keep the profile with which they start
   artifact from the run's Artifacts section; GitHub provides the artifact as a ZIP.
 - **Azure DevOps:** select `diagnostics=true` for a manual run, or set the shared
   `DEBUG_VERBOSE` variable to `true`. Download `azlocal-sideload-updates-diagnostics-*`
-  from the run's published artifacts. This is a pipeline artifact, not a ZIP file
-  explicitly created by the script; use the service's artifact download facility.
+  from the run's published artifacts. The outer container is an Azure DevOps pipeline
+  artifact, published from the local diagnostics directory. Inside it, the collector
+  explicitly creates `sideload-copy-diagnostics.zip` alongside the timing JSON and
+  transcript when diagnostics collection succeeds. Use the service's artifact download
+  facility to retrieve the container or individual files; the copy ZIP is distinct
+  from any archive the service creates for that download.
 - The detached worker writes `paths.stateRoot\logs\<cluster>.<timestamp>.robocopy.log`.
   Its path is recorded in `state\<cluster>.json` alongside the task owner, operation ID,
   worker/copy process IDs, heartbeat, progress, exit code, and failure message.

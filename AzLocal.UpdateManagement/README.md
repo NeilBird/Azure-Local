@@ -94,6 +94,14 @@ redirects, blocks creation after failed dedupe reads, and does not retry inciden
 POSTs. Free-form pipeline inputs stay data; sideload copy paths are quoted correctly.
 Test gates now reject discovery/setup failures and incomplete live shards.
 
+**Sideload copy controls and diagnostics:** typed profiles now support optional
+`ioRateBytesPerSecond` rate limiting and `detailedLogging`, with existing defaults
+preserved and unrestricted robocopy arguments blocked. Diagnostics-enabled pipelines
+attach `sideload-copy-diagnostics.zip` with bounded snapshots of selected clusters'
+current copy logs and a collection manifest. Originals remain on the shared root;
+runner-service logs are excluded. See the [copy and diagnostics guide](Automation-Pipeline-Examples/docs/sideload-robocopy.md)
+for limits, runner support, and the distinction between snapshots and completed logs.
+
 See the repository [CHANGELOG.md](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md) for full release details. See [`What's New in v0.9.36`](docs/release-history.md#whats-new-in-v0936) for the previous release.
 
 ## Files
