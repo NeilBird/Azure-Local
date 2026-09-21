@@ -25,10 +25,6 @@ function Invoke-AzLocalUpdatePrepare {
     if ($LASTEXITCODE -eq 0) {
         return $true
     }
-    elseif ($resultText -match '202|Accepted') {
-        return $true
-    }
-
     Write-Verbose "Prepare result: $(ConvertTo-ScrubbedCliOutput -Text $resultText)"
     return $false
 }

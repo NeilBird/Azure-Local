@@ -152,7 +152,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.36'
+    value: '0.9.37'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -317,6 +317,11 @@ stages:
       # step_errored, recent_failures, unresolved_failures,
       # attempts_without_run).
       env:
+        INPUT_UPDATE_RING: ${{ parameters.updateRing }}
+        INPUT_LONG_RUNNING_STEP_HOURS: ${{ parameters.longRunningStepHours }}
+        INPUT_LONG_RUNNING_THRESHOLD_HOURS: ${{ parameters.longRunningThresholdHours }}
+        INPUT_RECENT_FAILURE_WINDOW_HOURS: ${{ parameters.recentFailureWindowHours }}
+        INPUT_CRITICAL_ELAPSED_DAYS: ${{ parameters.criticalElapsedDays }}
         DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
         DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
         BUILD_REASON: $(Build.Reason)
@@ -350,12 +355,12 @@ stages:
               OutputDirectory        = "$(reportsPath)"
               InstalledModuleVersion = "$(moduleVersionStep.installed_module_version)"
           }
-          if ("${{ parameters.updateRing }}") { $params['UpdateRing'] = "${{ parameters.updateRing }}" }
+          if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
           [int]$parsed = 0
-          if ([int]::TryParse("${{ parameters.longRunningStepHours }}",      [ref]$parsed) -and $parsed -gt 0) { $params['LongRunningStepHours']      = $parsed }
-          if ([int]::TryParse("${{ parameters.longRunningThresholdHours }}", [ref]$parsed) -and $parsed -gt 0) { $params['LongRunningThresholdHours'] = $parsed }
-          if ([int]::TryParse("${{ parameters.recentFailureWindowHours }}",  [ref]$parsed) -and $parsed -ge 0) { $params['RecentFailureWindowHours']  = $parsed }
-          if ([int]::TryParse("${{ parameters.criticalElapsedDays }}",       [ref]$parsed) -and $parsed -gt 0) { $params['CriticalElapsedDays']       = $parsed }
+          if ([int]::TryParse($env:INPUT_LONG_RUNNING_STEP_HOURS,      [ref]$parsed) -and $parsed -gt 0) { $params['LongRunningStepHours']      = $parsed }
+          if ([int]::TryParse($env:INPUT_LONG_RUNNING_THRESHOLD_HOURS, [ref]$parsed) -and $parsed -gt 0) { $params['LongRunningThresholdHours'] = $parsed }
+          if ([int]::TryParse($env:INPUT_RECENT_FAILURE_WINDOW_HOURS,  [ref]$parsed) -and $parsed -ge 0) { $params['RecentFailureWindowHours']  = $parsed }
+          if ([int]::TryParse($env:INPUT_CRITICAL_ELAPSED_DAYS,       [ref]$parsed) -and $parsed -gt 0) { $params['CriticalElapsedDays']       = $parsed }
           # v0.8.90: -SkipWhenIdle (cheap idle probe) - the boolean parameter
           # expands to $True / $False at compile time.
           if ($${{ parameters.skipWhenIdle }} -and -not $diagnosticsEnabled) { $params['SkipWhenIdle'] = $true }
@@ -466,6 +471,7 @@ stages:
       name: itsm
       condition: and(succeeded(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
       env:
+        ITSM_CONFIG_PATH: ${{ parameters.itsmConfigPath }}
         # BEGIN-AZLOCAL-CUSTOMIZE:itsm-secrets
         # Bind your ITSM connector secrets from the variable group above.
         # Defaults assume the ServiceNow OAuth client_credentials naming used
@@ -485,11 +491,11 @@ stages:
         inlineScript: |
           Import-Module AzLocal.UpdateManagement -Force
 
-          $configPath = "${{ parameters.itsmConfigPath }}"
+          $configPath = $env:ITSM_CONFIG_PATH
           $dryRun     = [System.Convert]::ToBoolean("${{ parameters.itsmDryRun }}")
           $force      = [System.Convert]::ToBoolean("${{ parameters.itsmForceCreate }}")
 
-          if (-not (Test-Path $configPath)) {
+          if (-not (Test-Path -LiteralPath $configPath)) {
               Write-Host "##vso[task.logissue type=warning]ITSM config not found at '$configPath' - skipping ticket creation."
               exit 0
           }

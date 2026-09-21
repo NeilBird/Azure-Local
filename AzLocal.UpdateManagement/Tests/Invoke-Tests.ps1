@@ -583,4 +583,6 @@ if ($OpenReport) {
 }
 
 # Return results for pipeline use
+. (Join-Path $PSScriptRoot 'Assert-AzLocalPesterResult.ps1')
+Assert-AzLocalPesterResult -Result $results -AllowSkipped:(-not ($IncludeLive -or $LiveOnly))
 return $results

@@ -506,8 +506,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.36' {
-            $script:ModuleInfo.Version | Should -Be '0.9.36'
+        It 'Should have version 0.9.37' {
+            $script:ModuleInfo.Version | Should -Be '0.9.37'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1876,6 +1876,52 @@ Describe 'Function: Start-AzLocalClusterUpdate' {
     }
 }
 
+Describe 'Update-run pagination safety' {
+    It 'follows an empty first page for <Filter>' -ForEach @(
+        @{ Filter = 'update' }
+        @{ Filter = '' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Filter = $Filter } {
+            param($Filter)
+            Mock Get-AzLocalAvailableUpdates { [pscustomobject]@{ name = 'update' } }
+            Mock Invoke-AzRestJson {
+                param($Uri)
+                if ($Uri -match 'page=2') { return [pscustomobject]@{ Ok = $true; Data = [pscustomobject]@{ value = @([pscustomobject]@{ name = 'second' }) } } }
+                [pscustomobject]@{ Ok = $true; Data = [pscustomobject]@{ value = @(); nextLink = 'https://management.azure.com/test/updates/update/updateRuns?page=2' } }
+            }
+            $rows = @(Get-AzLocalClusterUpdateRuns -resourceId '/test' -updateNameFilter $Filter -apiVer 'test')
+            $rows.Count | Should -Be 1
+            $rows[0].name | Should -Be 'second'
+            Should -Invoke Invoke-AzRestJson -Times 2 -Exactly
+        }
+    }
+
+    It 'rejects unsafe or repeated continuation <NextLink>' -ForEach @(
+        @{ NextLink = 'https://example.invalid/next' }
+        @{ NextLink = 'http://management.azure.com/test/updates/update/updateRuns' }
+        @{ NextLink = 'https://management.azure.com/other/updates/update/updateRuns' }
+        @{ NextLink = 'https://management.azure.com/test/updates/update/updateRuns?api-version=test' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ NextLink = $NextLink } {
+            param($NextLink)
+            Mock Invoke-AzRestJson { [pscustomobject]@{ Ok = $true; Data = [pscustomobject]@{ value = @(); nextLink = $NextLink } } }
+            { Get-AzLocalClusterUpdateRuns -resourceId '/test' -updateNameFilter 'update' -apiVer 'test' } | Should -Throw
+            Should -Invoke Invoke-AzRestJson -Times 1 -Exactly
+        }
+    }
+
+    It 'throws rather than returning partial data after a later-page failure' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzRestJson {
+                param($Uri)
+                if ($Uri -match 'page=2') { return [pscustomobject]@{ Ok = $false; Error = 'second page failed' } }
+                [pscustomobject]@{ Ok = $true; Data = [pscustomobject]@{ value = @([pscustomobject]@{ name = 'first' }); nextLink = 'https://management.azure.com/test/updates/update/updateRuns?page=2' } }
+            }
+            { Get-AzLocalClusterUpdateRuns -resourceId '/test' -updateNameFilter 'update' -apiVer 'test' } | Should -Throw '*second page failed*'
+        }
+    }
+}
+
 Describe 'v0.9.33: Invoke-AzLocalUpdatePrepare transport' {
     BeforeEach {
         $global:prepareAzArgs = @()
@@ -1906,13 +1952,29 @@ Describe 'v0.9.33: Invoke-AzLocalUpdatePrepare transport' {
         }
     }
 
-    It 'accepts an asynchronous 202 response even when the native exit code is nonzero' {
+    It 'rejects a failed native invocation even when output says accepted' {
         $global:prepareExitCode = 1
         $global:prepareResponse = '202 Accepted'
         InModuleScope AzLocal.UpdateManagement {
             Mock Test-AzLocalClusterResourceInGlobalScope { $true }
             Mock Test-AzCliAvailable { $true }
-            Invoke-AzLocalUpdatePrepare -ClusterResourceId '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/Dallas' -UpdateName 'Solution12.2608.1003.8' | Should -BeTrue
+            Invoke-AzLocalUpdatePrepare -ClusterResourceId '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/Dallas' -UpdateName 'Solution12.2608.1003.8' | Should -BeFalse
+        }
+    }
+
+    It 'uses exit status for both update actions with <Response>' -ForEach @(
+        @{ Response = 'ERROR: AuthorizationFailed at 2026-09-21'; ExitCode = 1; Expected = $false }
+        @{ Response = 'Request not Accepted'; ExitCode = 1; Expected = $false }
+        @{ Response = '202 Accepted'; ExitCode = 0; Expected = $true }
+    ) {
+        $global:prepareExitCode = $ExitCode
+        $global:prepareResponse = $Response
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Expected = $Expected } {
+            param($Expected)
+            Mock Test-AzLocalClusterResourceInGlobalScope { $true }
+            Mock Test-AzCliAvailable { $true }
+            Invoke-AzLocalUpdateApply -ClusterResourceId '/synthetic' -UpdateName 'synthetic' | Should -Be $Expected
+            Invoke-AzLocalUpdatePrepare -ClusterResourceId '/synthetic' -UpdateName 'synthetic' | Should -Be $Expected
         }
     }
 
@@ -2426,6 +2488,11 @@ Describe 'Function: Set-AzLocalClusterUpdateRingTag' {
             $script:setRingSource | Should -Match 'Already in sync \(no change needed\):'
         }
 
+        It 'Summary section tallies WhatIf results so dry-run counts reconcile' {
+            $script:setRingSource | Should -Match '\$whatIfCount\s*=\s*@\(\$results\s*\|\s*Where-Object\s*\{\s*\$_\.Status\s*-eq\s*"WhatIf"\s*\}\)\.Count'
+            $script:setRingSource | Should -Match 'WhatIf \(dry-run\): \$whatIfCount'
+        }
+
         It 'Force mode short-circuits when all managed tags already match (no wasted PATCH)' {
             $script:setRingSource | Should -Match 'Force mode enabled but all managed tags already match desired state'
             $script:setRingSource | Should -Match '-Force PATCH skipped'
@@ -2751,6 +2818,11 @@ Describe 'Function: Get-AzLocalClusterInfo' {
         It 'Should have ApiVersion parameter' {
             $command.Parameters.Keys | Should -Contain 'ApiVersion'
         }
+
+        It 'Should define SuppressFormattedOutput for nested report collection' {
+            $source = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot '..\Public\Get-AzLocalUpdateRuns.ps1')
+            $source | Should -Match '\[switch\]\$SuppressFormattedOutput'
+        }
     }
 }
 
@@ -2961,6 +3033,73 @@ Describe 'Function: Get-AzLocalUpdateRuns' {
             $command.ParameterSets.Name | Should -Contain 'ByName'
             $command.ParameterSets.Name | Should -Contain 'ByResourceId'
             $command.ParameterSets.Name | Should -Contain 'ByTag'
+        }
+    }
+}
+
+Describe 'v0.9.37: Single-cluster formatted-output suppression' {
+    BeforeEach {
+        Mock Write-Log {} -ModuleName AzLocal.UpdateManagement
+        Mock Write-Host {} -ModuleName AzLocal.UpdateManagement
+        Mock Test-AzCliAvailable { $true } -ModuleName AzLocal.UpdateManagement
+        Mock Get-AzLocalClusterInfo {
+            [pscustomobject]@{ id = '/subscriptions/sub-test/resourceGroups/rg-test/providers/Microsoft.AzureStackHCI/clusters/test-cluster' }
+        } -ModuleName AzLocal.UpdateManagement
+        Mock Get-AzLocalClusterUpdateRuns {
+            ,@([pscustomobject]@{ name = 'run-test' })
+        } -ModuleName AzLocal.UpdateManagement
+        Mock Format-AzLocalUpdateRun {
+            [pscustomobject]@{ State = 'Succeeded'; CurrentStep = ''; StartTime = '2026-09-18T00:00:00Z' }
+        } -ModuleName AzLocal.UpdateManagement
+        Mock Test-AzLocalClusterHealth {
+            ,@([pscustomobject]@{
+                CriticalCount = 1
+                Failures = @([pscustomobject]@{
+                    TargetResourceName = 'node-test'; CheckName = 'Storage'; Description = 'Storage unhealthy'; Remediation = 'Repair storage'
+                })
+            })
+        } -ModuleName AzLocal.UpdateManagement
+    }
+
+    It 'Preserves returned runs without a false empty-result warning (Suppress=<Suppress>)' -TestCases @(
+        @{ Suppress = $true }, @{ Suppress = $false }
+    ) {
+        param($Suppress)
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Suppress = $Suppress } {
+            param($Suppress)
+            $runs = @(Get-AzLocalUpdateRuns -ClusterName 'test-cluster' -SubscriptionId 'sub-test' -PassThru -SkipSideloadedReset -SuppressFormattedOutput:$Suppress)
+            $runs.Count | Should -Be 1
+            $runs[0].State | Should -Be 'Succeeded'
+            Assert-MockCalled Write-Log -Times 0 -Exactly -ParameterFilter { $Message -like 'No update runs found*' }
+            if ($Suppress) {
+                Assert-MockCalled Write-Host -Times 0 -Exactly
+            }
+            else {
+                Assert-MockCalled Write-Host
+            }
+        }
+    }
+
+    It 'Preserves health diagnostics when formatting is suppressed' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Format-AzLocalUpdateRun {
+                [pscustomobject]@{ State = 'Failed'; CurrentStep = 'health check'; StartTime = '2026-09-18T00:00:00Z' }
+            }
+            $runs = @(Get-AzLocalUpdateRuns -ClusterName 'test-cluster' -SubscriptionId 'sub-test' -PassThru -SkipSideloadedReset -SuppressFormattedOutput)
+            $runs[0].State | Should -Be 'Failed'
+            Assert-MockCalled Test-AzLocalClusterHealth -Times 1 -Exactly -ParameterFilter { $BlockingOnly -and $PassThru }
+            Assert-MockCalled Write-Log -Times 1 -Exactly -ParameterFilter { $Level -eq 'Error' -and $Message -like '*Storage unhealthy*' }
+            Assert-MockCalled Write-Log -Times 1 -Exactly -ParameterFilter { $Level -eq 'Warning' -and $Message -like '*Repair storage*' }
+            Assert-MockCalled Write-Host -Times 0 -Exactly
+        }
+    }
+
+    It 'Still warns when no update runs exist' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterUpdateRuns { ,@() }
+            $runs = @(Get-AzLocalUpdateRuns -ClusterName 'test-cluster' -SubscriptionId 'sub-test' -PassThru -SkipSideloadedReset -SuppressFormattedOutput)
+            $runs.Count | Should -Be 0
+            Assert-MockCalled Write-Log -Times 1 -Exactly -ParameterFilter { $Level -eq 'Warning' -and $Message -like 'No update runs found*' }
         }
     }
 }
@@ -6109,7 +6248,7 @@ Describe 'Internal Helper: Repair-AzLocalAzureCliAuthentication' {
                 Repair-AzLocalAzureCliAuthentication | Should -BeTrue
 
                 Assert-MockCalled Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
-                    $Uri -match 'audience=api%3A%2F%2FAzureADTokenExchange' -and
+                    [Uri]::UnescapeDataString([string]$Uri) -match '[?&]audience=api://AzureADTokenExchange(&|$)' -and
                     $Headers.Authorization -eq 'Bearer request-token'
                 }
                 $script:AzRenewalCalls | Should -HaveCount 3
@@ -7114,6 +7253,33 @@ Describe 'Internal Helper: Invoke-FleetJobsInParallel' {
         }
     }
 
+    Context 'Parallel job cleanup under inherited WhatIf' {
+
+        It 'Removes completed jobs without emitting cleanup WhatIf output' {
+            InModuleScope AzLocal.UpdateManagement {
+                $activityName = "FleetCleanup-$([Guid]::NewGuid().ToString('N'))"
+                $savedWhatIfPreference = $WhatIfPreference
+                try {
+                    $WhatIfPreference = $true
+                    $captured = @(Invoke-FleetJobsInParallel `
+                        -InputItems @('alpha', 'beta') `
+                        -ScriptBlock { param([object[]]$Batch, [string]$ModulePath) $Batch } `
+                        -ThrottleLimit 2 `
+                        -ActivityName $activityName 6>&1)
+
+                    @($captured | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { $_.MessageData }) -join "`n" |
+                        Should -Not -Match 'Performing the operation "Remove"'
+                    @(Get-Job -Name "$activityName-*" -ErrorAction SilentlyContinue).Count | Should -Be 0
+                }
+                finally {
+                    $WhatIfPreference = $savedWhatIfPreference
+                    Get-Job -Name "$activityName-*" -ErrorAction SilentlyContinue |
+                        Remove-Job -Force -ErrorAction SilentlyContinue -WhatIf:$false
+                }
+            }
+        }
+    }
+
     Context 'ModulePath trailing argument (regression: v0.7.4 parallel-path bug)' {
 
         # When the helper passes the trailing $ModulePath to the per-batch
@@ -7239,12 +7405,13 @@ Describe 'Internal Helper: Invoke-FleetOpClusterAction' {
             InModuleScope AzLocal.UpdateManagement {
                 $script:CapturedParams = $null
                 Mock Start-AzLocalClusterUpdate {
-                    param($ClusterResourceIds, [switch]$Force, $UpdateName)
+                    param($ClusterResourceIds, [switch]$Force, $UpdateName, [switch]$PassThru)
                     $script:CapturedParams = @{
                         ClusterResourceIds = $ClusterResourceIds
                         Force              = [bool]$Force
                         UpdateName         = $UpdateName
                     }
+                    if (-not $PassThru) { return }
                     return [PSCustomObject]@{ ClusterName = 'c1'; Status = 'UpdateStarted'; Message = 'ok' }
                 }
                 $cs = [PSCustomObject]@{
@@ -7306,6 +7473,34 @@ Describe 'Internal Helper: Invoke-FleetOpClusterAction' {
 #region Integration: Invoke-AzLocalFleetOperation parallel dispatch
 
 Describe 'Invoke-AzLocalFleetOperation (parallel dispatch via helpers)' {
+
+    It 'resolves the private action in a fresh worker for multiple clusters' {
+        $manifestPath = (Get-Module AzLocal.UpdateManagement).Path -replace '\.psm1$', '.psd1'
+        $job = Start-Job -ArgumentList $manifestPath -ScriptBlock {
+            param($ManifestPath)
+            Import-Module $ManifestPath -Force
+            $command = Get-Command Invoke-AzLocalFleetOperation
+            $assignment = $command.ScriptBlock.Ast.Find({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $Node.Left.Extent.Text -eq '$perBatchJob'
+            }, $true)
+            $worker = [scriptblock]::Create($assignment.Right.Extent.Text.Trim().TrimStart('{').TrimEnd('}'))
+            $items = @('one', 'two') | ForEach-Object {
+                [pscustomobject]@{ ResourceId = $_; Status = 'Pending'; Attempts = 0; LastAttempt = $null; LastError = $null; Result = $null }
+            }
+            & $worker $items 'ApplyUpdate' @{ DeliberatelyInvalidParameter = $true } 0 0 $ManifestPath
+        }
+        try {
+            $rows = $job | Wait-Job | Receive-Job -ErrorAction Stop
+            $rows.Count | Should -Be 2
+            foreach ($row in $rows) {
+                $row.Attempts | Should -Be 1
+                $row.LastError | Should -Match 'DeliberatelyInvalidParameter'
+                $row.LastError | Should -Not -Match 'not recognized'
+            }
+        }
+        finally { Remove-Job $job -Force -WhatIf:$false }
+    }
 
     Context 'ThrottleLimit=1 inline fast-path' {
 
@@ -9357,6 +9552,35 @@ Describe 'ITSM: New-AzLocalIncident' {
         $failed.Reason | Should -Match 'creation limit reached'
     }
 
+    It 'blocks creates after dedupe failure and reconciles ambiguous creates' -ForEach @(
+        @{ DedupeFailure = $true; ExpectedAction = 'CreateFailed'; ExpectedCreates = 0 }
+        @{ DedupeFailure = $false; ExpectedAction = 'DedupedToExisting'; ExpectedCreates = 1 }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{
+            Path = $script:junitPath; Config = $script:cfg; DedupeFailure = $DedupeFailure
+            ExpectedAction = $ExpectedAction; ExpectedCreates = $ExpectedCreates
+        } {
+            param($Path, $Config, $DedupeFailure, $ExpectedAction, $ExpectedCreates)
+            $script:lookupCount = 0
+            Mock Resolve-AzLocalItsmSecret { param($Reference) if ($Reference -like 'literal://*') { $Reference.Substring(10) } else { 'synthetic' } }
+            Mock Invoke-AzLocalServiceNowAdapter {
+                param($Action)
+                switch ($Action) {
+                    'GetToken' { [pscustomobject]@{ AccessToken = 'synthetic' } }
+                    'FindByDedupe' {
+                        if ($DedupeFailure) { throw 'lookup failed' }
+                        $script:lookupCount++
+                        if ($script:lookupCount -gt 1) { [pscustomobject]@{ sys_id = 'existing'; number = 'INC1' } }
+                    }
+                    'CreateIncident' { throw 'response lost after commit' }
+                }
+            }
+            $rows = @(New-AzLocalIncident -InputArtifactPath $Path -Config $Config -Confirm:$false)
+            $rows[0].Action | Should -Be $ExpectedAction
+            Should -Invoke Invoke-AzLocalServiceNowAdapter -Times $ExpectedCreates -Exactly -ParameterFilter { $Action -eq 'CreateIncident' }
+        }
+    }
+
     It 'Opens the circuit breaker after consecutive create failures' {
         $breakerPath = Join-Path $script:incDir 'breaker.xml'
         $testCases = 1..3 | ForEach-Object {
@@ -9387,6 +9611,34 @@ Describe 'ITSM: New-AzLocalIncident' {
 }
 
 Describe 'ITSM: Invoke-AzLocalItsmHttp' {
+    It 'rejects unsafe URI <Uri> before transport' -ForEach @(
+        @{ Uri = 'http://example/api' }
+        @{ Uri = '/relative' }
+        @{ Uri = 'https://user:password@example/api' }
+        @{ Uri = 'https://example/api#fragment' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ UnsafeUri = $Uri } {
+            param($UnsafeUri)
+            Mock Invoke-RestMethod { throw 'must not reach transport' }
+            { Invoke-AzLocalItsmHttp -Method POST -Uri $UnsafeUri -Body 'synthetic' } | Should -Throw '*HTTPS*'
+            Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+        }
+    }
+
+    It 'disables redirects and never retries ambiguous POST failures' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Start-Sleep { throw 'must not retry' }
+            Mock Invoke-RestMethod {
+                $failure = [Exception]::new('synthetic server failure')
+                Add-Member -InputObject $failure -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = 503; Headers = @{} })
+                throw $failure
+            }
+            { Invoke-AzLocalItsmHttp -Method POST -Uri 'https://example/api' } | Should -Throw '*synthetic server failure*'
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { $MaximumRedirection -eq 0 }
+            Should -Invoke Start-Sleep -Times 0 -Exactly
+        }
+    }
+
     It 'Wraps Invoke-RestMethod and returns the parsed response' {
         $r = InModuleScope AzLocal.UpdateManagement {
             Mock Invoke-RestMethod { return [pscustomobject]@{ ok = $true; value = 42 } }
@@ -9603,7 +9855,10 @@ Describe 'ITSM: New-AzLocalIncident dedupe lookup runs in DryRun' {
         InModuleScope AzLocal.UpdateManagement {
             $script:dedupeCalled = $false
             $script:createCalled = $false
-            Mock Resolve-AzLocalItsmSecret { 'literal-value' }
+            Mock Resolve-AzLocalItsmSecret {
+                param($Reference)
+                if ($Reference -like 'literal://https://*') { $Reference.Substring(10) } else { 'synthetic-value' }
+            }
             Mock Invoke-AzLocalServiceNowAdapter {
                 param($Action)
                 switch ($Action) {
@@ -16778,9 +17033,9 @@ Describe 'Function: Get-AzLocalFleetConnectivityStatus (v0.7.79)' {
         }
 
         It 'ClusterRows is empty array not null' {
-            $script:emptyResult.ClusterRows | Should -Not -BeNullOrEmpty -Because 'Should be an empty array'
+            ($null -ne $script:emptyResult.ClusterRows) | Should -BeTrue
             $script:emptyResult.ClusterRows.Count | Should -Be 0
-        } -Skip  # Acceptable: null vs empty distinction depends on @() wrapping in cmdlet
+        }
 
         It 'Returns a result object even when all queries return empty' {
             $script:emptyResult | Should -Not -BeNullOrEmpty
@@ -18124,7 +18379,7 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
             $outputs | Should -Match '(?m)^management_groups=\["contoso-platform"\]\r?$'
             $outputMatch = [regex]::Match($outputs, '(?m)^cluster_tag_filters=(?<json>.+)$')
             $outputMatch.Success | Should -BeTrue
-            $outputFilters = @($outputMatch.Groups['json'].Value | ConvertFrom-Json)
+            $outputFilters = $outputMatch.Groups['json'].Value | ConvertFrom-Json
             $outputFilters.Count | Should -Be 2
             $outputFilters[0].Name | Should -Be 'Live'
             @($outputFilters[0].Tags).Count | Should -Be 2
@@ -21085,7 +21340,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
                 -PassThru 6>&1)
             $report = @($streamOutput | Where-Object { $_.PSObject.Properties['RunsCsvPath'] })[0]
             Assert-MockCalled Get-AzLocalUpdateRuns -Times 1 -Exactly -ParameterFilter {
-                $PassThru -and $SkipSideloadedReset -and $ExportPath -like '*update-runs.csv'
+                $PassThru -and $SkipSideloadedReset -and $SuppressFormattedOutput -and $ExportPath -like '*update-runs.csv'
             }
             [pscustomobject]@{ Report = $report; StreamOutput = @($streamOutput) }
         }
@@ -25232,6 +25487,45 @@ Describe 'Sideload (v0.8.7): Resolve-AzLocalSideloadPlan' {
 }
 
 Describe 'Sideload (v0.9.22): typed settings and task safety' {
+    It 'accepts an explicit copy rate and detailed logging' {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'rate-settings.yml'
+        (Get-Content $source -Raw).Replace('ioRateBytesPerSecond: 0', 'ioRateBytesPerSecond: 10485760').Replace('detailedLogging: false', 'detailedLogging: true') | Set-Content $path
+        $settings = Get-AzLocalSideloadSettings -Path $path
+        $settings.Copy.profiles.balanced.ioRateBytesPerSecond | Should -Be 10485760
+        $settings.Copy.profiles.balanced.detailedLogging | Should -BeTrue
+    }
+
+    It 'defaults new optional controls for existing profiles' {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'old-profile.yml'
+        (Get-Content $source -Raw) -replace '(?m)^\s*(ioRateBytesPerSecond|detailedLogging):.*\r?\n', '' | Set-Content $path
+        $settings = Get-AzLocalSideloadSettings -Path $path
+        $settings.Copy.profiles.balanced.ioRateBytesPerSecond | Should -Be 0
+        $settings.Copy.profiles.balanced.detailedLogging | Should -BeFalse
+    }
+
+    It 'rejects invalid rate or logging configuration <Replacement>' -ForEach @(
+        @{ Original = 'ioRateBytesPerSecond: 0'; Replacement = 'ioRateBytesPerSecond: 1' }
+        @{ Original = 'ioRateBytesPerSecond: 0'; Replacement = 'ioRateBytesPerSecond: -1' }
+        @{ Original = 'ioRateBytesPerSecond: 0'; Replacement = 'ioRateBytesPerSecond: 1048576.5' }
+        @{ Original = 'ioRateBytesPerSecond: 0'; Replacement = 'ioRateBytesPerSecond: 1099511627777' }
+        @{ Original = 'ioRateBytesPerSecond: 0'; Replacement = 'ioRateBytesPerSecond: 10M /MIR' }
+        @{ Original = 'detailedLogging: false'; Replacement = 'detailedLogging: "false"' }
+    ) {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'invalid-profile.yml'
+        (Get-Content $source -Raw).Replace($Original, $Replacement) | Set-Content $path
+        { Get-AzLocalSideloadSettings -Path $path } | Should -Throw
+    }
+
+    It 'rejects simultaneous I/O rate and inter-packet pacing' {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'conflicting-profile.yml'
+        (Get-Content $source -Raw).Replace('ioRateBytesPerSecond: 0', 'ioRateBytesPerSecond: 10485760').Replace('interPacketGapMilliseconds: 0', 'interPacketGapMilliseconds: 50') | Set-Content $path
+        { Get-AzLocalSideloadSettings -Path $path } | Should -Throw '*not both*'
+    }
+
     It 'parses the bundled disabled schema-1 settings file' {
         $path = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
         $settings = Get-AzLocalSideloadSettings -Path $path
@@ -25279,6 +25573,33 @@ Describe 'Sideload (v0.9.22): typed settings and task safety' {
         InModuleScope AzLocal.UpdateManagement {
             { Register-AzLocalSideloadCopyTask -TaskName t1 -ClusterName c1 -Version 1.0 -OperationId op1 -SourcePath '\\server\cache\x.zip' -TargetPath '\\cluster\share' -StateRoot '\\server\state' -PrincipalUserId 'CONTOSO\svc' -LogonType S4U } |
                 Should -Throw '*cannot be used for sideload UNC paths*'
+        }
+    }
+
+    It 'rejects unsafe or conflicting native switches <Switches>' -ForEach @(
+        @{ Switches = '/MIR' }
+        @{ Switches = '/PURGE' }
+        @{ Switches = '/MOV' }
+        @{ Switches = '/LOG:elsewhere.log' }
+        @{ Switches = '/IORATE:1' }
+        @{ Switches = '/IORATE:10485760 /IPG:50' }
+        @{ Switches = '/IORATE:10485760 /IORATE:20971520' }
+        @{ Switches = '/IORATE:10485760;Write-Host' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Switches = $Switches } {
+            param($Switches)
+            Mock Register-ScheduledTask { throw 'Task registration must not run' }
+            { Register-AzLocalSideloadCopyTask -TaskName t1 -ClusterName c1 -Version 1.0 -OperationId op1 -SourcePath 'C:\source' -TargetPath 'C:\target' -StateRoot 'C:\state' -PrincipalUserId 'CONTOSO\svc' -RobocopySwitches $Switches } | Should -Throw
+            Should -Invoke Register-ScheduledTask -Times 0 -Exactly
+        }
+    }
+
+    It 'fails before registration when the runner lacks rate support' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock robocopy.exe { '/R /W /IPG' }
+            Mock Register-ScheduledTask { throw 'Task registration must not run' }
+            { Register-AzLocalSideloadCopyTask -TaskName t1 -ClusterName c1 -Version 1.0 -OperationId op1 -SourcePath 'C:\source' -TargetPath 'C:\target' -StateRoot 'C:\state' -PrincipalUserId 'CONTOSO\svc' -RobocopySwitches '/IORATE:10485760' } | Should -Throw '*does not advertise /IORATE*'
+            Should -Invoke Register-ScheduledTask -Times 0 -Exactly
         }
     }
 }

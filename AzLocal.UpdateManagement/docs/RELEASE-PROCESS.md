@@ -17,9 +17,10 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     enforces this; see "Pester guardrails" below.)
  4. Update CHANGELOG.md with a new entry for <candidate>.
  4a. REFRESH IN-PACKAGE DOCS BEFORE PUBLISH. The following Markdown files
-    ship inside the published PSGallery .nupkg (Publish-Module.ps1 only
-    strips Tests/, Publish-Module.ps1, all Tools/ content except the runtime
-    sideload-copy helper, and root-level non-README *.md). Any time
+    ship inside the published PSGallery .nupkg through the explicit
+    IncludePaths allowlist in Publish-Module.ps1. Tests, release tooling,
+    review notes, CHANGELOG.md, and this release-process document are not
+    consumer package content. Any time
     a candidate changes pipeline behaviour, refresh:
       - docs/release-history.md  (current-release pointer + new entry)
       - Automation-Pipeline-Examples/README.md  (section-1 step bullets,
@@ -78,14 +79,18 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     "installed module older than YAML generated-against" guard) will
     flag this if it slips through.
 12. Run the full validation matrix in the test repo:
-      - auth-smoke-test               (OIDC + Service Principal paths)
-      - inventory-clusters            (read-only ARG)
+      - setup-validate-and-inventory  (authentication + read-only inventory)
       - manage-updatering-tags        (dry-run AND committed write)
       - assess-update-readiness       (gating evaluation)
       - apply-updates                 (dry-run; live only on a non-prod cluster)
       - fleet-update-status           (read-only summary)
       - fleet-health-status           (read-only summary)
+      - fleet-connectivity-status     (read-only connectivity)
+      - monitor-updates               (in-flight reporting)
       - apply-updates-schedule-audit  (read-only schedule advisor)
+      - sideload-updates              (opt-in; requires a fabric-connected
+        self-hosted Windows runner/agent and an approved pilot cluster;
+        follow the sideload guide's acceptance checklist)
 13. Inspect every JUnit XML and step summary. Failing testcases must
     be triaged before listing.
 14. Once validation is clean, LIST the candidate version in PowerShell
@@ -173,20 +178,17 @@ release-time invariants. If any of these fail, do not publish.
 ## Publish-Module.ps1 behaviour
 
 - Stages a clean copy of the module to `C:\Temp\AzLocal.UpdateManagement`.
-- Excludes `Tests/`, `Publish-Module.ps1`, and repo-only `Tools/` content from
-  staging. `Tools/Invoke-AzLocalSideloadCopyTask.ps1` is intentionally retained
-  because `Register-AzLocalSideloadCopyTask` invokes it at runtime.
-- Strips root-level `*.md` files except `README.md` from the staging copy.
-  Subfolder markdown (`ITSM/*.md`, `docs/*.md`,
-  `Automation-Pipeline-Examples/README.md`) is retained because consumers
-  expect those at the installed footprint.
+- Copies only the explicit `IncludePaths` allowlist. New consumer documentation
+  outside an included directory must be added to that list deliberately.
+  `Tools/Invoke-AzLocalSideloadCopyTask.ps1` is included for runtime use.
+- Includes the README, selected reference documents, pipeline examples, and ITSM
+  content. Tests, review notes, this document, and CHANGELOG.md are excluded.
+- `-StageOnly` stages and validates without prompting for a key or publishing.
 - Validates the manifest, prompts for the NuGet API key, and publishes to
   PSGallery.
 
-This is why CHANGELOG.md, ad-hoc design notes, and any in-progress
-review/action plans can live at the module root without leaking into the
-published package: only `README.md` is preserved at the root by the
-staging step.
+Validate links against both the source tree and the staged package. Link from
+consumer documentation to the repository URL for intentionally excluded files.
 
 ## After release
 

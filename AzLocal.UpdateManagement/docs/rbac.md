@@ -52,7 +52,16 @@ The following permissions are required for update + fleet-connectivity operation
 |------|--------|
 | Azure Stack HCI VM Contributor | Only has `clusters/read` - cannot apply updates |
 | Azure Stack HCI VM Reader | Read-only access to VMs, no cluster update permissions |
-| Contributor (generic) | Does not include `Microsoft.AzureStackHCI` permissions by default |
+
+The generic **Contributor** role grants control-plane `Actions: ["*"]`, including
+Azure Local update operations, subject to its exclusions, assignment scope, deny
+assignments, and other applicable controls. It is broader than the recommended
+update-operator role, not a role missing `Microsoft.AzureStackHCI` access.
+
+The table above does not establish the authorization mapping of every preview
+endpoint. In particular, validate the prepare workflow with the intended custom
+role in a non-production pilot; do not add a guessed `prepare/action` permission
+without provider documentation or an observed authorization response.
 
 ### Custom "Azure Stack HCI Update Operator (custom)" Role Definition (Least Privilege)
 

@@ -44,6 +44,7 @@ function Invoke-AzLocalServiceNowAdapter {
         [Parameter(Mandatory = $false)][string]$CloseNotes
     )
 
+    Assert-AzLocalItsmUri -Uri $InstanceUrl -Instance
     $base = $InstanceUrl.TrimEnd('/')
 
     # --- Token acquisition / cache lookup ---------------------------------

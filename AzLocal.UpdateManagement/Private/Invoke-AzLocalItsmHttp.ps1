@@ -7,7 +7,7 @@ function Invoke-AzLocalItsmHttp {
         Wraps Invoke-RestMethod with:
           - TLS 1.2+ enforced
           - 30s default timeout
-          - Honour Retry-After on HTTP 429 / 503
+          - Honour Retry-After on retryable GET responses
           - Exponential backoff capped at 3 retry attempts (1s, 2s, 4s)
           - Structured Write-Verbose logging with secret redaction
 
@@ -23,9 +23,11 @@ function Invoke-AzLocalItsmHttp {
         [Parameter(Mandatory = $false)][hashtable]$Headers,
         [Parameter(Mandatory = $false)][object]$Body,
         [Parameter(Mandatory = $false)][string]$ContentType = 'application/json',
-        [Parameter(Mandatory = $false)][int]$TimeoutSec = 30,
-        [Parameter(Mandatory = $false)][int]$MaxAttempts = 3
+        [Parameter(Mandatory = $false)][ValidateRange(1, 300)][int]$TimeoutSec = 30,
+        [Parameter(Mandatory = $false)][ValidateRange(1, 10)][int]$MaxAttempts = 3
     )
+
+    Assert-AzLocalItsmUri -Uri $Uri
 
     # Enforce TLS 1.2+ once per session (idempotent).
     try {
@@ -41,6 +43,7 @@ function Invoke-AzLocalItsmHttp {
         ContentType = $ContentType
         TimeoutSec  = $TimeoutSec
         ErrorAction = 'Stop'
+        MaximumRedirection = 0
     }
     if ($Headers) { $params['Headers'] = $Headers }
     if ($null -ne $Body -and $Method -in 'POST','PUT','PATCH') {
@@ -78,7 +81,7 @@ function Invoke-AzLocalItsmHttp {
                 }
             }
 
-            $retryable = $status -in 429,500,502,503,504
+            $retryable = $Method -eq 'GET' -and $status -in 429,500,502,503,504
             if (-not $retryable -or $attempt -ge $MaxAttempts) {
                 throw [System.Exception]::new("ITSM HTTP $Method $redactedUri failed (status=$status, attempt=$attempt): $($ex.Message)", $ex)
             }
@@ -86,6 +89,7 @@ function Invoke-AzLocalItsmHttp {
             if ($retryAfter -le 0) {
                 $retryAfter = [Math]::Pow(2, $attempt - 1)
             }
+            $retryAfter = [Math]::Min(60, $retryAfter)
             Write-Verbose "Invoke-AzLocalItsmHttp: status=$status, sleeping ${retryAfter}s before retry (attempt $attempt/$MaxAttempts)."
             Start-Sleep -Seconds $retryAfter
         }

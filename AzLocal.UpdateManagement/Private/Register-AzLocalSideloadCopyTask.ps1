@@ -90,9 +90,25 @@ function Register-AzLocalSideloadCopyTask {
     }
 
     $robocopyTokens = @($RobocopySwitches -split '\s+' | Where-Object { $_ })
+    $rateTokens = @($robocopyTokens | Where-Object { $_ -match '^/IORATE:' })
+    if ($rateTokens.Count -gt 1) { throw 'Only one /IORATE value is permitted.' }
     foreach ($token in $robocopyTokens) {
-        if ($token -notmatch '^/(R|W|IPG):\d+$' -and $token -notin @('/Z', '/J')) {
-            throw "Unsupported robocopy switch '$token'. Sideload profiles permit /R:n, /W:n, /IPG:n, /Z, and /J only."
+        if ($token -notmatch '^/(R|W|IPG):[0-9]+$' -and $token -notmatch '^/IORATE:[0-9]+$' -and $token -notin @('/Z', '/J', '/V', '/TS', '/FP', '/BYTES')) {
+            throw "Unsupported robocopy switch '$token'. Sideload profiles permit /R:n, /W:n, /IPG:n, /IORATE:n, /Z, /J, /V, /TS, /FP, and /BYTES only."
+        }
+    }
+    if ($rateTokens.Count -eq 1) {
+        [long]$requestedRate = 0
+        if (-not [long]::TryParse(($rateTokens[0] -split ':', 2)[1], [ref]$requestedRate) -or
+            $requestedRate -lt 524288 -or $requestedRate -gt 1099511627776) {
+            throw '/IORATE must be an integer from 524288 to 1099511627776 bytes per second.'
+        }
+        if (@($robocopyTokens | Where-Object { $_ -match '^/IPG:0*[1-9][0-9]*$' }).Count -gt 0) {
+            throw 'Choose /IORATE or /IPG pacing, not both.'
+        }
+        $robocopyHelp = (& robocopy.exe /? 2>&1) -join [Environment]::NewLine
+        if ($robocopyHelp -notmatch '(?i)/IORATE\b') {
+            throw 'This runner robocopy does not advertise /IORATE support. Upgrade the runner or disable ioRateBytesPerSecond and use interPacketGapMilliseconds.'
         }
     }
     if ($robocopyTokens -contains '/Z' -and $robocopyTokens -contains '/J') {

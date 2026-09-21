@@ -51,6 +51,9 @@ function Get-AzLocalUpdateRuns {
         Only used by the single-cluster mode; the multi-cluster mode uses ARG.
     .PARAMETER ExportPath
         Path to export the results. Supports .csv, .json, and .xml (JUnit format) extensions.
+    .PARAMETER SuppressFormattedOutput
+        Suppresses formatted tables and detailed objects written directly to the host.
+        Information and log streams remain available for normal redirection.
     .OUTPUTS
         PSCustomObject[] - Array of update run objects with the following properties:
         - ClusterName: The cluster name (in multi-cluster mode)
@@ -127,6 +130,9 @@ function Get-AzLocalUpdateRuns {
         [Parameter(Mandatory = $false)]
         [switch]$PassThru,
 
+        [Parameter(Mandatory = $false)]
+        [switch]$SuppressFormattedOutput,
+
         # v0.7.1: when omitted (default), Get-AzLocalUpdateRuns will auto-reset
         # the UpdateSideloaded tag (True->False) and clear UpdateVersionInProgress
         # for any cluster whose latest update run is Succeeded AND whose
@@ -192,10 +198,12 @@ function Get-AzLocalUpdateRuns {
         }
 
         if ($formattedRuns.Count -gt 0) {
-            Write-Log -Message "" -Level Info
-            Write-Log -Message "Update Runs for Cluster: $ClusterName" -Level Header
-            Write-Log -Message ("=" * 60) -Level Header
-            $formattedRuns | Format-Table -AutoSize | Out-String | Write-Host
+            if (-not $SuppressFormattedOutput) {
+                Write-Log -Message "" -Level Info
+                Write-Log -Message "Update Runs for Cluster: $ClusterName" -Level Header
+                Write-Log -Message ("=" * 60) -Level Header
+                $formattedRuns | Format-Table -AutoSize | Out-String | Write-Host
+            }
 
             # If the latest run failed due to health check, show blocking health failures
             $latestRun = $formattedRuns | Select-Object -First 1
@@ -225,7 +233,7 @@ function Get-AzLocalUpdateRuns {
         }
 
         # Display latest run details
-        if ($formattedRuns.Count -gt 0) {
+        if ($formattedRuns.Count -gt 0 -and -not $SuppressFormattedOutput) {
             Write-Log -Message "" -Level Info
             Write-Log -Message "Latest Update Run:" -Level Header
             Write-Host ""
@@ -576,9 +584,11 @@ $updateNameClause
     }
 
     # Display results table
-    Write-Log -Message "" -Level Info
-    Write-Log -Message "Update Runs:" -Level Header
-    $allFormattedRuns | Format-Table ClusterName, UpdateName, State, StartTime, EndTime, Duration, Progress -AutoSize | Out-Host
+    if (-not $SuppressFormattedOutput) {
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Update Runs:" -Level Header
+        $allFormattedRuns | Format-Table ClusterName, UpdateName, State, StartTime, EndTime, Duration, Progress -AutoSize | Out-Host
+    }
 
     # Check for health-check-blocked failures and show diagnostics
     $healthBlockedRuns = @($allFormattedRuns | Where-Object { $_.State -eq "Failed" -and $_.CurrentStep -match "health check" })
@@ -664,7 +674,7 @@ $updateNameClause
     Write-Log -Message "" -Level Info
 
     # Display latest run details per cluster
-    if ($allFormattedRuns.Count -gt 0) {
+    if ($allFormattedRuns.Count -gt 0 -and -not $SuppressFormattedOutput) {
         $latestPerCluster = $allFormattedRuns | Group-Object ClusterName | ForEach-Object {
             $_.Group | Sort-Object StartTime -Descending | Select-Object -First 1
         }

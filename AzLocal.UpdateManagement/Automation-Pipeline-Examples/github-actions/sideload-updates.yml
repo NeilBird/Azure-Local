@@ -90,7 +90,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.36'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.37'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -352,6 +352,10 @@ jobs:
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
         $transcriptStarted = $false
+        $settings = $null
+        $plan = @()
+        $copyDiagnosticsPath = Join-Path './diagnostics' ("copy-{0}-{1}/sideload-copy-diagnostics.zip" -f $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+        if (Test-Path -LiteralPath $copyDiagnosticsPath) { Remove-Item -LiteralPath $copyDiagnosticsPath -Force }
         if ($env:DEBUG_VERBOSE -eq 'true') {
             $VerbosePreference = 'Continue'
             $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
@@ -398,6 +402,8 @@ jobs:
           if ([int]$profile.interPacketGapMilliseconds -gt 0) { $switches += "/IPG:$($profile.interPacketGapMilliseconds)" }
           if ([bool]$profile.restartable) { $switches += '/Z' }
           if ([bool]$profile.unbuffered) { $switches += '/J' }
+          if ([long]$profile.ioRateBytesPerSecond -gt 0) { $switches += "/IORATE:$($profile.ioRateBytesPerSecond)" }
+          if ([bool]$profile.detailedLogging) { $switches += @('/V', '/TS', '/FP', '/BYTES') }
           $applyParams['RobocopySwitches'] = $switches -join ' '
         $taskPassword = $null
         if ([string]$settings.Identity.task.logonType -eq 'Password') {
@@ -432,7 +438,19 @@ jobs:
         }
         }
         finally {
-          if ($transcriptStarted) { Stop-Transcript | Out-Null }
+          try {
+          if ($env:DEBUG_VERBOSE -eq 'true' -and $settings) {
+            try {
+              $moduleRoot = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).ModuleBase
+              $collector = Join-Path $moduleRoot 'Tools/Export-AzLocalSideloadDiagnostics.ps1'
+              & $collector -StateRoot ([string]$settings.Paths.stateRoot) -ClusterName @($plan | ForEach-Object { $_.ClusterName }) -DestinationPath $copyDiagnosticsPath | Out-Null
+            }
+            catch { Write-Host '::warning::Copy diagnostics collection failed; shared originals are unchanged. Collect logs from the shared state root.' }
+          }
+          }
+          finally {
+            if ($transcriptStarted) { Stop-Transcript | Out-Null }
+          }
         }
 
     - name: Upload pipeline performance diagnostics
@@ -443,6 +461,7 @@ jobs:
         path: |
           ./diagnostics/pipeline-transcript.log
           ./diagnostics/pipeline-timings.json
+          ./diagnostics/copy-${{ github.run_id }}-${{ github.run_attempt }}/sideload-copy-diagnostics.zip
         if-no-files-found: warn
         retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 

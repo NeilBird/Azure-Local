@@ -92,9 +92,8 @@ $config.TestResult.OutputFormat = 'NUnitXml'
 Write-Host "Running complete hermetic Pester suite for $commit..." -ForegroundColor Cyan
 $hermeticResult = $null
 . { $hermeticResult = Invoke-Pester -Configuration $config } *> $hermeticLogPath
-if ($hermeticResult.FailedCount -gt 0) {
-    throw "Hermetic release tests failed: passed=$($hermeticResult.PassedCount), failed=$($hermeticResult.FailedCount), skipped=$($hermeticResult.SkippedCount). Log: $hermeticLogPath"
-}
+. (Join-Path $PSScriptRoot 'Assert-AzLocalPesterResult.ps1')
+Assert-AzLocalPesterResult -Result $hermeticResult -AllowSkipped
 Write-Host "Hermetic suite passed: $($hermeticResult.PassedCount) passed, $($hermeticResult.SkippedCount) skipped." -ForegroundColor Green
 
 $liveOutputPath = Join-Path $OutputPath 'live'
@@ -106,7 +105,9 @@ if (-not (Test-Path -LiteralPath $liveAggregatePath -PathType Leaf)) {
     throw "Live runner did not produce its aggregate result. Log: $liveRunnerLogPath"
 }
 $liveResult = Get-Content -LiteralPath $liveAggregatePath -Raw | ConvertFrom-Json
-if ($liveResult.Failed -gt 0 -or $liveResult.Skipped -gt 0 -or $liveResult.Inconclusive -gt 0) {
+if ($liveResult.ShardCount -ne 8 -or $liveResult.Executed -le 0 -or
+    @($liveResult.Shards | Where-Object { $_.Executed -le 0 -or $_.Passed -ne $_.Executed }).Count -gt 0 -or
+    $liveResult.Failed -gt 0 -or $liveResult.Skipped -gt 0 -or $liveResult.Inconclusive -gt 0) {
     throw "Live release tests did not pass cleanly: passed=$($liveResult.Passed), failed=$($liveResult.Failed), skipped=$($liveResult.Skipped), inconclusive=$($liveResult.Inconclusive). Log: $liveRunnerLogPath"
 }
 Write-Host "Live suite passed: $($liveResult.Passed) passed across $($liveResult.ShardCount) shards." -ForegroundColor Green

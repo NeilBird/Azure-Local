@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.36'
+    ModuleVersion = '0.9.37'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -98,6 +98,7 @@
         'Private/Repair-AzLocalExcludedSubscriptionCsv.ps1',
         'Private/Resolve-AzLocalHardwareOem.ps1',
         'Private/Resolve-AzLocalItsmSecret.ps1',
+        'Private/Assert-AzLocalItsmUri.ps1',
         'Private/Resolve-AzLocalUpdateRunDeepestError.ps1',
         'Private/Resolve-SafeOutputPath.ps1',
         'Private/Resolve-WildcardDate.ps1',
@@ -390,6 +391,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.37 - Fixes Config: 2 dry-run cleanup and summary reconciliation, and makes Monitor: 3 nested update-run collection suppress formatted host output without changing exported data. Adds Get-AzLocalUpdateRuns -SuppressFormattedOutput. No export-count change (73).
+
 ## Version 0.9.36 - Fixes Config: 2 parallel workers calling private helpers outside module scope. Per-cluster failures now fail after evidence is published. Monitor 1-3 add internal timings; timing artifacts add non-secret run context and structured, scrubbed ARG diagnostics without KQL or scope identifiers. Monitor 3 suppresses its redundant fleet-wide host dump; stale Monitor 2/3 throttle docs are corrected. No export change (73).
 
 ## Version 0.9.35 - Config: 2 adds 100-cluster jobs, fleet schema v5 concurrency control, and serialized OIDC repair. Azure CLI version, available-update error, and manual Apply input safeguards are hardened. No export change (73).

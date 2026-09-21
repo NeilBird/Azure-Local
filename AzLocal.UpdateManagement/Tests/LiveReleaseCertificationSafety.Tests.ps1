@@ -1,5 +1,39 @@
 #Requires -Module Pester
 
+Describe 'Pester infrastructure failure guards' -Tag 'ReleaseGate' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'Assert-AzLocalPesterResult.ps1')
+    }
+    BeforeEach {
+        $result = [pscustomobject]@{
+            Result = 'Passed'; PassedCount = 1; FailedCount = 0; SkippedCount = 0
+            InconclusiveCount = 0; FailedContainersCount = 0; FailedBlocksCount = 0
+        }
+    }
+    It 'accepts a successful nonempty run' {
+        { Assert-AzLocalPesterResult -Result $result } | Should -Not -Throw
+    }
+    It 'rejects missing results' {
+        { Assert-AzLocalPesterResult -Result $null } | Should -Throw
+    }
+    It 'rejects <Property> failures' -ForEach @(
+        @{ Property = 'Result'; Value = 'Failed' }
+        @{ Property = 'PassedCount'; Value = 0 }
+        @{ Property = 'FailedCount'; Value = 1 }
+        @{ Property = 'FailedContainersCount'; Value = 1 }
+        @{ Property = 'FailedBlocksCount'; Value = 1 }
+        @{ Property = 'SkippedCount'; Value = 1 }
+        @{ Property = 'InconclusiveCount'; Value = 1 }
+    ) {
+        $result.$Property = $Value
+        { Assert-AzLocalPesterResult -Result $result } | Should -Throw
+    }
+    It 'allows hermetic skips only when explicitly requested' {
+        $result.SkippedCount = 1
+        { Assert-AzLocalPesterResult -Result $result -AllowSkipped } | Should -Not -Throw
+    }
+}
+
 Describe 'Live release certification safety' -Tag 'ReleaseGate' {
     BeforeAll {
         $scriptPath = Join-Path $PSScriptRoot '..\Tools\live-release-certification.ps1'
@@ -130,6 +164,7 @@ Describe 'Live integration pipeline-command coverage contract' -Tag 'ReleaseGate
             'Assert-AzLocalPipelineReport'              = 'Local artifact guard; covered by hermetic filesystem tests.'
             'Copy-AzLocalPipelineExample'               = 'Local template copy operation; covered by hermetic filesystem tests.'
             'Export-AzLocalClusterInventoryDriftReport' = 'Local artifact comparison; covered by hermetic fixture tests.'
+            'Export-AzLocalSideloadDiagnostics'          = 'Local ZIP collector; covered by real-file, open-writer, bounded snapshot tests in SideloadWorkflowPrerequisites.Tests.ps1.'
             'Get-AzLocalItsmConfig'                      = 'Local configuration parser; covered by hermetic tests.'
             'Get-AzLocalSideloadSettings'                = 'Local configuration parser; covered by hermetic tests.'
             'Invoke-AzLocalPipelineTimedOperation'       = 'Diagnostic wrapper; covered by hermetic timing tests.'

@@ -5,6 +5,32 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.37] - 2026-09-18
+
+### Added
+
+- Diagnostics-enabled sideload pipelines attach a compressed, bounded snapshot of selected clusters' current robocopy logs and allowlisted state metadata. The ZIP manifest reports missing files, truncation, and collection limits; original logs remain unchanged and runner-service logs are excluded.
+- Sideload profiles optionally accept `ioRateBytesPerSecond` (bounded `/IORATE`, checked against runner support) and `detailedLogging` (managed `/V /TS /FP /BYTES` logging with job header/summary). Existing profiles retain disabled defaults; raw arguments and destructive switches remain unsupported.
+- `Get-AzLocalUpdateRuns -SuppressFormattedOutput` suppresses formatted tables and detailed objects written directly to the host while preserving result objects, exports, logs, warnings, errors, and diagnostic streams. Monitor: 3 uses the switch for its nested update-run collection.
+
+### Changed
+
+- Config: 2's inner reconciliation summary includes an explicit `WhatIf (dry-run)` bucket so Created, Updated, Already in sync, Skipped, WhatIf, and Failed totals reconcile with processed rows.
+- No public function or export-count change (73). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.37`.
+
+### Fixed
+
+- Apply and prepare helpers require a successful Azure CLI exit code; timestamps or error text containing `202`/`Accepted` no longer override failed requests.
+- Fleet operation jobs invoke private helpers inside module scope and request pass-through apply results, preventing false failures or missing result rows.
+- ARM update-run history follows continuation links with same-resource validation, loop/page bounds, and failure propagation instead of silently returning only the first page.
+- ITSM validates HTTPS origins before credential use, disables redirects, retries only reads, blocks incident creation after failed dedupe reads, and reconciles ambiguous create responses without a second POST.
+- Azure DevOps ITSM paths and free-form monitor inputs are passed through environment variables rather than interpolated into PowerShell source.
+- Detached sideload copies preserve spaced paths and trailing backslashes. A failed worker attempts to stop its child copy process. Documentation distinguishes process survival from reboot recovery and includes the outstanding remote end-to-end pilot checklist.
+- Test runners and release gates reject discovery/setup failures, empty execution, and incomplete live shard results. Windows PowerShell 5.1 regressions cover normalized URI matching and JSON array shape.
+- Operator documentation adds setup acceptance checkpoints, corrects Contributor permissions and package staging guidance, and repairs moved reference links.
+- Parallel fleet jobs are removed even when a caller's inherited `WhatIf` preference is active. Dry-run diagnostics no longer contain cleanup `What if: Performing the operation "Remove"` records or retain completed process jobs until runner exit.
+- Monitor: 3 no longer emits the nested fleet-wide update-run table through `Out-Host`; its concise collection summary and `update-runs.csv` artifact remain unchanged.
+
 ## [0.9.36] - 2026-09-18
 
 ### Added
@@ -3744,7 +3770,7 @@ The pipeline install step's drift detector will also emit a `::notice`/warning l
 
 - **HIGH**: every fleet read function dispatched through `Invoke-FleetJobsInParallel` (`Get-AzLocalUpdateRuns`, `Get-AzLocalUpdateSummary`, `Get-AzLocalClusterUpdateReadiness`, `Get-AzLocalAvailableUpdates`, `Get-AzLocalFleetProgress`, `Invoke-AzLocalFleetOperation`, `Test-AzLocalClusterHealth`, `Start-AzLocalClusterUpdate`'s parallel path) failed for every cluster when invoked with `-ThrottleLimit` greater than 1 against the PSGallery-installed module, returning `State = Error` with the message: *"Cannot use '&' to invoke in the context of module 'Invoke-FleetJobsInParallel' because it is not imported. Import the module 'Invoke-FleetJobsInParallel' and try the operation again."* Inline (`-ThrottleLimit 1`) execution was unaffected. Root cause: the v0.7.3 refactor that split the monolithic `.psm1` into `NestedModules` changed the meaning of `$PSCommandPath` inside `Invoke-FleetJobsInParallel.ps1`. It now resolves to the helper's own `.ps1` file (because it is loaded as a nested module), not to the root `AzLocal.UpdateManagement.psd1`. The helper was passing that nested-helper path to each per-batch `Start-Job` scriptblock as `$ModulePath`; the scriptblocks then ran `Import-Module $ModulePath -Force -PassThru` in the fresh child runspace, which loaded only the single `.ps1` file as a transient module named `Invoke-FleetJobsInParallel`. Every subsequent `& $mod { Get-AzLocalClusterUpdateRuns ... }` resolved against that transient module's session state, which contained none of the private helpers. Reported against a 9-cluster Prod fleet immediately after installing v0.7.4 from PSGallery; reproduces 100% on `-ThrottleLimit 10` and on the default `-ThrottleLimit 4` once the cluster count exceeds the throttle.
 - **HIGH**: `New-AzLocalFleetStatusHtmlReport -ThrottleLimit` greater than 1 (which routes through `Get-AzLocalFleetStatusData`) threw at start-up: *"Parallel collection requires module path 'C:\Program Files\WindowsPowerShell\Modules\AzLocal.UpdateManagement\\<ver\>\Public\AzLocal.UpdateManagement.psm1' to be reachable by background jobs, but it does not exist."* Same regression class as the `Invoke-FleetJobsInParallel` bug but a separate code path: `Get-AzLocalFleetStatusData` computes the module path itself for its inline `Start-Job` dispatcher and was using `Join-Path -Path $PSScriptRoot -ChildPath 'AzLocal.UpdateManagement.psm1'`. After v0.7.3, `$PSScriptRoot` resolves to the `Public/` subfolder, not the module root, so the computed path was one level too deep on PSGallery-installed layouts. `New-AzLocalFleetStatusHtmlReport`'s manifest-fallback footer had the same flaw.
-- **Centralised** module-root manifest resolution in a new private helper [`Private/Get-AzLocalModuleRootManifestPath.ps1`](AzLocal.UpdateManagement/Private/Get-AzLocalModuleRootManifestPath.ps1) so we have ONE place that knows the post-v0.7.3 layout. The helper prefers the loaded module's `.Path` (preferring `.psd1` over `.psm1`) and falls back to walking up from the caller's `$PSCommandPath`, so it is correct from any `Public/` or `Private/` file. `Invoke-FleetJobsInParallel`, `Get-AzLocalFleetStatusData`, and `New-AzLocalFleetStatusHtmlReport` all delegate to it. Future `Public/`/`Private/` additions won't reintroduce the same "`$PSScriptRoot` is module root" assumption.
+- **Centralised** module-root manifest resolution in a new private helper [`Private/Get-AzLocalModuleRootManifestPath.ps1`](Private/Get-AzLocalModuleRootManifestPath.ps1) so we have ONE place that knows the post-v0.7.3 layout. The helper prefers the loaded module's `.Path` (preferring `.psd1` over `.psm1`) and falls back to walking up from the caller's `$PSCommandPath`, so it is correct from any `Public/` or `Private/` file. `Invoke-FleetJobsInParallel`, `Get-AzLocalFleetStatusData`, and `New-AzLocalFleetStatusHtmlReport` all delegate to it. Future `Public/`/`Private/` additions won't reintroduce the same "`$PSScriptRoot` is module root" assumption.
 - Added a Pester regression test (`Should pass the root module manifest path (not the helper .ps1) as the trailing ModulePath argument`) under `Internal Helper: Invoke-FleetJobsInParallel`. Existing tests only exercised the inline `-ThrottleLimit 1` fast-path, which never touched the broken Start-Job code path and so silently masked the regression in v0.7.4.
 
 ## [0.7.4] - 2026-05-13

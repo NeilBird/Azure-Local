@@ -186,7 +186,7 @@ function Invoke-FleetJobsInParallel {
                     })
                 }
             }
-            Remove-Job -Job $jobRecord.Job -Force -ErrorAction SilentlyContinue
+            Remove-Job -Job $jobRecord.Job -Force -ErrorAction SilentlyContinue -WhatIf:$false
         }
     }
 
