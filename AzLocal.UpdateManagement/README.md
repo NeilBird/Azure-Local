@@ -590,7 +590,7 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.37** stay above under [`What's New in v0.9.37`](#whats-new-in-v0937).
+The most recent release notes for **v0.9.38** stay above under [`What's New in v0.9.38`](#whats-new-in-v0938).
 
 ### What's New in v0.9.36
 

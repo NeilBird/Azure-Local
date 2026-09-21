@@ -25,20 +25,22 @@
     no Az.* modules required).
 
     Two parameter sets:
-      - FromCsvReports (default): reads the 6 CSVs from a folder. The
-        7th report (the JUnit XML) is referenced by filename in the
-        'Reports Available' list but is not consumed.
+            - FromCsvReports (default): reads the seven CSVs from a folder,
+                including the optional full NIC inventory used for coverage.
+                The JUnit XML is referenced by filename in the 'Reports
+                Available' list but is not consumed.
       - FromObjects: callers pass in already-loaded `[object[]]` arrays
         directly. Used by Pester unit tests and by callers that already
         hold the data in memory.
 
 .PARAMETER ReportsPath
-    Folder containing the 6 CSV reports written by
+    Folder containing the seven CSV reports written by
     `Get-AzLocalFleetConnectivityStatus`:
         fleet-cluster-connectivity.csv
         fleet-arc-status-summary.csv
         fleet-arc-non-connected-machines.csv
         fleet-physical-nics.csv
+        fleet-physical-nic-all.csv (optional full NIC inventory)
         fleet-physical-nic-stats.csv
         fleet-arb-status.csv
     Missing files are treated as empty (the renderer emits "No X
