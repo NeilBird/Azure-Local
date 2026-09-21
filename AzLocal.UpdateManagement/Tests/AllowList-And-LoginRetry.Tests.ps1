@@ -24,6 +24,28 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
+Describe 'v0.9.38: Collapsed GitHub JUnit report details' {
+    It 'Keeps all 17 publishers collapsed with explanatory titles and XML inputs' {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $publisherCount = 0
+        foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml') {
+            $workflow = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Yaml
+            foreach ($job in $workflow.jobs.Values) {
+                foreach ($step in $job.steps) {
+                    if ($step.uses -like 'dorny/test-reporter@*') {
+                        $publisherCount++
+                        $step.with.collapsed | Should -Be 'always' -Because $file.Name
+                        $step.with.'report-title' | Should -Be 'Expand to view JUnit report details'
+                        $step.with.reporter | Should -Be 'java-junit'
+                        $step.with.path | Should -Not -BeNullOrEmpty
+                    }
+                }
+            }
+        }
+        $publisherCount | Should -Be 17
+    }
+}
+
 Describe 'v0.9.1 Private helper: Resolve-AzLocalClusterAllowList' {
 
     BeforeAll {

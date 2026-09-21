@@ -594,14 +594,14 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # 1. Header tile (one-line status, ASCII-safe brackets)
     $scopeLabel = $Scope
-    if ($UpdateRing) { $scopeLabel = "$Scope (UpdateRing = $UpdateRing)" }
+    if ($Scope -eq 'by-update-ring' -and $UpdateRing) { $scopeLabel = "$Scope (UpdateRing = $UpdateRing)" }
     $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } elseif ($clustersWithUnknownHealth -gt 0) { 'REVIEW' } else { 'OK' }
     [void]$md.Add("**[$statusWord]** $total cluster(s) assessed | $readyForUpdate Ready for Update | $upToDate Up to Date | $notReady Not Ready for Update | $clustersWithCritical with Critical health failures | $clustersWithUnknownHealth with no health data | Scope: $scopeLabel")
     [void]$md.Add('')
 
     # 2. Action banner
     if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-        [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - the **apply-updates** pipeline is per-cluster scoped.")
+        [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **Readiness reflects cached Azure data, not authorization to start an update** - confirm current connectivity, maintenance-window eligibility, and prechecks. The **apply-updates** pipeline evaluates each cluster separately.")
     }
     elseif ($clustersWithUnknownHealth -gt 0) {
         [void]$md.Add("> **Review health data**: no Critical health failures were found, but $clustersWithUnknownHealth cluster(s) have no health-check data. Missing data remains non-blocking; confirm those clusters' health before the next apply-updates run.")

@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.37 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.37)
+**Latest Version:** v0.9.38 - [PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.38)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.37](#whats-new-in-v0937)
+- [What's New in v0.9.38](#whats-new-in-v0938)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,31 +78,19 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.37
+## What's New in v0.9.38
 
-**Config: 2 dry runs now finish cleanly and reconcile their counts.** Parallel jobs are removed even when `WhatIf` is inherited, eliminating cleanup WhatIf records and completed process jobs left until runner exit. The inner reconciliation summary includes an explicit `WhatIf (dry-run)` bucket, so all result categories total the processed rows.
+**Less scrolling for large fleets:** GitHub JUnit report details start collapsed, including failures, under "Expand to view JUnit report details". Counts remain visible; XML artifacts, ITSM, and check outcomes are unchanged. Azure DevOps retains its native Tests view.
 
-**Monitor: 3 nested collection is quiet without losing evidence.** `Get-AzLocalUpdateRuns` adds `-SuppressFormattedOutput` for programmatic callers. Monitor: 3 uses it to prevent direct `Out-Host` tables from entering diagnostics while retaining result objects, `update-runs.csv`, logs, warnings, errors, and its concise collection summary. No public function or export-count change (73); all bundled pipeline pins are `0.9.37`.
+**Reports distinguish findings from selection and evidence limits.** Config: 3 explains optional maintenance windows and ring-scoped opt-in. Update: 1 reports its actual scope and qualifies cached readiness. Monitor: 1 shows observed NIC coverage and unmatched ARBs without claiming complete fleet health or proven orphan status.
+
+**Counts, links, and machine-readable findings are corrected.** Monitor: 2 labels health-check occurrences and avoids duplicate JUnit severity. Update: 4 distinguishes recent from older unresolved failures. Monitor: 3 corrects distinct SBE counts, overlapping health-failure action counts, the generated timestamp, and failed-run links.
+
+Markdown remains the operator-facing output; JUnit remains structured evidence for ITSM and test publishers. Reporting pipelines retain their existing success policy even when reports contain cluster failures. Raw records and historical update-run durations remain unchanged. No public function or export-count change (73); bundled pipeline pins are `0.9.38`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-**Reliability and security hardening:** rejected apply/prepare requests no longer
-become successful because their error text contains `202` or `Accepted`. Fleet
-workers execute in module scope and request structured results. Update-run history
-follows bounded same-resource continuation links. ITSM requires HTTPS without
-redirects, blocks creation after failed dedupe reads, and does not retry incident
-POSTs. Free-form pipeline inputs stay data; sideload copy paths are quoted correctly.
-Test gates now reject discovery/setup failures and incomplete live shards.
-
-**Sideload copy controls and diagnostics:** typed profiles now support optional
-`ioRateBytesPerSecond` rate limiting and `detailedLogging`, with existing defaults
-preserved and unrestricted robocopy arguments blocked. Diagnostics-enabled pipelines
-attach `sideload-copy-diagnostics.zip` with bounded snapshots of selected clusters'
-current copy logs and a collection manifest. Originals remain on the shared root;
-runner-service logs are excluded. See the [copy and diagnostics guide](Automation-Pipeline-Examples/docs/sideload-robocopy.md)
-for limits, runner support, and the distinction between snapshots and completed logs.
-
-See the repository [CHANGELOG.md](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md) for full release details. See [`What's New in v0.9.36`](docs/release-history.md#whats-new-in-v0936) for the previous release.
+See the repository [CHANGELOG.md](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md) for full release details. See [`What's New in v0.9.37`](docs/release-history.md#whats-new-in-v0937) for the previous release.
 
 ## Files
 

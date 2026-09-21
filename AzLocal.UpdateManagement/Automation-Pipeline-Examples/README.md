@@ -6,6 +6,12 @@ This folder is the setup-and-configure landing page for the example GitHub Actio
 
 It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/README.md). If something here is unclear, that file is a good cross-reference for the connector portion.
 
+**Reporting semantics (v0.9.38):** Markdown summaries are the operator-facing output. JUnit XML supplies structured findings to ITSM and test publishers; a reported cluster failure does not by itself fail a reporting pipeline. Update-run durations in JUnit describe historical operations, not the report job's execution time. NIC summaries describe observed coverage, and unmatched resource bridges require investigation before any remediation.
+
+**Selection precedes schedule gating:** ring-scoped apply-updates selects matching non-empty `UpdateRing` tags, including when `***` is used. A selected cluster without `UpdateStartWindow` has no maintenance-window restriction, but exclusion windows and other gates still apply. With both tags missing, the cluster stays excluded from ring-scoped runs. Explicit targeting by name/resource ID does not require ring membership; malformed non-empty windows fail closed.
+
+GitHub JUnit publishers use `collapsed: always` with an **Expand to view JUnit report details** heading. Counts stay visible while suite details start closed, including failures. Expand a suite for rendered findings, or download the XML artifact for raw integration data. Azure DevOps retains its native Tests view. This changes presentation only, not XML, ITSM, check conclusions, or workflow failure policy.
+
 ---
 
 ## Table of contents

@@ -848,7 +848,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             Name      = $caseName
             ClassName = 'UpdateMonitor'
             Time      = [double]$r.RunDurationSeconds
-            Failure   = @{ Message = $msg; Type = 'RecentFailure'; Body = $msg }
+            Failure   = @{ Message = $msg; Type = $(if ($r.IsRecentFailure) { 'RecentFailure' } else { 'UnresolvedFailure' }); Body = $msg }
             Properties = (& $tcProps $r 'Failed')
         }) | Out-Null
     }
@@ -929,6 +929,7 @@ function Export-AzLocalUpdateRunMonitorReport {
     [void]$md.Add('')
     $scopeLabel = if ($Scope -eq 'by-update-ring' -and $UpdateRing) { "by-update-ring (UpdateRing = $UpdateRing)" } else { 'all clusters' }
     [void]$md.Add("**Scope**: $scopeLabel - **Per-step warn/crit**: ${LongRunningStepHours}h / $($LongRunningStepHours * 2)h - **Overall warn/crit/skull**: ${LongRunningThresholdHours}h / ${CriticalElapsedDays}d / $($CriticalElapsedDays * 2)d - **Recent-failure window**: ${RecentFailureWindowHours}h - **Snapshot (UTC)**: $($nowUtc.ToString('yyyy-MM-dd HH:mm'))")
+    [void]$md.Add('_JUnit time values represent update-run durations, not the execution time of this reporting pipeline._')
     [void]$md.Add('')
     $clustersScoped = @($inventoryForTags).Count
     $formatPercentage = {
@@ -1117,7 +1118,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('> - **Microsoft Learn:** [Troubleshoot update failures (Azure Local 23H2)](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#troubleshoot-update-failures)')
         [void]$md.Add('> - **GitHub TSG:** [Azure/AzureLocal-Supportability/TSG/Update](https://github.com/Azure/AzureLocal-Supportability/tree/main/TSG/Update)')
         [void]$md.Add('>')
-        [void]$md.Add('> The Checks tab shows the same rows as JUnit failures (`StepError`, `LongRunningStep`, `LongRunningOverall`, `RecentFailure`).')
+        [void]$md.Add('> Machine-readable JUnit findings preserve these rows for ITSM and test publishers (`StepError`, `LongRunningStep`, `LongRunningOverall`, `RecentFailure`, `UnresolvedFailure`).')
         [void]$md.Add('')
     }
     elseif ($inFlight.Count -gt 0) {

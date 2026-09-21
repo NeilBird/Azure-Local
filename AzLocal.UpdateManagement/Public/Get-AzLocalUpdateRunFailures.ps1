@@ -546,9 +546,11 @@ $globalTagFilter
             # encoding the Azure portal expects). We URL-encode aggressively (every slash)
             # which the portal accepts as-is.
             $portalLink = ''
-            if ($r.ClusterResourceId) {
+            if ($r.ClusterResourceId -and $r.UpdateName -and $r.RunId) {
                 $encoded = [System.Uri]::EscapeDataString([string]$r.ClusterResourceId)
-                $portalLink = "https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/$encoded/updateName~/null/updateRunName~/null/refresh~/false"
+                $encodedUpdate = [System.Uri]::EscapeDataString([string]$r.UpdateName)
+                $encodedRun = [System.Uri]::EscapeDataString([string]$r.RunId)
+                $portalLink = "https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/$encoded/updateName/$encodedUpdate/updateRunName/$encodedRun/refresh~/false"
             }
 
             # CurrentStep is a computed column derived from the deepest in-progress step:

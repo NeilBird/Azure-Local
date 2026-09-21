@@ -4,9 +4,19 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.37 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0937) `What's New in v0.9.37` section.
+> **For v0.9.38 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0938) `What's New in v0.9.38` section.
 
 ---
+
+### What's New in v0.9.38
+
+**Less scrolling for large fleets:** GitHub JUnit report details start collapsed, including failures, under "Expand to view JUnit report details". Counts remain visible; XML artifacts, ITSM, and check outcomes are unchanged. Azure DevOps retains its native Tests view.
+
+**Reports distinguish findings from selection and evidence limits.** Config: 3 explains optional maintenance windows and ring-scoped opt-in. Update: 1 reports its actual scope and qualifies cached readiness. Monitor: 1 shows observed NIC coverage and unmatched ARBs without claiming complete fleet health or proven orphan status.
+
+**Counts, links, and machine-readable findings are corrected.** Monitor: 2 labels health-check occurrences and avoids duplicate JUnit severity. Update: 4 distinguishes recent from older unresolved failures. Monitor: 3 corrects distinct SBE counts, overlapping health-failure action counts, the generated timestamp, and failed-run links.
+
+Markdown remains the operator-facing output; JUnit remains structured evidence for ITSM and test publishers. Reporting pipelines retain their existing success policy even when reports contain cluster failures. Raw records and historical update-run durations remain unchanged. No public function or export-count change (73); bundled pipeline pins are `0.9.38`.
 
 ### What's New in v0.9.37
 

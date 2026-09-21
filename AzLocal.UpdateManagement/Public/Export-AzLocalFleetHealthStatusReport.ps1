@@ -391,7 +391,7 @@ function Export-AzLocalFleetHealthStatusReport {
             # exact server / volume / nic that failed).
             $titleText        = if ($r.PSObject.Properties.Match('Title').Count -gt 0)              { [string]$r.Title }              else { '' }
             $targetResId      = if ($r.PSObject.Properties.Match('TargetResourceID').Count -gt 0)   { [string]$r.TargetResourceID }   else { '' }
-            $msg = "{0}: {1} (last occurred {2:yyyy-MM-ddTHH:mm:ssZ})" -f $r.Severity, $r.FailureReason, $r.LastOccurrence
+            $msg = "{0} (last occurred {1:yyyy-MM-ddTHH:mm:ssZ})" -f $r.FailureReason, $r.LastOccurrence
             $bodyLines = @(
                 [string]$r.Description
                 [string]$r.Remediation
@@ -515,7 +515,7 @@ function Export-AzLocalFleetHealthStatusReport {
     [void]$md.Add(("| {0} **Warning** | {1} |" -f $iconMap['Warn'], $warningCount))
     [void]$md.Add("| **Distinct Failure Reasons** | $distinctReasons |")
     [void]$md.Add('')
-    [void]$md.Add('> _**Total Failing Checks** = **Critical** + **Warning**. One cluster can contribute multiple failing checks. **Distinct Failure Reasons** is a secondary axis (Critical + Warning rolled up by reason)._')
+    [void]$md.Add('> _**Total Failing Checks** = **Critical** + **Warning**, counted as timestamped occurrences, not unique root causes. Repeated occurrences are retained. **Distinct Failure Reasons** groups these records by reason. Health status reflects cached health checks, not current connectivity; review Last Checked and health-results age._')
     [void]$md.Add('')
 
     # ---- Fleet Health Overview table -------------------------------------

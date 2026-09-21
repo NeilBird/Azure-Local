@@ -66,6 +66,10 @@
     Rows from fleet-physical-nic-stats.csv (NicType, NicStatus, Count).
     FromObjects set.
 
+.PARAMETER NicAll
+    Optional full NIC inventory from fleet-physical-nic-all.csv, including
+    MachineId and ClusterId, used to report observed telemetry coverage.
+
 .PARAMETER ArbRows
     Rows from fleet-arb-status.csv (ArbName, ArbId, ArbStatus, ClusterId,
     ResourceGroup, DaysSinceLastModified). FromObjects set.
@@ -169,6 +173,10 @@ function New-AzLocalFleetConnectivityStatusSummary {
         [AllowEmptyCollection()]
         [object[]]$NicStats,
 
+        [Parameter(Mandatory = $false, ParameterSetName = 'FromObjects')]
+        [AllowEmptyCollection()]
+        [object[]]$NicAll = @(),
+
         [Parameter(Mandatory = $true, ParameterSetName = 'FromObjects')]
         [AllowEmptyCollection()]
         [object[]]$ArbRows,
@@ -225,6 +233,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
         $arcCsv     = Join-Path -Path $ReportsPath -ChildPath 'fleet-arc-non-connected-machines.csv'
         $nicCsv     = Join-Path -Path $ReportsPath -ChildPath 'fleet-physical-nics.csv'
         $nicStatCsv = Join-Path -Path $ReportsPath -ChildPath 'fleet-physical-nic-stats.csv'
+        $nicAllCsv  = Join-Path -Path $ReportsPath -ChildPath 'fleet-physical-nic-all.csv'
         $arbCsv     = Join-Path -Path $ReportsPath -ChildPath 'fleet-arb-status.csv'
 
         if (Test-Path -LiteralPath $clusterCsv) { $ClusterRows = @(Import-Csv -Path $clusterCsv) } else { $ClusterRows = @() }
@@ -232,6 +241,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
         if (Test-Path -LiteralPath $arcCsv)     { $ArcRows     = @(Import-Csv -Path $arcCsv)     } else { $ArcRows     = @() }
         if (Test-Path -LiteralPath $nicCsv)     { $NicRows     = @(Import-Csv -Path $nicCsv)     } else { $NicRows     = @() }
         if (Test-Path -LiteralPath $nicStatCsv) { $NicStats    = @(Import-Csv -Path $nicStatCsv) } else { $NicStats    = @() }
+        if (Test-Path -LiteralPath $nicAllCsv)  { $NicAll      = @(Import-Csv -Path $nicAllCsv)  } else { $NicAll      = @() }
         if (Test-Path -LiteralPath $arbCsv)     { $ArbRows     = @(Import-Csv -Path $arbCsv)     } else { $ArbRows     = @() }
     }
 
@@ -343,13 +353,13 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine("| ARBs in scope | $arbTotal | One row per ``resourceconnector/appliances`` (multi-cluster-per-RG collapsed via summarize/make_set) |")
     [void]$sb.AppendLine("| Clusters with an ARB | $clustersWithArb | Clusters matched to an ARB by ClusterId |")
     [void]$sb.AppendLine("| Clusters without an ARB | $clustersWithoutArb | Clusters that show ``_(no ARB)_`` in the per-cluster table below |")
-    [void]$sb.AppendLine("| Orphan ARBs | $($orphanArbs.Count) | ARBs whose RG contains no in-scope HCI cluster (listed in the 'Non-Azure Local and/or Orphan ARB appliances' section below when > 0; may include VMware/SCVMM resource bridges) |")
+    [void]$sb.AppendLine("| Unmatched ARBs | $($orphanArbs.Count) | ARBs whose RG contains no in-scope HCI cluster; may serve VMware/SCVMM or clusters outside this scope. See 'Unmatched ARB appliances' below |")
     [void]$sb.AppendLine('')
 
     # 5c. "How to interpret + act" static prose
     [void]$sb.AppendLine('### How to interpret + act on a non-zero reconciliation')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Each non-zero row above points to drift between two control planes (Azure Local cluster state vs Arc/ARB state). Read the direction first, then take the matching remediation step. Goal is parity: delta = 0, no orphan ARBs, every cluster has exactly one ARB.')
+    [void]$sb.AppendLine('Non-zero rows are investigation candidates, not proof of drift. Check scope, telemetry freshness, and expected deployment topology before remediation. Matching node totals alone do not prove that the same machines were reported. Unmatched ARBs may legitimately serve other platforms or out-of-scope clusters.')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('**``Node coverage delta`` is POSITIVE** _(cluster-reported > Arc-tagged: clusters claim more nodes than Arc has)_')
     [void]$sb.AppendLine('')
@@ -376,7 +386,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('| project name, parentClusterId, status = properties.status, lastStatusChange = properties.lastStatusChange')
     [void]$sb.AppendLine('``````')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('**``Clusters without an ARB`` > 0** _(every cluster should have exactly one ``microsoft.resourceconnector/appliances``)_')
+    [void]$sb.AppendLine('**``Clusters without an ARB`` > 0** _(verify whether an ARB is expected for the deployment and visible in this scope)_')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('Look for the cluster rows showing ``_(no ARB)_`` in the per-cluster table below. Causes:')
     [void]$sb.AppendLine('')
@@ -386,9 +396,9 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('An ARB that exists but is ``Offline`` / ``Failed`` still counts toward ''Clusters with an ARB'' - check the ARB Status column in the per-cluster table and the ''Azure Resource Bridges'' table further down for remediation.')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('**``Orphan ARBs`` > 0** _(ARBs whose RG contains no in-scope HCI cluster)_')
+    [void]$sb.AppendLine('**``Unmatched ARBs`` > 0** _(ARBs whose RG contains no in-scope HCI cluster)_')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Inspect the ''Non-Azure Local and/or Orphan ARB appliances'' section below for the full resource IDs. Causes:')
+    [void]$sb.AppendLine('Inspect the ''Unmatched ARB appliances'' section below. Possible explanations:')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('- **ARB serves a different platform** - Azure Arc resource bridge is also used by VMware vSphere and SCVMM; the appliance may be a healthy bridge for a non-Azure Local deployment, not an orphan. Confirm the platform before acting.')
     [void]$sb.AppendLine('- **Cluster deleted but its ARB was not cleaned up** - delete the orphan ARB.')
@@ -401,7 +411,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     # that is not Connected with a Running ARB) shown first and expanded, and those
     # WITHOUT connectivity issues (Connectivity = Connected AND ARB Status = Running)
     # collapsed behind an "Expand to view clusters" details block.
-    $clusterIntro = '_One row per cluster, left-joined to the cluster''s Azure Resource Bridge (ARB) appliance status. Each cluster has at most one ARB. ARBs without a matching cluster in scope are listed separately under ''Non-Azure Local and/or Orphan ARB appliances''._'
+    $clusterIntro = '_One row per cluster, matched to ARB appliance status through the collected resource-group association. This association is not proof of ownership. ARBs without a matching cluster in scope are listed separately under ''Unmatched ARB appliances''._'
     $tableHeader  = '| Cluster | Connectivity | Cluster Status | Nodes | ARB | ARB Status | ARB Days Since LastModified | Resource Group | Location |'
     $tableDivider = '|---------|---------------|-----------------|-------|-----|-------------|------------------------------|----------------|----------|'
 
@@ -504,7 +514,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     # 5e. Orphan ARBs table (conditional)
     if ($orphanArbs.Count -gt 0) {
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('### Non-Azure Local and/or Orphan ARB appliances')
+        [void]$sb.AppendLine('### Unmatched ARB appliances')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('These ARB appliances do not have a matching Azure Local instance (cluster) in scope.')
         [void]$sb.AppendLine('')
@@ -579,7 +589,16 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('### Physical NIC Statistics (full inventory)')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('_One row per (NicType, NicStatus) pair across every NIC reported by every Azure Local edge device in scope. Use this to spot fleet-wide patterns (e.g. many Physical NICs in ''Disconnected'' state across multiple clusters)._')
+    [void]$sb.AppendLine('_One row per (NicType, NicStatus) pair in the returned telemetry, including virtual adapters. Missing telemetry is not evidence of healthy NICs._')
+    if ($NicAll.Count -gt 0) {
+        $nicMachineCount = @($NicAll | Where-Object { $_.PSObject.Properties['MachineId'] -and $_.MachineId } | Select-Object -ExpandProperty MachineId -Unique).Count
+        $nicClusterCount = @($NicAll | Where-Object { $_.PSObject.Properties['ClusterId'] -and $_.ClusterId -and $clusterIdsLower.ContainsKey(([string]$_.ClusterId).ToLowerInvariant()) } | Select-Object -ExpandProperty ClusterId -Unique).Count
+        $nicUnmappedCount = @($NicAll | Where-Object { -not $_.PSObject.Properties['ClusterId'] -or -not $_.ClusterId -or -not $clusterIdsLower.ContainsKey(([string]$_.ClusterId).ToLowerInvariant()) }).Count
+        [void]$sb.AppendLine("**Observed NIC coverage:** $($NicAll.Count) NIC row(s), $nicMachineCount identified machine(s), $nicClusterCount of $clusterTotal in-scope cluster(s). $nicUnmappedCount row(s) have no in-scope cluster mapping. Machine coverage is based on non-empty MachineId values; counts do not establish complete node coverage.")
+    }
+    else {
+        [void]$sb.AppendLine('**Observed NIC coverage:** unavailable; no full NIC inventory rows were supplied. The histogram alone cannot establish machine or cluster coverage.')
+    }
     [void]$sb.AppendLine('')
     if ($NicStats.Count -eq 0) {
         [void]$sb.AppendLine('*No NIC data returned for the selected scope.*')
@@ -601,7 +620,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('### Physical NIC Issues (Disconnected, non-APIPA IP)')
     [void]$sb.AppendLine('')
     if ($NicRows.Count -eq 0) {
-        [void]$sb.AppendLine('*No physical NIC issues. All physical adapters either Up, or Disconnected without a real IP (filtered as noise).*')
+        [void]$sb.AppendLine('*No physical NIC issues matched the actionable filter: Physical + Disconnected + non-APIPA IPv4. This does not establish fleet-wide NIC health; Unknown states and missing telemetry are not covered by this filter.*')
     }
     else {
         $nicSorted = $NicRows | Sort-Object ClusterName, NodeName, NicName

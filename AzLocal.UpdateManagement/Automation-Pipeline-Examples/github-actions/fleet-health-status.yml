@@ -124,7 +124,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.37'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.38'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -366,6 +366,8 @@ jobs:
         name: Fleet Health Status JUnit Debug
         path: ./reports/fleet-health-status.xml
         reporter: java-junit
+        collapsed: always
+        report-title: 'Expand to view JUnit report details'
         fail-on-error: false   # Don't fail the action on health failures
         list-suites: failed    # collapse passing suites (compact view for large fleets)
         list-tests: failed     # within failed suites, only render failed tests
@@ -465,6 +467,8 @@ jobs:
         name: ITSM Tickets (Step.10)
         path: ./reports/itsm-results.xml
         reporter: java-junit
+        collapsed: always
+        report-title: 'Expand to view JUnit report details'
       continue-on-error: true
 
     # v0.9.18: render the support disclaimer at the very bottom of the run summary.
