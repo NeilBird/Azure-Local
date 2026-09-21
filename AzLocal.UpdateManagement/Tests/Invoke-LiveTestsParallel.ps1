@@ -80,6 +80,8 @@ $jobScript = {
 
     $result = $null
     . { $result = Invoke-Pester -Configuration $config } *> $logPath
+    . (Join-Path (Split-Path $TestPath -Parent) 'Assert-AzLocalPesterResult.ps1')
+    Assert-AzLocalPesterResult -Result $result
     $executedCount = $result.PassedCount + $result.FailedCount + $result.SkippedCount + $result.InconclusiveCount
     $summary = [pscustomobject]@{
         Name         = $ShardName
@@ -115,12 +117,6 @@ try {
         $jobOutput = @(Receive-Job -Job $finished *>&1)
         $summary = @($jobOutput | Where-Object { $_.PSObject.Properties['Tag'] } | Select-Object -Last 1)
         if ($summary.Count -eq 0) {
-            $resultPath = Join-Path $OutputPath "$($finished.Name)-result.json"
-            if (Test-Path -LiteralPath $resultPath) {
-                $summary = @(Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json)
-            }
-        }
-        if ($summary.Count -eq 0) {
             $summary = @([pscustomobject]@{
                     Name = $finished.Name; Tag = ''; Executed = 0; Passed = 0
                     Failed = 1; Skipped = 0; Inconclusive = 0; DurationMs = 0
@@ -153,7 +149,10 @@ $aggregate = [pscustomobject]@{
 $aggregate | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $OutputPath 'aggregate-result.json') -Encoding UTF8
 $aggregate | Format-List ShardCount, Executed, Passed, Failed, Skipped, Inconclusive, OutputPath
 
-if ($aggregate.Failed -gt 0 -or $aggregate.Skipped -gt 0 -or $aggregate.Inconclusive -gt 0) {
+if ($aggregate.ShardCount -ne $shards.Count -or
+    @($completed | Where-Object { $_.Executed -le 0 -or $_.Passed -ne $_.Executed }).Count -gt 0 -or
+    @(Compare-Object @($shards.Tag | Sort-Object) @($completed.Tag | Sort-Object)).Count -gt 0 -or
+    $aggregate.Failed -gt 0 -or $aggregate.Skipped -gt 0 -or $aggregate.Inconclusive -gt 0) {
     throw "Parallel live integration failed: passed=$($aggregate.Passed), failed=$($aggregate.Failed), skipped=$($aggregate.Skipped), inconclusive=$($aggregate.Inconclusive). Results: $OutputPath"
 }
 

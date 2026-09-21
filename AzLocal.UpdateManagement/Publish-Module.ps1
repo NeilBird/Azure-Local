@@ -79,6 +79,7 @@ $IncludePaths = @(@(
     'docs\troubleshooting.md'
     # Required at runtime by Register-AzLocalSideloadCopyTask.
     'Tools\Invoke-AzLocalSideloadCopyTask.ps1'
+    'Tools\Export-AzLocalSideloadDiagnostics.ps1'
 ) | Select-Object -Unique)
 
 Write-Host "[$ModuleName] Copying approved module content to staging..." -ForegroundColor Cyan

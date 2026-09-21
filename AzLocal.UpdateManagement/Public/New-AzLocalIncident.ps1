@@ -121,6 +121,7 @@ function New-AzLocalIncident {
 
     try {
         $instanceUrl  = Resolve-AzLocalItsmSecret -Reference ([string]$sn['instanceUrl'])  -DefaultKeyVault $kv -AllowLiteral
+        Assert-AzLocalItsmUri -Uri $instanceUrl -Instance
         $clientId     = Resolve-AzLocalItsmSecret -Reference ([string]$sn['clientId'])     -DefaultKeyVault $kv
         $clientSecret = Resolve-AzLocalItsmSecret -Reference ([string]$sn['clientSecret']) -DefaultKeyVault $kv
 
@@ -134,6 +135,10 @@ function New-AzLocalIncident {
             throw
         }
         Write-Warning "New-AzLocalIncident: DryRun continuing without ServiceNow auth (dedupe lookup will be skipped): $authError"
+    }
+    finally {
+        $clientSecret = $null
+        $tok = $null
     }
 
     # 3. Evaluate triggers + create / dedupe per row ------------------------
@@ -223,16 +228,17 @@ function New-AzLocalIncident {
         $sysId = $null; $ticketNumber = $null; $ticketUrl = $null
         $existing = $null
         $extraReason = $null
+        $dedupeFailed = $false
 
         # Read-only dedupe lookup. Runs in DryRun too (read-only by definition)
-        # provided we managed to acquire a token. If the lookup itself fails,
-        # we degrade to "treat as new" with a Reason annotation.
+        # provided we managed to acquire a token.
         if (-not $ForceCreate -and $accessToken) {
             try {
                 $existing = Invoke-AzLocalServiceNowAdapter -Action FindByDedupe `
                     -InstanceUrl $instanceUrl -AccessToken $accessToken -DedupeKey $dedupeKey
             }
             catch {
+                $dedupeFailed = $true
                 $extraReason = "FindByDedupe failed: $($_.Exception.Message)"
                 Write-Warning "New-AzLocalIncident: FindByDedupe failed for $($row.ClusterName) / ${dedupeKey}: $($_.Exception.Message)"
             }
@@ -241,7 +247,11 @@ function New-AzLocalIncident {
             $extraReason = "Dedupe lookup skipped (DryRun, no ServiceNow auth): $authError"
         }
 
-        if ($existing) {
+        if ($dedupeFailed -and -not $DryRun) {
+            $action = 'CreateFailed'
+            $consecutiveApiFailures++
+        }
+        elseif ($existing) {
             $action       = 'DedupedToExisting'
             $consecutiveApiFailures = 0
             $sysId        = [string]$existing.sys_id
@@ -291,7 +301,23 @@ function New-AzLocalIncident {
                 catch {
                     $action = 'CreateFailed'
                     $consecutiveApiFailures++
+                    $extraReason = 'Incident creation was not confirmed. Reconcile the dedupe key before retrying.'
                     Write-Warning "New-AzLocalIncident: CreateIncident failed for $($row.ClusterName): $($_.Exception.Message)"
+                    if (-not $ForceCreate) {
+                        try {
+                            $reconciled = Invoke-AzLocalServiceNowAdapter -Action FindByDedupe `
+                                -InstanceUrl $instanceUrl -AccessToken $accessToken -DedupeKey $dedupeKey
+                            if ($reconciled -and $reconciled.sys_id) {
+                                $action = 'DedupedToExisting'
+                                $sysId = [string]$reconciled.sys_id
+                                $ticketNumber = [string]$reconciled.number
+                                $ticketUrl = "$instanceUrl/nav_to.do?uri=incident.do?sys_id=$sysId"
+                                $extraReason = 'Existing incident confirmed after an ambiguous create failure.'
+                                $consecutiveApiFailures = 0
+                            }
+                        }
+                        catch { Write-Verbose 'Incident reconciliation failed; no further create request was sent.' }
+                    }
                 }
             }
             else {

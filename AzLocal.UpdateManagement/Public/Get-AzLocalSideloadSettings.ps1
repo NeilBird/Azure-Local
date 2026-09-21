@@ -97,6 +97,23 @@ function Get-AzLocalSideloadSettings {
         throw "Get-AzLocalSideloadSettings: copy profile '$defaultProfileName' cannot enable both restartable and unbuffered modes."
     }
 
+    $rateValue = if ($defaultProfile.ContainsKey('ioRateBytesPerSecond')) { $defaultProfile.ioRateBytesPerSecond } else { 0 }
+    [long]$ioRate = 0
+    if ([string]$rateValue -notmatch '^(0|[1-9][0-9]*)$' -or
+        -not [long]::TryParse([string]$rateValue, [ref]$ioRate) -or
+        ($ioRate -ne 0 -and ($ioRate -lt 524288 -or $ioRate -gt 1099511627776))) {
+        throw 'Get-AzLocalSideloadSettings: ioRateBytesPerSecond must be 0 (disabled) or an integer from 524288 to 1099511627776.'
+    }
+    if ($ioRate -gt 0 -and [int]$defaultProfile.interPacketGapMilliseconds -gt 0) {
+        throw 'Get-AzLocalSideloadSettings: choose ioRateBytesPerSecond or interPacketGapMilliseconds, not both.'
+    }
+    $detailedLogging = if ($defaultProfile.ContainsKey('detailedLogging')) { $defaultProfile.detailedLogging } else { $false }
+    if ($detailedLogging -isnot [bool]) {
+        throw 'Get-AzLocalSideloadSettings: detailedLogging must be a YAML boolean (true or false).'
+    }
+    $defaultProfile['ioRateBytesPerSecond'] = $ioRate
+    $defaultProfile['detailedLogging'] = $detailedLogging
+
     if (-not $config.identity.ContainsKey('task') -or -not ($config.identity.task -is [hashtable])) {
         throw "Get-AzLocalSideloadSettings: identity.task is required."
     }

@@ -992,6 +992,7 @@ function Set-AzLocalClusterUpdateRingTag {
     $updated = @($results | Where-Object { $_.Action -eq "Updated" -and $_.Status -eq "Success" }).Count
     $alreadyInSync = @($results | Where-Object { $_.Status -eq "AlreadyInSync" }).Count
     $skipped = @($results | Where-Object { $_.Status -eq "Skipped" }).Count
+    $whatIfCount = @($results | Where-Object { $_.Status -eq "WhatIf" }).Count
     $failed = @($results | Where-Object { $_.Status -eq "Failed" }).Count
 
     Write-Log -Message "Total clusters processed: $($results.Count)" -Level Info
@@ -999,6 +1000,7 @@ function Set-AzLocalClusterUpdateRingTag {
     Write-Log -Message "Tags updated: $updated" -Level $(if ($updated -gt 0) { "Success" } else { "Info" })
     Write-Log -Message "Already in sync (no change needed): $alreadyInSync" -Level Info
     Write-Log -Message "Skipped (UpdateRing differs, no -Force): $skipped" -Level $(if ($skipped -gt 0) { "Warning" } else { "Info" })
+    Write-Log -Message "WhatIf (dry-run): $whatIfCount" -Level Info
     Write-Log -Message "Failed: $failed" -Level $(if ($failed -gt 0) { "Error" } else { "Info" })
     Write-Log -Message "" -Level Info
     Write-Log -Message "CSV log saved to: $csvLogPath" -Level Info

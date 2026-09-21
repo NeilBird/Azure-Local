@@ -4,6 +4,12 @@
 > The sole runtime configuration source is `config/sideload-settings.yml`; the
 > pipeline is inert while that file contains `enabled: false`.
 >
+> **Validation status:** this workflow has not yet been validated end to end on
+> self-hosted runner/agent VMs with network access to target clusters. Unit tests,
+> configuration checks, and local copy tests do not establish that remote SMB,
+> WinRM, scheduled-task identities, verification, import, and readiness work together.
+> Complete the pilot acceptance checklist below before enabling production schedules.
+>
 > Every run starts with a `preflight` job/stage on a Microsoft-hosted Windows
 > runner that writes a clear panel to the run step summary explaining what is set,
 > what is missing, and how to enable Update: 2. When the gate is OFF the preflight
@@ -22,6 +28,8 @@ internet-connected clusters.
 For the per-pipeline reference card (inputs, artefacts, RBAC, exit conditions) see
 [appendix-pipelines.md - Update: 2](appendix-pipelines.md#update-2---sideload-updates-opt-in).
 For robocopy throttling guidance see [sideload-robocopy.md](sideload-robocopy.md).
+For safe rate/logging profiles and the distinction between pipeline diagnostics and
+detached worker logs, see [logging and downloadable diagnostics](sideload-robocopy.md#logging-and-downloadable-diagnostics).
 
 ---
 
@@ -98,7 +106,16 @@ Per cluster, the current shared state determines the action taken by
 | `Failed` | Bounded copy retry, else surface the error as a JUnit `<failure>`. |
 | `Imported` | Done - nothing to do. |
 
-Re-running is **always safe** - the state machine is idempotent.
+Reconciliation is designed to resume recorded work, but this is not an exactly-once
+guarantee. Serialize runs, retain shared state, and investigate ambiguous import or
+ownership outcomes before forcing a retry. Do not run competing copies of the workflow
+against the same clusters or delete state to clear an error.
+
+A detached worker survives the pipeline ending or the agent service recycling while
+Windows remains running. It does **not** continue through a host reboot, and the task
+has no automatic reboot trigger. After a reboot, the next reconciliation must detect
+stale state and re-drive work within the configured retry limits. Confirm the previous
+owner's copy has stopped before operator-directed failover.
 
 ### 2.1 The per-cluster state JSON *is* the heartbeat
 
@@ -107,7 +124,9 @@ holds both the current `State` and the progress fields the detached worker rewri
 roughly every configured heartbeat interval while the copy runs. It includes
 `OperationId`, `LastHeartbeatUtc`, `LastProgressUtc`, `OwningMachine`, worker and
 robocopy process IDs, byte progress, throughput, ETA, exit code, retries, task name,
-log path, and message. A superseded worker cannot overwrite a newer operation's state.
+log path, and message. Workers check the operation ID before replacing state. This
+check is not a distributed lock: ownership checking and file replacement are separate
+operations. Serialization and controlled failover remain required.
 
 ### 2.2 The detached copy Scheduled Task (and an important account caveat)
 
@@ -258,7 +277,7 @@ cache volumes.
 
 ## 4. Authentication
 
-Two **distinct** identities are used - do not conflate them:
+Three **distinct identity roles** are used - do not conflate them:
 
 1. **Pipeline identity** (Azure plane) - reads the fleet via Azure Resource Graph, reads
    the Key Vault secrets, and writes the `UpdateSideloaded` / `UpdateVersionInProgress`
@@ -273,8 +292,13 @@ Two **distinct** identities are used - do not conflate them:
    built at run time from **two Key Vault secrets** named in the matching sideload
    auth-map row (a username secret + a password secret). This credential - **not** the
    pipeline identity - is used for the WinRM session and `Add-SolutionUpdate`. The
-   detached copy Scheduled Task runs as the runner service account, which needs UNC
-   rights to the shared cache and the cluster import share.
+   detached copy does not automatically inherit this credential.
+3. **Scheduled-task principal** - explicitly selected by
+   `identity.task.principalUserId` and `logonType`. It needs read access to the
+   cache/source and write access to shared state/logs and target import shares.
+   It may differ from the runner service account. The runner service account must
+   itself be able to register/start/manage the task and access the shared control
+   state and media used by the coordinator. Test both identities separately.
 
 ### 4.1 Sideload auth-map CSV (`paths.authMap`)
 
@@ -341,6 +365,15 @@ starter when it is absent. They never overwrite, merge, or migrate an existing f
 The runtime rejects unsupported schema versions with a clear error. There is no
 `SIDELOAD_*` compatibility fallback.
 
+Start with the shipped [sideload-settings.example.yml](../sideload-settings.example.yml),
+which the copy helper places at `config/sideload-settings.yml`. Keep `enabled: false`
+until the identity, paths, and pilot scope have been reviewed. The current templates
+use `remoting.fqdnSuffix` for target resolution but do not pass custom `port`,
+`authentication`, `skipCaCheck`, or `useSsl` settings to the state machine. The bundled
+execution path uses its default HTTPS remoting. Do not assume those configuration
+fields override transport behavior; retain normal certificate validation and the
+default HTTPS listener for the pilot.
+
 ---
 
 ## 7. Cmdlets
@@ -354,12 +387,15 @@ The runtime rejects unsupported schema versions with a clear error. There is no
 | `Reset-AzLocalSideloadedTag` | Operator escape hatch to clear a stuck `UpdateSideloaded` tag. |
 
 > **Automatic gate reset - you normally never run `Reset-AzLocalSideloadedTag` by hand.**
-> After a sideloaded cluster's update run **succeeds**, `Get-AzLocalUpdateRuns` (used by
-> Monitor: 3 / Update: 4) calls `Invoke-AzLocalSideloadedAutoReset`, which flips
+> After a sideloaded cluster's update run **succeeds**, a `Get-AzLocalUpdateRuns` call
+> that permits tag reset calls `Invoke-AzLocalSideloadedAutoReset`, which flips
 > `UpdateSideloaded` back to `False` and clears `UpdateVersionInProgress` - reopening the
 > gate so the cluster is ready to be sideloaded again next cycle (it also tidies stale
 > `UpdateLastAttempt` / `UpdateRetryAttempted` tags). `Reset-AzLocalSideloadedTag` is the
 > manual escape hatch for a payload you abandoned before it ever applied.
+> Monitor: 3 and Update: 4 suppress this reset to remain read-only. Do not expect
+> their reports alone to reset the gate; include an approved reset-capable operation
+> in the post-update procedure and verify the resulting tags before the next cycle.
 
 ### 7.1 What the status report shows
 
@@ -392,13 +428,97 @@ states emitted as `<failure Type='SideloadFailed'>`.
    principal, then set `enabled: true`.
 7. **Dry run**: trigger the pipeline manually with `dry_run=true` and review the planned
    transitions + the `sideload-status` artefacts.
-8. **Enable the CRON**: uncomment the bundled `*/30 * * * *` schedule inside the
+8. **Complete the pilot acceptance checklist below**, then enable the CRON:
+   uncomment the bundled `*/30 * * * *` schedule inside the
    `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block (preserved across
    `Update-AzLocalPipelineExample` upgrades). The Config: 3 schedule-coverage audit can
    recommend a lead-time-aware cron based on `planning.leadDays`.
 9. The state machine advances each cluster to `Imported`; the
    downstream **Update: 3 - Apply Updates** wave then applies the staged update during the
    cluster's `UpdateStartWindow`.
+
+### 8.1 Runner VM and network preparation
+
+1. Provision a supported Windows VM for the runner/agent, with PowerShell 7 for
+   pipeline steps and Windows PowerShell 5.1, Task Scheduler, and robocopy for the
+   detached worker. Install Azure CLI and the modules installed by the template:
+   Az.Accounts, Az.KeyVault, powershell-yaml, and the intended AzLocal.UpdateManagement
+   version. Record the version and settings revision used for acceptance.
+2. Register the VM in the intended private repository/agent pool. Restrict who can
+   queue code on it; never expose a privileged fabric runner to untrusted pull requests.
+   Configure the label/capability and service account before starting the agent service.
+3. From that VM, verify DNS resolution and TCP 445 to the cache/state file server
+   and target import-share host, plus TCP 5986 to the selected cluster node. Verify
+   the actual paths, not only ping. Use a routable, trusted network path; being on
+   the same VLAN is not required, and being on a VLAN does not prove access.
+4. Under the coordinator and task identities, verify the required share and NTFS
+   permissions with a disposable file in an approved test directory. Confirm the
+   gMSA/service account can log on for the scheduled task. For Password logon, store
+   its password in the referenced Key Vault secret, never the YAML or transcript.
+5. Test an authenticated HTTPS WinRM session using the separate cluster credential.
+   Validate the listener certificate hostname, trust chain, and expiry. Confirm the
+   identity can perform the supported import operations. Do not disable certificate
+   checks or enable CredSSP simply to get past a failure. If a remote command must
+   read a second UNC hop, explicitly design/test delegation or use node-local staged
+   media; a successful first-hop session does not grant second-hop file access.
+6. Check free space on source/cache, state/log storage, and target import/extraction
+   volumes for the complete bundle and expanded payload. Use the published package
+   checksum and an OEM-approved source for SBE media. Never substitute a fabricated
+   hash to pass catalog validation. Validate Azure, Key Vault, and CI/CD egress
+   separately using section 10; pre-staged media removes only the download requirement.
+
+### 8.2 Pilot acceptance checklist
+
+Keep production apply schedules disabled during this procedure. Use one approved
+non-production cluster/ring, one runner, and concurrency limits of one initially.
+
+1. Review the catalog version/hash, auth-map row, resolved node/import path, cluster
+   tags, apply schedule, and planning lead time. Confirm only the pilot is due.
+   Existing in-flight state may still be reconciled; inspect shared state before
+   assuming a changed ring filter cancels prior work.
+2. Run preflight and a manual dry run (`dry_run=true` on GitHub, `dryRun=true` on
+   Azure DevOps). Inspect plan rows and warnings. Expect no media staging, task
+   registration, or tag writes. A dry-run pass is not a network/credential test.
+3. With change approval, run manually with dry-run false. Confirm the task principal,
+   `OperationId`, owner, process IDs, source, target, heartbeat and central robocopy log.
+   Confirm `UpdateSideloaded=False` while the copy is incomplete.
+4. Let the pipeline finish and confirm the worker continues and heartbeats advance.
+   Re-run reconciliation until `Copied`, then inspect remote checksum verification,
+   import submission, and any `Discovering` or `NeedsSbe` outcome. Do not bypass a
+   checksum mismatch or force `UpdateSideloaded=True` to clear a failure.
+5. Accept staging only when the state is `Imported`, the selected version is visible
+   to the update service, and the expected gate/version tags are present. Retain
+   the plan, state, log, JUnit report and summary as restricted operational evidence.
+6. Test controlled recovery in the pilot: agent restart, interrupted copy, stale
+   heartbeat, share outage, invalid hash, and import failure. For host reboot or
+   cross-host failover, confirm the old copy has stopped and inspect the new operation
+   ID. Recovery must stay bounded and must not start an additional update/import
+   blindly. Validate cleanup on the recorded owning VM.
+7. Authorize the separate Update: 3 apply operation within the pilot maintenance
+   window, monitor it to completion, verify health and gate reset, then approve wider
+   rings only after the complete cycle has succeeded.
+
+**Scheduled execution remains a deliberate choice.** Uncommenting cron alone is
+insufficient: GitHub's `INPUT_DRY_RUN` fallback is `'true'` when no dispatch input
+exists, and Azure DevOps's `dryRun` default is `true`. After pilot approval, review a
+repository change that explicitly selects live operation for the scheduled path;
+retain true as the manual default. Re-review that customization after template
+refreshes because it is outside the preserved schedule-trigger block. Serialize all
+manual and scheduled runs, including separate pipeline definitions targeting the same
+state root. In Azure DevOps, `batch: true` alone is not an exclusive lock, and
+`always: true` can override its scheduled overlap behavior; use an enforced exclusive
+execution policy before enabling recurring live reconciliation.
+
+### 8.3 Recovery and escalation
+
+Disable future triggers first when investigating; cancelling a pipeline does not stop
+its detached task or an already submitted cluster update. Inspect the shared state and
+owner-host process/task before stopping work. Preserve logs and state, correct the
+underlying access/capacity/media problem, then use the bounded reconciliation path.
+`NeedsSbe` requires the OEM prerequisite procedure. An ambiguous import response
+requires checking the cluster's update service before re-submission. Escalate exhausted
+retries or inconsistent ownership to the operator; do not delete state or increase
+retry limits until the previous operation is accounted for.
 
 ---
 
@@ -489,9 +609,11 @@ These live on the fabric VLAN and are the reason the runner/agent must be on-pre
 
 ### 10.4 Microsoft update-media endpoints (OPTIONAL - only if the runner downloads bundles)
 
-**A fully air-gapped runner needs none of the endpoints in this subsection.** In that case
+**A runner with pre-staged media needs none of the download endpoints in this subsection.** In that case
 you pre-stage the media yourself - set `localPath` on a `Solution` catalog row, or use an
-`SBE` `sourceFolder` - and the pipeline verifies + copies it with **no internet access**.
+`SBE` `sourceFolder` - and the media copy needs no internet download. The pipeline
+still needs its CI/CD, Azure, and Key Vault control-plane connectivity; a fully isolated
+runner cannot execute this cloud-orchestrated workflow as shipped.
 
 If instead you allow the runner **limited egress** to fetch the Microsoft solution bundles
 automatically, the relevant Microsoft endpoints are:

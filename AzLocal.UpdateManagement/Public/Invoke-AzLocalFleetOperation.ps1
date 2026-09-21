@@ -267,13 +267,17 @@ function Invoke-AzLocalFleetOperation {
         if (-not (Get-Command -Name Invoke-FleetOpClusterAction -ErrorAction SilentlyContinue)) {
             Import-Module $ModulePath -Force -ErrorAction Stop
         }
-        foreach ($cs in $ShardItems) {
-            if ($cs.Status -eq 'Succeeded') { continue }
-            Invoke-FleetOpClusterAction -ClusterState $cs -Operation $JobOperation `
-                -MaxRetries $JobMaxRetries -RetryDelaySeconds $JobRetryDelaySeconds `
-                -OperationParameters $JobOpParams
-        }
-        return , $ShardItems
+        $workerModule = Get-Module AzLocal.UpdateManagement
+        & $workerModule {
+            param($Items, $Operation, $OpParams, $MaxRetries, $RetryDelaySeconds)
+            foreach ($clusterState in $Items) {
+                if ($clusterState.Status -eq 'Succeeded') { continue }
+                Invoke-FleetOpClusterAction -ClusterState $clusterState -Operation $Operation `
+                    -MaxRetries $MaxRetries -RetryDelaySeconds $RetryDelaySeconds `
+                    -OperationParameters $OpParams
+            }
+            return , $Items
+        } $ShardItems $JobOperation $JobOpParams $JobMaxRetries $JobRetryDelaySeconds
     }
 
     # Process in batches

@@ -41,6 +41,41 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
+Describe 'Azure DevOps free-form parameter safety' {
+    It 'passes ITSM paths as environment data in <File>' -ForEach @(
+        @{ File = 'apply-updates.yml' }
+        @{ File = 'fleet-connectivity-status.yml' }
+        @{ File = 'fleet-health-status.yml' }
+        @{ File = 'fleet-update-status.yml' }
+        @{ File = 'monitor-updates.yml' }
+    ) {
+        $path = Join-Path $PSScriptRoot "../Automation-Pipeline-Examples/azure-devops/$File"
+        $content = Get-Content -LiteralPath $path -Raw
+        $content | Should -Match 'ITSM_CONFIG_PATH: \$\{\{ parameters\.itsmConfigPath \}\}'
+        $content | Should -Match '\$env:ITSM_CONFIG_PATH'
+        $content | Should -Not -Match '=\s*"\$\{\{ parameters\.(itsmConfigPath|updateRing) \}\}'
+    }
+
+    It 'passes free-form monitor thresholds through environment values before parsing' {
+        $path = Join-Path $PSScriptRoot '../Automation-Pipeline-Examples/azure-devops/monitor-updates.yml'
+        $content = Get-Content -LiteralPath $path -Raw
+        $content | Should -Not -Match 'TryParse\("\$\{\{'
+        $content | Should -Match 'TryParse\(\$env:INPUT_LONG_RUNNING_STEP_HOURS'
+        $content | Should -Match 'INPUT_RECENT_FAILURE_WINDOW_HOURS: \$\{\{ parameters\.recentFailureWindowHours \}\}'
+    }
+
+    It 'preserves literal expressions quotes and newlines read from the environment' {
+        $saved = $env:ITSM_CONFIG_PATH
+        try {
+            $expected = "path'`"`n" + '$(123 + 456)'
+            $env:ITSM_CONFIG_PATH = $expected
+            $path = & { $env:ITSM_CONFIG_PATH }
+            $path | Should -BeExactly $expected
+        }
+        finally { $env:ITSM_CONFIG_PATH = $saved }
+    }
+}
+
 Describe 'Assert-AzLocalAzureSubscriptionAccess' {
 
     Context 'Local host - pass/throw logic (injected account list)' {

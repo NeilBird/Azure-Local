@@ -37,6 +37,8 @@ copy:
       interPacketGapMilliseconds: 0
       restartable: true
       unbuffered: false
+      ioRateBytesPerSecond: 0
+      detailedLogging: false
 
 identity:
   keyVaultAuth: oidc

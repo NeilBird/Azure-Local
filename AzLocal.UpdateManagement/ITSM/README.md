@@ -264,14 +264,16 @@ Key points from the wired step (full YAML in the example files):
   if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
   shell: pwsh
   env:
+    INPUT_ITSM_CONFIG_PATH: ${{ github.event.inputs.itsm_config_path }}
+    INPUT_ITSM_DRY_RUN: ${{ github.event.inputs.itsm_dry_run || 'true' }}
     # BEGIN-AZLOCAL-CUSTOMIZE:itsm-secrets
     ITSM_SN_INSTANCE_URL:  ${{ secrets.ITSM_SN_INSTANCE_URL }}
     ITSM_SN_CLIENT_ID:     ${{ secrets.ITSM_SN_CLIENT_ID }}
     ITSM_SN_CLIENT_SECRET: ${{ secrets.ITSM_SN_CLIENT_SECRET }}
     # END-AZLOCAL-CUSTOMIZE:itsm-secrets
   run: |
-    Import-Module ${{ env.MODULE_PATH }}/AzLocal.UpdateManagement.psd1 -Force
-    $cfg = Get-AzLocalItsmConfig -Path "${{ github.event.inputs.itsm_config_path }}"
+    Import-Module AzLocal.UpdateManagement -Force
+    $cfg = Get-AzLocalItsmConfig -Path $env:INPUT_ITSM_CONFIG_PATH
     New-AzLocalIncident `
         -InputArtifactPath ./reports/fleet-health-status.xml `
         -Config $cfg `
@@ -304,7 +306,23 @@ The first production run should keep `raise_itsm_ticket=false` (or set `itsm_dry
 | Step 4 fails with HTTP 403 | The ServiceNow integration user lacks incident-table access. | Grant the dedicated integration user the `itil` role and verify no additional ACL blocks the required rows; do not grant `admin`. |
 | Connector creates a new ticket every run for the same problem | Custom field `u_azlocal_dedupe_key` not installed, so `FindByDedupe` always returns empty. | Install the custom fields (Section 3.2). |
 | `Action='Skipped'` for a status you wanted to ticket | Status not in `triggers`, or `raiseTicket: false`. | Add an entry with `raiseTicket: true`. |
-| `Action='CreateFailed'` with rate-limit messages | ServiceNow per-instance throttle (default 100 req/min). | The HTTP layer honours `Retry-After` automatically; if it still fails, lower the concurrent cluster count on the run or contact your SN admin. |
+| `Action='CreateFailed'` with rate-limit messages | ServiceNow instance throttling. | GET requests have bounded retries and honour `Retry-After` up to 60 seconds. Incident POSTs are not retried automatically; reconcile the dedupe key before retrying the operation. |
+| `Action='CreateFailed'` after a lookup error | Dedupe could not be established. | Restore read permissions/connectivity and retry only after checking existing incidents. The connector deliberately does not create blindly. |
+
+### Incident delivery and dedupe boundaries
+
+The deterministic key helps find an existing open incident; it is not an exactly-once
+delivery guarantee. A failed lookup blocks creation unless the operator explicitly
+uses `-ForceCreate`. A failed incident POST is not repeated: the connector attempts a
+read-only lookup and reports `DedupedToExisting` if the incident can be found, otherwise
+`CreateFailed`. A server may have committed a ticket even when its response was lost.
+Search by the dedupe key before a manual retry; do not use force to bypass uncertainty.
+
+Serialize writers for the same fleet. Concurrent clients can both observe an empty
+lookup, so server-side enforcement is needed when duplicates must be impossible.
+Agree that enforcement with the ServiceNow owner: lookup currently targets open
+states 1, 2, and 3. A globally unique key also prevents a new incident after closure;
+choose an explicit reopen or lifecycle policy rather than adding uniqueness blindly.
 
 For deeper traces, run the step with `-Verbose`. The HTTP layer logs every attempt and retry; secret values in URLs are redacted.
 
@@ -316,7 +334,10 @@ For deeper traces, run the step with `-Verbose`. The HTTP layer logs every attem
 - **The ServiceNow instance URL is not a secret**, but it identifies the tenant. The example config exposes it as `instanceUrl: env://ITSM_SN_INSTANCE_URL` so a tenant migration only needs a CI-secret rotation rather than a config-file change, and so the value is consistent with how the OAuth secrets are wired. The connector treats it as cosmetic for redaction purposes (instance hostnames are not stripped from `Verbose` logs - bearer tokens are) but never persists it.
 - **Bearer tokens are redacted** in verbose logs (URL query and header values).
 - **All free-text inputs** (cluster names, error text) are **HTML-escaped** when rendered into ticket descriptions to defend against ITSM-side HTML injection. Titles use plain text (no escape needed; ServiceNow `short_description` is plain text).
-- **TLS 1.2+** is enforced before every HTTP call.
+- **HTTPS is required**, with normal certificate validation and no HTTP redirects.
+  The configured instance must be an HTTPS origin without user info, path, query, or
+  fragment. TLS 1.2 is enabled for Windows PowerShell; enforce the minimum permitted
+  TLS version through the host policy as well.
 - **CSV-injection sanitisation** on inputs is unchanged (already present from v0.7.0).
 
 Full security review: [`ITSM-Connector-Plan.md` Section 11](./ITSM-Connector-Plan.md).

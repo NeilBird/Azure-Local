@@ -8,7 +8,8 @@
     Register-AzLocalSideloadCopyTask. It is intentionally SELF-CONTAINED (it does
     NOT import the AzLocal.UpdateManagement module) because it runs in a separate
     process, as the runner/agent service account, and must survive the CI/CD job
-    ending and even a host reboot.
+    ending. A host reboot interrupts the worker; a later reconciliation run
+    must detect stale state and re-drive the copy.
 
     It robocopies the verified solution media (a CombinedSolutionBundle .zip for a
     Microsoft Solution update, or a staged OEM SBE source folder) from the shared
@@ -61,9 +62,14 @@ $ErrorActionPreference = 'Stop'
 $statePath = $null
 $state = $null
 $logPath = ''
+$proc = $null
 
 trap {
     $failureMessage = "Copy worker failed: $($_.Exception.Message)"
+    if ($null -ne $proc -and -not $proc.HasExited) {
+        try { $proc.Kill(); $proc.WaitForExit() }
+        catch { Write-Warning 'Could not stop the detached copy process; inspect the recorded process ID.' }
+    }
     try {
         if ($null -eq $statePath) {
             $statePath = Get-StateFilePath -Root $StateRoot -Cluster $ClusterName
@@ -94,6 +100,16 @@ trap {
         Write-Error "$failureMessage State persistence also failed: $($_.Exception.Message)" -ErrorAction Continue
     }
     exit 1
+}
+
+function ConvertTo-AzLocalNativeArgument {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Value)
+
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
 }
 
 function Get-StateFilePath {
@@ -191,9 +207,11 @@ else {
     $roboArgs = @($SourcePath, $TargetPath, '/E')
 }
 $roboArgs += ($RobocopySwitches -split '\s+' | Where-Object { $_ })
-$roboArgs += @('/NP', '/NJH', '/NJS', ("/LOG:{0}" -f $logPath))
+$roboArgs += @('/NP', ("/LOG:{0}" -f $logPath))
+if ($roboArgs -notcontains '/V') { $roboArgs += @('/NJH', '/NJS') }
 
-$proc = Start-Process -FilePath 'robocopy.exe' -ArgumentList $roboArgs -PassThru
+$nativeArguments = ($roboArgs | ForEach-Object { ConvertTo-AzLocalNativeArgument -Value $_ }) -join ' '
+$proc = Start-Process -FilePath 'robocopy.exe' -ArgumentList $nativeArguments -PassThru
 $state.RobocopyProcessId = $proc.Id
 $state.Message = "Copy started (worker PID $PID, robocopy PID $($proc.Id))."
 Write-StateAtomic -Path $statePath -State $state

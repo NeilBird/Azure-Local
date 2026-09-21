@@ -30,11 +30,6 @@ function Invoke-AzLocalUpdateApply {
     if ($LASTEXITCODE -eq 0) {
         return $true
     }
-    elseif ($resultText -match '202|Accepted') {
-        # 202 Accepted is a valid response for long-running operations
-        return $true
-    }
-
     Write-Verbose "Apply result: $(ConvertTo-ScrubbedCliOutput -Text $resultText)"
     return $false
 }

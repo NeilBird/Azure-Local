@@ -86,7 +86,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.36'
+    value: '0.9.37'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -389,6 +389,10 @@ stages:
               $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
           )
             $transcriptStarted = $false
+          $settings = $null
+          $plan = @()
+          $copyDiagnosticsPath = Join-Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) 'sideload-copy-diagnostics.zip'
+          if (Test-Path -LiteralPath $copyDiagnosticsPath) { Remove-Item -LiteralPath $copyDiagnosticsPath -Force }
           if ($diagnosticsEnabled) {
               $VerbosePreference = 'Continue'
               $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
@@ -446,6 +450,8 @@ stages:
               if ([int]$profile.interPacketGapMilliseconds -gt 0) { $switches += "/IPG:$($profile.interPacketGapMilliseconds)" }
               if ([bool]$profile.restartable) { $switches += '/Z' }
               if ([bool]$profile.unbuffered) { $switches += '/J' }
+              if ([long]$profile.ioRateBytesPerSecond -gt 0) { $switches += "/IORATE:$($profile.ioRateBytesPerSecond)" }
+              if ([bool]$profile.detailedLogging) { $switches += @('/V', '/TS', '/FP', '/BYTES') }
               $applyParams['RobocopySwitches'] = $switches -join ' '
               $taskPassword = $null
               if ([string]$settings.Identity.task.logonType -eq 'Password') {
@@ -480,7 +486,19 @@ stages:
           }
           }
           finally {
-            if ($transcriptStarted) { Stop-Transcript | Out-Null }
+            try {
+            if ($diagnosticsEnabled -and $settings) {
+              try {
+                $moduleRoot = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).ModuleBase
+                $collector = Join-Path $moduleRoot 'Tools/Export-AzLocalSideloadDiagnostics.ps1'
+                & $collector -StateRoot ([string]$settings.Paths.stateRoot) -ClusterName @($plan | ForEach-Object { $_.ClusterName }) -DestinationPath $copyDiagnosticsPath | Out-Null
+              }
+              catch { Write-Host '##vso[task.logissue type=warning]Copy diagnostics collection failed; shared originals are unchanged. Collect logs from the shared state root.' }
+            }
+            }
+            finally {
+              if ($transcriptStarted) { Stop-Transcript | Out-Null }
+            }
           }
 
     - task: PublishPipelineArtifact@1

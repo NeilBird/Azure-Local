@@ -84,6 +84,7 @@ function Invoke-FleetOpClusterAction {
                     foreach ($k in $OperationParameters.Keys) {
                         $applyParams[$k] = $OperationParameters[$k]
                     }
+                    $applyParams['PassThru'] = $true
                     $applyResult = Start-AzLocalClusterUpdate @applyParams
                     # Normalize to the first (and usually only) result for a single cluster
                     $primary = if ($applyResult -is [System.Collections.IEnumerable] -and -not ($applyResult -is [string])) {

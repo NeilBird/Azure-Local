@@ -93,6 +93,30 @@ This is the whole journey from an empty repo to a managed, ring-based update pro
 
 **Day-2 operations:**
 
+**Stop/go checkpoints for the first rollout:**
+
+| Checkpoint | Evidence required before continuing |
+|---|---|
+| Installation | Record the installed module version and template generated-against version. Follow section 5.6 for an exact candidate; do not assume a local source edit is installed on a hosted runner. |
+| Identity and inventory | Config: 1 succeeds and returns the expected subscriptions and cluster count. An empty or unexpectedly small inventory is not acceptance; check RBAC scope and exclusions before granting write access. |
+| Desired state | Review the CSV diff and Config: 2 dry-run summary. Obtain approval before running without dry-run, then re-inventory to confirm the intended tags only. |
+| Readiness and schedule | Review Update: 1 blockers and Config: 3 coverage for one pilot ring. Readiness can refresh a stale assessment; it is not strictly read-only by default. Keep apply schedules disabled until the pilot is approved. |
+| Pilot update | Inspect an Update: 3 dry run, then approve one non-production wave. Acceptance requires a confirmed successful update run and healthy post-update cluster, not merely a successful request submission. |
+| Operations handover | Name an owner for failures, stale reports, credentials, exclusions, and schedule changes. Retain JUnit, CSV, summaries, and diagnostics according to local policy. |
+
+### Advanced capabilities
+
+Enable these independently after the baseline pilot, keeping the default-disabled
+features off until their prerequisites have been reviewed:
+
+| Capability | Setup and validation |
+|---|---|
+| Version allowlists and approval gates | [Section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods): review ring membership, UTC windows, exclusions, and schedule coverage before widening scope. |
+| Update package sideloading | [Sideload runbook](docs/sideload.md#8-end-to-end-runbook): requires self-hosted Windows runner/agent VMs with SMB and WinRM line of sight to clusters. Remote end-to-end acceptance remains outstanding; complete its pilot checklist before production use. |
+| ServiceNow incidents | [ITSM setup](../ITSM/README.md): validate HTTPS connectivity and custom fields, preview payloads, then approve a single incident test and its dedupe behavior. |
+| Failed-update retry | [Section 8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry): review eligibility and the one-retry policy; retain an operator escalation path. |
+| Candidate module testing | [Development channel](docs/development-channel-testing.md): pin the exact candidate, record evidence, and follow the documented disable procedure to return to the listed release. |
+
 - Review daily Config: 1 drift and active-exclusion findings. Edit desired state intentionally; do not replace it wholesale with the live export. Run Config: 2 only when approved tag changes are required.
 - Review Monitor: 1-3 reports each day. During an active wave, use Update: 4 for current-step and long-running diagnostics. Optional ServiceNow ticketing is covered in [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
 - Before each wave, review a fresh Update: 1 assessment. Update: 3 repeats the readiness gate before it writes, but Update: 1 gives operators time to remediate blockers.
@@ -1610,6 +1634,8 @@ Since v0.9.35, parallel planning and PATCH workers return their verbose and log 
 
 Since v0.9.36, fresh planning and PATCH jobs invoke their private helpers inside the imported module session, restoring the default parallel path. Both pipeline platforms publish result evidence before failing when any per-cluster result is `Failed`; GitHub also adds a direct diagnostics ZIP link to the summary when upload succeeds.
 
+Since v0.9.37, dry-run cleanup removes completed parallel jobs even while `WhatIf` is inherited, and the inner reconciliation summary includes `WhatIf (dry-run)` so its category totals reconcile with all processed rows.
+
 **Option B - from PowerShell (faster for one-off changes):**
 
 ```powershell
@@ -1781,6 +1807,8 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 
 **Fleet Update Status** runs daily at 06:17 UTC. It does no writes and produces the fleet-wide JUnit, CSV, and JSON snapshot used for dashboards and alerting.
 
+**v0.9.37 diagnostic-output behavior:** Monitor: 3 passes `-SuppressFormattedOutput` to its nested `Get-AzLocalUpdateRuns` collection. The fleet-wide formatted table no longer enters the transcript through `Out-Host`; `update-runs.csv`, pass-through rows, logs, warnings, errors, and the concise collection summary remain available.
+
 **v0.9.31 scale, authentication, and completeness behavior:** explicit fleets above 200 cluster resource IDs query represented subscriptions in bounded groups of 40, then exact-filter returned child resources to the admitted cluster set. This happens after inventory and tag admission: configured management groups and `clusterTagFilters` determine the admitted IDs, while represented-subscription batching is only the transport used to read their child resources. It applies to readiness discovery, update summaries, available updates, and update runs; it avoids one sequential ARG call per 40 clusters as rollout expands while preserving exact ring/tag scope. On GitHub Actions, an expired federated assertion can be renewed from the runner and the interrupted ARM/ARG request retried once. Monitor: 3 and Update: 4 pass `-SkipSideloadedReset`, so monitoring does not perform per-cluster sideload-tag checks or mutate tags. Monitor: 3 removes stale supplementary exports before collection and fails only after writing the primary reports and a visible warning when a requested current-run export is missing. Report artifacts publish under `always()` so partial evidence remains downloadable.
 
 ![Monitor: 3 - Fleet Update Status summary tab: Fleet Version Distribution table breaking 20 clusters into 5 YYMM rows (2605 / 2604 / 2603 / 2601 supported, 2511 unsupported) with per-row cluster counts, percentages, support badges and the first 15 cluster names per version row, plus a Critical Health Status table (13 Passed / 7 Failed) and a Primary Status table (Total Clusters 20, Up to Date 7, Ready for Update 5, Update In Progress 1)](../docs/images/fleet-update-status.png)
@@ -1838,7 +1866,7 @@ Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions 
 
 > **This is optional and disabled by default.** Pipelines that do not toggle `raise_itsm_ticket=true` continue to behave exactly as before. The connector adds an additive step **after** `Publish Test Results` and never affects the apply-updates exit status.
 
-The connector reads the JUnit results the Apply Updates pipeline already publishes and, for each cluster whose status matches your configured trigger matrix (default: `Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`), opens a deduped ServiceNow incident via the Table API. Idempotency is enforced via a SHA256 dedupe key written to a custom `u_azlocal_dedupe_key` column, so re-running the same workflow does not create duplicates.
+The connector reads the JUnit results the Apply Updates pipeline already publishes and, for each cluster whose status matches your configured trigger matrix (default: `Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`), checks for a matching open ServiceNow incident before creating one via the Table API. A SHA256 key in `u_azlocal_dedupe_key` supports this lookup, but does not itself enforce uniqueness. Dedupe-read failures block creation unless explicitly overridden; ambiguous creates are reconciled by a read, not another POST. Concurrent requests still require a server-side uniqueness policy appropriate to your incident lifecycle. See [ITSM configuration](../ITSM/README.md).
 
 > **v0.8.87: the Update: 4 in-flight monitor (`monitor-updates.yml`) now supports the same opt-in ITSM step.** Toggle `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps) and it reads `./reports/update-monitor.xml` after publishing the JUnit. The monitor JUnit now emits per-testcase `ClusterResourceId` / `UpdateName` / `Status` properties (`Status` is `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`); the sample matrix raises on `AttemptWithoutRun` + `StepError` and leaves `LongRunning*` opt-in. The monitor stays report-only and always green - ITSM failures never affect its result. To pick a poll cadence, the **Config: 3** schedule auditor now prints a "Recommended in-flight monitor schedule (Update: 4)" cron derived from your apply windows and `UpdateStartWindow` tags (`-MonitorPollIntervalMinutes`, `-MonitorTrailingDays`, `-MonitorInFlightHours`).
 
@@ -2416,7 +2444,7 @@ The report includes executive summary cards, cluster information, a status table
 - **Step-level `env:` mapping** - secrets are mapped into the ITSM step's environment variables, not passed on the PowerShell command line. They never appear in process listings, rendered step inputs, or CI logs.
 - **Approval gates** - require manual approval before the Production wave (section 8).
 - **Branch protection** - require pull-request reviews for changes to pipeline definitions.
-- **TLS 1.2+** is enforced before every HTTP call in the module.
+- **ITSM transport** requires absolute HTTPS endpoints and disables redirects. The PowerShell transport enables TLS 1.2 on legacy runtimes; Azure CLI and other clients manage their own transport settings.
 - **CSV-injection sanitisation** - every CSV field produced by the module is neutralised for Excel formula injection (`=`, `+`, `-`, `@`, tab leaders), and CR/LF stripped (v0.7.0+).
 - **HTML-escaping** - free-text fields rendered into ITSM tickets are HTML-escaped to defend against ITSM-side HTML injection.
 

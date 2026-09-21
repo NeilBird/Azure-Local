@@ -147,7 +147,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.36'
+    value: '0.9.37'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -777,6 +777,7 @@ stages:
             name: itsm
             condition: and(succeeded(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
             env:
+              ITSM_CONFIG_PATH: ${{ parameters.itsmConfigPath }}
               # BEGIN-AZLOCAL-CUSTOMIZE:itsm-secrets
               # Bind your ITSM connector secrets from the variable group above.
               # Defaults assume the ServiceNow OAuth client_credentials naming
@@ -796,7 +797,7 @@ stages:
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
                 $params = @{
-                    ConfigPath        = "${{ parameters.itsmConfigPath }}"
+                    ConfigPath        = $env:ITSM_CONFIG_PATH
                     InputArtifactPath = "$(Build.ArtifactStagingDirectory)/update-results.xml"
                     ExportDirectory   = "$(Build.ArtifactStagingDirectory)"
                 }

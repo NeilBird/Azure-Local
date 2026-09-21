@@ -76,6 +76,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 > **Behaviour change in v0.9.36 - parallel worker and pipeline-result hotfix**: fresh jobs invoke private planning and PATCH helpers through the imported module session, fixing the v0.9.35 command-resolution failure. Both platforms publish summaries and artifacts before a final `failed_count` gate fails on per-cluster errors; GitHub summaries add a direct diagnostics ZIP link when upload succeeds.
 
+> **Behaviour change in v0.9.37 - dry-run cleanup and complete summary counts**: completed parallel jobs are removed even when `WhatIf` is inherited, and the inner reconciliation summary includes a `WhatIf (dry-run)` bucket so all processed rows are represented.
+
 ---
 
 ## Config: 3 - Apply-Updates Schedule Coverage Audit

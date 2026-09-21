@@ -61,7 +61,7 @@ Invoke-AzStackHciUpdate -ClusterName 'MyCluster' -Name 'Solution12.2601.1002.38'
 
 ## CI/CD Automation
 
-> 📦 **The complete CI/CD guide lives in [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).** It covers OIDC / Managed Identity / Service Principal setup, federated credentials, three ready-to-run GitHub Actions workflows, three Azure DevOps pipelines, and end-to-end automation diagrams. **Start there for any pipeline work.** This section only documents the module-level features that pipelines depend on.
+> **The complete CI/CD guide lives in [Automation-Pipeline-Examples/README.md](../Automation-Pipeline-Examples/README.md).** It covers OIDC / Managed Identity / Service Principal setup, federated credentials, GitHub Actions and Azure DevOps templates, and automation diagrams. **Start there for any pipeline work.** This section only documents the module-level features that pipelines depend on.
 
 The module is pipeline-friendly out of the box:
 
@@ -78,7 +78,7 @@ Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue 'Ring1' -Force
     -ExportResultsPath './test-results/update-results.xml'
 ```
 
-For full GitHub Actions / Azure DevOps YAML, federated-credential setup, and the recommended two-stage "collect once, render later" pattern, see [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).
+For full GitHub Actions / Azure DevOps YAML, federated-credential setup, and the recommended two-stage "collect once, render later" pattern, see [Automation-Pipeline-Examples/README.md](../Automation-Pipeline-Examples/README.md).
 
 <!-- Detailed CI/CD examples removed in v0.7.1; canonical content now in Automation-Pipeline-Examples/README.md -->
 

@@ -49,6 +49,7 @@ function Test-AzLocalItsmConnection {
     # 1. Resolve instance URL
     try {
         $instanceUrl = Resolve-AzLocalItsmSecret -Reference ([string]$sn['instanceUrl']) -DefaultKeyVault $kv -AllowLiteral
+        Assert-AzLocalItsmUri -Uri $instanceUrl -Instance
         Add-ProbeResult -Step 'Resolve instanceUrl' -Pass $true -Message $instanceUrl
     }
     catch {

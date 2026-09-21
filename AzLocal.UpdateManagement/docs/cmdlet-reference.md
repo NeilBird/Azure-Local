@@ -504,6 +504,7 @@ Gets update run history and status for one or more clusters. Returns formatted o
 - `-Latest` (Optional): Return only the most recent update run per cluster
 - `-Raw` (Optional): Return raw API response objects instead of formatted output
 - `-ExportPath` (Optional): Export results to CSV, JSON, or JUnit XML
+- `-SuppressFormattedOutput` (Optional): Suppress tables and detailed objects written directly to the host while retaining result objects, exports, and diagnostic streams
 
 **Output Properties:**
 | Property | Description |
@@ -1435,7 +1436,7 @@ $detail  = Get-AzLocalFleetHealthFailures -View Detail  -ExportPath .\reports\fl
 $summary = Get-AzLocalFleetHealthFailures -View Summary -ExportPath .\reports\fleet-health-summary.csv -PassThru
 ```
 
-> **CI/CD**: the bundled `fleet-health-status.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a daily-scheduled run that emits JUnit XML, CSV/JSON exports, and a Markdown step summary. See [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).
+> **CI/CD**: the bundled `fleet-health-status.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a daily-scheduled run that emits JUnit XML, CSV/JSON exports, and a Markdown step summary. See [Automation-Pipeline-Examples/README.md](../Automation-Pipeline-Examples/README.md).
 
 **Required permissions** (read-only):
 - `Microsoft.AzureStackHCI/clusters/read`
@@ -1450,7 +1451,7 @@ $summary = Get-AzLocalFleetHealthFailures -View Summary -ExportPath .\reports\fl
 
 *Added in v0.7.65.*
 
-Read-only **schedule-coverage advisor**. Compares the cron schedule(s) declared in your `apply-updates.yml` pipeline (GitHub Actions and/or Azure DevOps) to the `UpdateStartWindow` tag values actually present on your clusters, and flags every `(UpdateRing, UpdateStartWindow)` pair that no cron in the pipeline will ever reach. Never edits cluster tags. Never edits pipeline YAML. It is the safety net that closes the loop between section 8 of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) (the `UpdateStartWindow` tag is a *gate*, not a *trigger*) and `Test-AzLocalUpdateScheduleAllowed` (the runtime per-cluster gate inside `Start-AzLocalClusterUpdate`).
+Read-only **schedule-coverage advisor**. Compares the cron schedule(s) declared in your `apply-updates.yml` pipeline (GitHub Actions and/or Azure DevOps) to the `UpdateStartWindow` tag values actually present on your clusters, and flags every `(UpdateRing, UpdateStartWindow)` pair that no cron in the pipeline will ever reach. Never edits cluster tags. Never edits pipeline YAML. It is the safety net that closes the loop between section 8 of [`Automation-Pipeline-Examples/README.md`](../Automation-Pipeline-Examples/README.md) (the `UpdateStartWindow` tag is a *gate*, not a *trigger*) and `Test-AzLocalUpdateScheduleAllowed` (the runtime per-cluster gate inside `Start-AzLocalClusterUpdate`).
 
 Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powershell-yaml` dependency), runs a single Azure Resource Graph query against `resources` for clusters with `UpdateStartWindow` / `UpdateRing` tags, parses each tag value with the same `ConvertFrom-AzLocalUpdateWindow` helper used by the runtime gate, then enumerates every cron fire time over a reference week and compares it to each parsed window (with a configurable lead-time buffer).
 
@@ -1499,7 +1500,7 @@ $matrix = Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -ExportPath .\sc
 $rec    = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -ExportPath .\schedule-coverage-recommend.md -PassThru
 ```
 
-> **CI/CD**: the bundled `apply-updates-schedule-audit.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a weekly-scheduled run (Mon 05:17 UTC) that emits JUnit XML, three CSV/MD exports, and a Markdown step summary. Full end-to-end runbook in [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
+> **CI/CD**: the bundled `apply-updates-schedule-audit.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a weekly-scheduled run (Mon 05:17 UTC) that emits JUnit XML, three CSV/MD exports, and a Markdown step summary. Full end-to-end runbook in [`Automation-Pipeline-Examples/README.md` section 8.3](../Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
 
 **Required permissions** (read-only):
 - `Microsoft.Resources/subscriptions/resourceGroups/read`
