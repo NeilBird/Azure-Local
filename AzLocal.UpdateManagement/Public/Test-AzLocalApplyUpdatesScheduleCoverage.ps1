@@ -742,7 +742,7 @@ $globalTagFilter
                 }
                 if ($hasNoWindowTag) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Edit ``$ClusterCsvPath`` to fill in the missing ``UpdateStartWindow`` value(s)** (Step $checkIdx below) and re-run the Manage UpdateRing Tags pipeline to apply the tags to Azure. Until each cluster has an ``UpdateStartWindow`` tag, ``Test-AzLocalUpdateScheduleAllowed`` denies it and apply-updates silently skips that cluster every day.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Review missing ``UpdateStartWindow`` value(s) in ``$ClusterCsvPath``** (Step $checkIdx below). For clusters selected by their ``UpdateRing``, a missing window imposes no maintenance-window restriction. Add a window only when a restriction is intended, then re-run Manage UpdateRing Tags. Clusters without ``UpdateRing`` are excluded from ring-scoped apply-updates, including ``***`` selection.")
                 }
                 $checkIdx++
                 [void]$fullSb.AppendLine("$checkIdx. **Commit the edits and re-run this apply-updates-schedule-audit pipeline** to confirm all (Ring, Window) pairs are green.")
@@ -872,7 +872,7 @@ $globalTagFilter
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - NoWindowTag remediation")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** The cluster(s) listed below have an ``UpdateRing`` tag but NO ``UpdateStartWindow`` tag. ``Test-AzLocalUpdateScheduleAllowed`` denies any cluster with a missing or malformed ``UpdateStartWindow`` tag (fail-closed), so apply-updates silently skips them every day - they will never receive an update until the tag is set.")
+                [void]$fullSb.AppendLine('**Why this matters.** A missing ``UpdateStartWindow`` means no maintenance-window restriction; it does not opt a cluster into updates. Ring-scoped apply-updates selects only clusters with a matching, non-empty ``UpdateRing``. If both tags are missing, the cluster remains excluded, even with ``***`` selection. Explicit targeting by name or resource ID does not require ring membership. For selected clusters, exclusion windows, readiness, and other gates still apply; a malformed non-empty window fails closed. Add a window only when a maintenance-window restriction is intended.')
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine("The advisor proposes a peer-derived value for each cluster (the most common ``UpdateStartWindow`` already used by other clusters in the same ``UpdateRing``). Review the suggestion, edit ``$ClusterCsvPath``, commit, and re-run the Manage UpdateRing Tags pipeline to apply the tags to Azure.")
                 [void]$fullSb.AppendLine()

@@ -8,6 +8,8 @@ Each pipeline section heading below uses **`Config: N`**, **`Monitor: N`**, or *
 
 ## Default triggers and schedules (at a glance)
 
+**Report presentation (v0.9.38):** Markdown summaries are the primary operator view. All GitHub JUnit publishers start with details collapsed, including failures, under an **Expand to view JUnit report details** heading while keeping counts visible. XML artifacts, ITSM integration, check outcomes, and workflow exit policy are unchanged. Azure DevOps retains its native Tests view. Monitor JUnit durations represent historical update-run time, not pipeline execution time; older unresolved failures use `UnresolvedFailure`, while failures inside the configured recent window use `RecentFailure`.
+
 The table below is the ground truth for what each shipped YAML does **out of the box**. Six of the ten pipelines are pre-wired with `schedule:` (GH) / `schedules:` (ADO) blocks; Config: 2, Update: 1, Update: 2, and Update: 3 remain manual-only. Every active schedule is phased away from crowded boundary minutes, including the `monitor-updates` every-6h `17 */6 * * *` heartbeat. Apply also fires `monitor-updates` event-driven when it starts an update.
 
 | Pipeline | GitHub Actions trigger | Azure DevOps trigger | Notes |

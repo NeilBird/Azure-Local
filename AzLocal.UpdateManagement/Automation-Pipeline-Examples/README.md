@@ -6,6 +6,12 @@ This folder is the setup-and-configure landing page for the example GitHub Actio
 
 It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/README.md). If something here is unclear, that file is a good cross-reference for the connector portion.
 
+**Reporting semantics (v0.9.38):** Markdown summaries are the operator-facing output. JUnit XML supplies structured findings to ITSM and test publishers; a reported cluster failure does not by itself fail a reporting pipeline. Update-run durations in JUnit describe historical operations, not the report job's execution time. NIC summaries describe observed coverage, and unmatched resource bridges require investigation before any remediation.
+
+**Selection precedes schedule gating:** ring-scoped apply-updates selects matching non-empty `UpdateRing` tags, including when `***` is used. A selected cluster without `UpdateStartWindow` has no maintenance-window restriction, but exclusion windows and other gates still apply. With both tags missing, the cluster stays excluded from ring-scoped runs. Explicit targeting by name/resource ID does not require ring membership; malformed non-empty windows fail closed.
+
+GitHub JUnit publishers use `collapsed: always` with an **Expand to view JUnit report details** heading. Counts stay visible while suite details start closed, including failures. Expand a suite for rendered findings, or download the XML artifact for raw integration data. Azure DevOps retains its native Tests view. This changes presentation only, not XML, ITSM, check conclusions, or workflow failure policy.
+
 ---
 
 ## Table of contents
@@ -1434,7 +1440,7 @@ Key handoffs to remember:
 - **`apply-updates-results.xml`** (JUnit) is what surfaces in the Tests tab on GH Actions and Azure DevOps. Failed-first ordering means actionable rows appear at the top of the reporter UI.
 - **Declared collection artifacts remain parseable on empty runs.** Fleet Connectivity, Fleet Health, authentication subscription scope, cluster inventory, apply, and failed-update retry JSON outputs contain `[]` when no rows exist; apply and retry create their JSON artifacts even when their gates select no clusters. Since v0.9.33, an empty `fleet-physical-nics.csv` retains its stable 17-column header.
 - **`schedule-coverage-recommend.md`** is the only artifact intended to be pasted by hand - directly back into `apply-updates.yml`'s `on.schedule` / ADO trigger block when the audit reports `Uncovered` or `PartiallyCovered` rows.
-- **Fleet Connectivity Status runs parallel to (not downstream of) the apply-updates artifact chain.** It reads ARG directly and emits its own per-scope CSVs (`fleet-cluster-connectivity.csv`, `fleet-arc-status-summary.csv`, `fleet-arc-non-connected-machines.csv`, `fleet-physical-nics.csv`, `fleet-physical-nic-stats.csv`, `fleet-arb-status.csv`) with matching JSON exports, plus a JUnit XML (`fleet-connectivity-status.xml`). An empty scope writes a valid JSON empty collection (`[]`) rather than a zero-byte file. No dependency on `cluster-readiness.csv` or `cluster-inventory.csv` - it is the upstream "can we see the fleet at all?" probe. Use it to triage why the apply-updates chain is empty or under-counting.
+- **Fleet Connectivity Status runs parallel to (not downstream of) the apply-updates artifact chain.** It reads ARG directly and emits its own per-scope CSVs (`fleet-cluster-connectivity.csv`, `fleet-arc-status-summary.csv`, `fleet-arc-non-connected-machines.csv`, `fleet-physical-nics.csv`, `fleet-physical-nic-all.csv`, `fleet-physical-nic-stats.csv`, `fleet-arb-status.csv`) with matching JSON exports, plus a JUnit XML (`fleet-connectivity-status.xml`). The full NIC inventory supports observed machine and cluster coverage; missing telemetry does not establish healthy NICs. An empty scope writes a valid JSON empty collection (`[]`) rather than a zero-byte file. No dependency on `cluster-readiness.csv` or `cluster-inventory.csv` - it is the upstream "can we see the fleet at all?" probe. Use it to triage why the apply-updates chain is empty or under-counting.
 
 ### 6.1 Inventory the estate
 

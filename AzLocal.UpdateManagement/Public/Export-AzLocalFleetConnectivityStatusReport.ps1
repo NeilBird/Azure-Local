@@ -392,6 +392,7 @@ function Export-AzLocalFleetConnectivityStatusReport {
         ArcRows     = $arcRows
         NicRows     = $nicRows
         NicStats    = $nicStats
+        NicAll      = $nicAllRows
         ArbRows     = $arbRows
         Counts      = $counts
     }

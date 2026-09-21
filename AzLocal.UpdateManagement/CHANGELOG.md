@@ -5,6 +5,24 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.38] - 2026-09-21
+
+### Fixed
+
+- Config: 3 recommendations now explain that a missing `UpdateStartWindow` imposes no maintenance-window restriction. Ring-scoped apply-updates excludes clusters without a non-empty matching `UpdateRing`, including `***`; explicit name/resource-ID targeting does not require ring membership. Malformed non-empty windows still fail closed and all other gates remain in effect.
+- Update: 1 labels the actual selection scope, without appending an unused ring to `all`, and qualifies readiness as cached evidence rather than approval to start an update.
+- Monitor: 1 reports observed NIC inventory coverage, unmapped rows, and the limitations of the actionable-issue filter. Unmatched ARBs are investigation candidates, not automatically orphaned resources; reconciliation guidance accounts for scope and deployment topology.
+- Monitor: 2 explains that failing-check totals count timestamped occurrences, not unique root causes. JUnit preserves severity in the failure type without duplicating it in the message.
+- Update: 4 emits `RecentFailure` only inside the configured recency window and `UnresolvedFailure` for older unresolved failures. Historical update-run durations remain unchanged.
+- Monitor: 3 counts distinct SBE version values independently of OEM grouping, includes overlapping update/health failures in health-remediation totals, and restores the generated timestamp. Failed-run portal links encode the actual update and run selectors and omit incomplete links.
+
+### Changed
+
+- All 17 GitHub JUnit publisher steps start with report details collapsed, including failures, under an "Expand to view JUnit report details" heading. Counts stay visible; XML artifacts, check results, ITSM, and failure policy are unchanged. Azure DevOps retains its native Tests view.
+- Markdown summaries remain the human-facing reports; JUnit remains structured evidence for ITSM and test publishers. Reported update-run durations are not pipeline execution times.
+- Reporting pipeline exit policy, collection scope, raw records, and the 73 exported functions are unchanged. Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.38`.
+- Regression coverage uses synthetic fixtures; release notes contain no operational identifiers or downloaded audit data.
+
 ## [0.9.37] - 2026-09-18
 
 ### Added

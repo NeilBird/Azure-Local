@@ -506,8 +506,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.37' {
-            $script:ModuleInfo.Version | Should -Be '0.9.37'
+        It 'Should have version 0.9.38' {
+            $script:ModuleInfo.Version | Should -Be '0.9.38'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -534,9 +534,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $readmePath   = Join-Path -Path $PSScriptRoot -ChildPath '..\README.md'
             $manifestVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
             $readmeContent = Get-Content -Path $readmePath -Raw
-            $pattern = '\*\*Latest Version:\*\*\s+v(?<displayed>\d+\.\d+\.\d+)\s+-\s+\[Published in PowerShell Gallery\]\(https://www\.powershellgallery\.com/packages/AzLocal\.UpdateManagement/(?<urlversion>\d+\.\d+\.\d+)\)'
+            $pattern = '\*\*Latest Version:\*\*\s+v(?<displayed>\d+\.\d+\.\d+)\s+-\s+\[(?:Published in )?PowerShell Gallery\]\(https://www\.powershellgallery\.com/packages/AzLocal\.UpdateManagement/(?<urlversion>\d+\.\d+\.\d+)\)'
             $match = [regex]::Match($readmeContent, $pattern)
-            $match.Success | Should -BeTrue -Because "README.md must contain a parseable '**Latest Version:** vX.Y.Z - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/X.Y.Z)' line"
+            $match.Success | Should -BeTrue -Because 'README.md must contain a parseable Latest Version banner with a versioned PowerShell Gallery link'
             $match.Groups['displayed'].Value | Should -Be $manifestVersion -Because 'the displayed version in the README banner must match the manifest ModuleVersion'
             $match.Groups['urlversion'].Value | Should -Be $manifestVersion -Because 'the PowerShell Gallery URL in the README banner must point at the manifest ModuleVersion'
         }
@@ -12205,6 +12205,11 @@ cB,rg1,s1,Ring1,
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
                 $md | Should -Match 'NoWindowTag remediation'
+                $md | Should -Match 'missing.*UpdateStartWindow.*means no maintenance-window restriction'
+                $md | Should -Match 'If both tags are missing, the cluster remains excluded'
+                $md | Should -Match 'Explicit targeting by name or resource ID does not require ring membership'
+                $md | Should -Match 'malformed non-empty window fails closed'
+                $md | Should -Not -Match 'never receive an update|denies any cluster with a missing'
                 $md | Should -Match '`Mon-Fri_22:00-06:00`'
                 $md | Should -Match 'matched by \*\*ResourceId\*\*'
                 $md | Should -Match 'Only peer in \\`Ring1\\` \(\\`cA\\`\)'
@@ -16239,14 +16244,21 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
             }
         }
 
-        It 'BS10: UpdateRunPortalUrl matches the SingleInstanceHistoryDetails portal deep-link pattern (URL-encoded cluster resource id)' {
-            InModuleScope AzLocal.UpdateManagement {
+        It 'BS10: UpdateRunPortalUrl encodes selectors and omits incomplete links (<UpdateSelector>, <RunSelector>)' -TestCases @(
+            @{ UpdateSelector = 'Sol.1'; RunSelector = 'r1' }
+            @{ UpdateSelector = 'Sol /?'; RunSelector = 'run /#' }
+            @{ UpdateSelector = ''; RunSelector = 'r1' }
+            @{ UpdateSelector = 'Sol.1'; RunSelector = '' }
+        ) {
+            param($UpdateSelector, $RunSelector)
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ UpdateSelector = $UpdateSelector; RunSelector = $RunSelector } {
+                param($UpdateSelector, $RunSelector)
                 Mock Invoke-AzResourceGraphQuery {
                     return @(
                         [PSCustomObject]@{
                             ClusterName=''; ResourceGroup=''; SubscriptionId='sub-1111'
                             ClusterResourceId='/subscriptions/sub-1111/resourceGroups/RG1/providers/Microsoft.AzureStackHCI/clusters/Cluster01'
-                            UpdateName='Sol.1'; RunId='r1'; State='Failed'
+                            UpdateName=$UpdateSelector; RunId=$RunSelector; State='Failed'
                             StartTime='2026-05-15T20:28:25Z'; EndTime='2026-05-15T21:11:15Z'
                             DurationMinutes=42; DeepestStepDepth=1; DeepestStepName='x'
                             DeepestErrMsg='e'; StackTracePreview=''; ErrorCategory='HealthCheck'
@@ -16257,7 +16269,12 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
                 }
                 $rows = Get-AzLocalUpdateRunFailures -State Failed 6>$null
                 $url = $rows[0].UpdateRunPortalUrl
-                $url | Should -Match '^https://portal\.azure\.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails\.ReactView/resourceId/.+/updateName~/null/updateRunName~/null/refresh~/false$'
+                if (-not $UpdateSelector -or -not $RunSelector) {
+                    $url | Should -BeNullOrEmpty
+                    return
+                }
+                $encodedSelectors = '/updateName/{0}/updateRunName/{1}/refresh~/false' -f [Uri]::EscapeDataString($UpdateSelector), [Uri]::EscapeDataString($RunSelector)
+                $url | Should -Match ([regex]::Escape($encodedSelectors) + '$')
                 # Must be URL-encoded (every '/' in the resource id becomes %2F).
                 $url | Should -Match '%2Fsubscriptions%2Fsub-1111%2FresourceGroups%2FRG1%2Fproviders%2FMicrosoft\.AzureStackHCI%2Fclusters%2FCluster01'
             }
@@ -17604,6 +17621,25 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
             $script:mdEmpty.Length | Should -BeGreaterThan 1000
         }
 
+        It 'Reports partial NIC coverage without treating Unknown or unmapped telemetry as healthy' {
+            $clusterRows = @(
+                [pscustomobject]@{ ClusterName='example-a'; ClusterId='/clusters/example-a'; NodeCount=2; ConnectivityStatus='Connected'; ClusterStatus='Healthy'; ResourceGroup='example-rg'; Location='eastus' }
+                [pscustomobject]@{ ClusterName='example-b'; ClusterId='/clusters/example-b'; NodeCount=2; ConnectivityStatus='Connected'; ClusterStatus='Healthy'; ResourceGroup='example-rg'; Location='eastus' }
+            )
+            $nicAll = @(
+                [pscustomobject]@{ MachineId='/machines/example-a'; ClusterId='/clusters/example-a'; NicType='Physical'; NicStatus='Up' }
+                [pscustomobject]@{ MachineId='/machines/example-a'; ClusterId='/clusters/example-a'; NicType='Physical'; NicStatus='Unknown' }
+                [pscustomobject]@{ MachineId='/machines/example-b'; ClusterId=''; NicType='Physical'; NicStatus='Disconnected'; Ip4Address='169.254.1.1' }
+            )
+            $counts = $script:zeroCounts.Clone()
+            $counts.ClusterTotal = 2
+            $markdown = New-AzLocalFleetConnectivityStatusSummary -ClusterRows $clusterRows -ArcSummary @() -ArcRows @() -NicRows @() -NicStats @() -NicAll $nicAll -ArbRows @() -Counts $counts
+            $markdown | Should -Match '3 NIC row\(s\), 2 identified machine\(s\), 1 of 2 in-scope cluster\(s\)'
+            $markdown | Should -Match '1 row\(s\) have no in-scope cluster mapping'
+            $markdown | Should -Match 'Unknown states and missing telemetry'
+            $markdown | Should -Not -Match 'All physical adapters either Up'
+        }
+
         It 'Emits "*No clusters returned.*" placeholder for empty cluster set' {
             $script:mdEmpty | Should -Match '\*No clusters returned\.\*'
         }
@@ -17621,11 +17657,13 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         }
 
         It 'Emits "*No physical NIC issues*" placeholder for empty NIC issues' {
-            $script:mdEmpty | Should -Match '\*No physical NIC issues\.'
+            $script:mdEmpty | Should -Match '\*No physical NIC issues matched the actionable filter'
+            $script:mdEmpty | Should -Match 'Observed NIC coverage:\*\* unavailable'
+            $script:mdEmpty | Should -Match 'Unknown states and missing telemetry'
         }
 
         It 'Does NOT include the Orphan ARBs section when there are no orphans' {
-            $script:mdEmpty | Should -Not -Match '### Non-Azure Local and/or Orphan ARB appliances'
+            $script:mdEmpty | Should -Not -Match '### Unmatched ARB appliances'
         }
 
         It 'Stays well under the 21K cap with empty inputs' {
@@ -17659,7 +17697,9 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         }
 
         It 'Includes the Orphan ARBs section heading' {
-            $script:mdOrphan | Should -Match '### Non-Azure Local and/or Orphan ARB appliances'
+            $script:mdOrphan | Should -Match '### Unmatched ARB appliances'
+            $script:mdOrphan | Should -Match 'not proof of drift'
+            $script:mdOrphan | Should -Not -Match 'Goal is parity|every cluster has exactly one ARB'
         }
 
         It 'Lists the orphan ARB by name' {
@@ -17674,7 +17714,7 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         }
 
         It 'Reconciliation table reports the correct orphan ARB count' {
-            $script:mdOrphan | Should -Match '\| Orphan ARBs \| 1 \|'
+            $script:mdOrphan | Should -Match '\| Unmatched ARBs \| 1 \|'
         }
     }
 
@@ -17707,7 +17747,7 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         }
 
         It 'Reports zero orphan ARBs (the ARB matches both clusters)' {
-            $script:mdMcrg | Should -Match '\| Orphan ARBs \| 0 \|'
+            $script:mdMcrg | Should -Match '\| Unmatched ARBs \| 0 \|'
         }
 
         It 'Reports two clusters with an ARB in the reconciliation table' {
@@ -17812,7 +17852,7 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
             # Should still produce a complete markdown document.
             $script:mdCsv | Should -Match '### Cluster with Connectivity Issues'
             $script:mdCsv | Should -Match '### Cluster without Connectivity Issues'
-            $script:mdCsv | Should -Match '\*No physical NIC issues\.'
+            $script:mdCsv | Should -Match '\*No physical NIC issues matched the actionable filter'
         }
 
         It 'Respects the Counts hashtable even when CSVs are missing' {
@@ -20728,7 +20768,11 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         ($failedCases | ForEach-Object { $_.failure.type }) | Should -Contain 'RecentFailure'
     }
 
-    It 'RecentFailureWindowHours=0 disables recent flag but unresolved still surfaces' {
+    It 'Unresolved failures retain their JUnit classification outside the recent window (<WindowHours>h)' -TestCases @(
+        @{ WindowHours = 0 }
+        @{ WindowHours = 1 }
+    ) {
+        param($WindowHours)
         $runs = @(
             [pscustomobject]@{
                 ClusterName       = 'beta'
@@ -20748,16 +20792,20 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
             }
         )
         $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
-        $result = InModuleScope AzLocal.UpdateManagement {
+        $result = InModuleScope AzLocal.UpdateManagement -Parameters @{ WindowHours = $WindowHours } {
+            param($WindowHours)
             Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
             Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
-            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -RecentFailureWindowHours 0 -PassThru
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -RecentFailureWindowHours $WindowHours -PassThru
         }
         $result.UnresolvedFailureCount | Should -Be 1
         $result.RecentFailureCount     | Should -Be 0
         $row = @($result.Rows)[0]
         $row.IsUnresolvedFailure | Should -BeTrue
         $row.IsRecentFailure     | Should -BeFalse
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        @($xml.SelectNodes('//testcase/failure') | ForEach-Object { $_.type }) | Should -Contain 'UnresolvedFailure'
+        @($xml.SelectNodes('//testcase/failure') | ForEach-Object { $_.type }) | Should -Not -Contain 'RecentFailure'
     }
 
     It 'Scope=by-update-ring queries inventory by tag (for UpdateLastAttempt reconciliation) and queries runs by tag' {
@@ -21351,7 +21399,11 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         (Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw) | Should -Match 'recently_completed_48h=1'
     }
 
-    It 'UpdateFailed cluster emits a failure testcase and increments update_failed step output' {
+    It 'UpdateFailed cluster preserves its bucket and includes overlapping health failures (<HealthState>)' -TestCases @(
+        @{ HealthState = 'Success'; ExpectedHealthActions = 0 }
+        @{ HealthState = 'Failure'; ExpectedHealthActions = 1 }
+    ) {
+        param($HealthState, $ExpectedHealthActions)
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
@@ -21361,7 +21413,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
                 [pscustomobject]@{
                     ClusterName='beta'; ResourceGroup='rg2'; SubscriptionId='s1'
                     ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'
-                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    UpdateState='Failed'; HealthState=$HealthState; ReadyForUpdate=$false
                     HasPrerequisiteUpdates=''; AllAvailableUpdates='12.2510.0.999'; ReadyUpdates=''; SBEDependency=''
                     RecommendedUpdate='12.2510.0.999'; CurrentVersion='12.2509.0.0'; HealthCheckFailures=''
                 }
@@ -21385,6 +21437,14 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $xml | Should -Match '<failure message="Critical Health Status: Failed" type="UpdateFailure">'
         $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
         $out | Should -Match 'update_failed=1'
+        $result.HealthFailureCount | Should -Be 0
+        $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
+        if ($ExpectedHealthActions -gt 0) {
+            $summary | Should -Match '1 cluster\(s\) have HealthState=Failure'
+        }
+        else {
+            $summary | Should -Not -Match 'cluster\(s\) have HealthState=Failure'
+        }
     }
 
     It 'PreparationFailed cluster is classified as ActionRequired (priority cascade)' {
@@ -21723,7 +21783,11 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $summary | Should -Not -Match '### :scroll: Update Run History and Error Details'
     }
 
-    It 'v0.9.20: SBE distribution groups by OEM provider then YYMM (3rd octet), N/A for no-SBE' {
+    It 'SBE distribution distinguishes version values from OEM groups (<SharePlaceholder>)' -TestCases @(
+        @{ SharePlaceholder = $false; ExpectedVersions = 4 }
+        @{ SharePlaceholder = $true; ExpectedVersions = 3 }
+    ) {
+        param($SharePlaceholder, $ExpectedVersions)
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
@@ -21765,7 +21829,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
                     ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe4'
                     UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
                     HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
-                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion=''; SbeOemProvider='Microsoft'
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion=$(if ($SharePlaceholder) { '2.1.0.0' } else { '' }); SbeOemProvider='Microsoft'
                 }
             )
             Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
@@ -21783,6 +21847,8 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         }
         $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
         $summary | Should -Match '### Fleet - SBE Version\(s\) Distribution'
+        $summary | Should -Match "$ExpectedVersions distinct SBE version value"
+        $summary | Should -Match '_Generated at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC_'
         # v0.9.20 header: OEM Provider is the first column.
         $summary | Should -Match '\| OEM Provider \| YYMM \| SBE Update Versions \| Clusters \| % \| Cluster Names \(first 15 shown only\) \|'
         # Real vendor SBE: YYMM from the 3rd octet, grouped under its OEM.
@@ -21794,7 +21860,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $summary | Should -Match 'N/A - No SBE Installed'
         # 4 distinct (OEM, version) groups across the fleet.
         $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
-        $out | Should -Match 'sbe_version_dist_count=4'
+        $out | Should -Match "sbe_version_dist_count=$ExpectedVersions"
     }
 
     It 'v0.9.19: renders Recent Successful Updates for runs completed in the last 48h and skips older/failed runs' {
@@ -22254,6 +22320,8 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $xml | Should -Match '<property name="ClusterName" value="alpha" />'
         $xml | Should -Match '<property name="UpdateName" value="ClusterCertExpiry" />'
         $xml | Should -Match '<property name="Severity" value="Critical" />'
+        $xml | Should -Not -Match 'message="(Critical|Warning):'
+        $xml | Should -Match 'type="Critical"'
         # Markdown summary: plain <a href> on cluster portal link (sanitiser strips target/rel)
         $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
         $summary | Should -Match '### Fleet Health Overview'
@@ -22273,6 +22341,8 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         # KPI table values - row labels are prefixed with the host-aware iconMap status
         # tag (e.g. '❌ Critical' / '✅ Healthy'), so anchor on the row label + count only.
         $summary | Should -Match '\| \*\*Total Failing Checks\*\* \| 3 \|'
+        $summary | Should -Match 'timestamped occurrences, not unique root causes'
+        $summary | Should -Match 'cached health checks, not current connectivity'
         $summary | Should -Match '\*\*Critical\*\* \| 2 \|'
         $summary | Should -Match '\*\*Warning\*\* \| 1 \|'
         $summary | Should -Match '\*\*Healthy Clusters\*\* \| 1 \|'
@@ -22494,7 +22564,7 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
             Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
             Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
-            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'all' | Out-Null
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'all' -UpdateRing 'IgnoredRing' | Out-Null
             Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 1 -Exactly -Scope It -ParameterFilter {
                 $ClusterResourceIds -and $ClusterResourceIds[0] -like '*/clusters/alpha'
             }
@@ -22502,6 +22572,8 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Test-Path -LiteralPath (Join-Path $global:_s5_payload.OutDir 'readiness.xml') | Should -BeTrue
             Test-Path -LiteralPath (Join-Path $global:_s5_payload.OutDir 'health-blocking.xml') | Should -BeTrue
         }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Not -Match 'UpdateRing = IgnoredRing'
     }
 
     It 'Scope=by-update-ring forwards ScopeByUpdateRingTag + UpdateRingValue' {
@@ -22572,6 +22644,9 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
         $out | Should -Match 'not_ready=1'
         $out | Should -Match 'critical_failures=1'
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match 'Readiness reflects cached Azure data, not authorization to start an update'
+        $summary | Should -Not -Match 'healthy clusters are safe to proceed'
     }
 
     It 'v0.9.19: aggregates allow-list-filtered updates by scope + ring with a distinct cluster count' {
