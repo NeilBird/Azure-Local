@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Suppression renewal and terminal cleanup recognize reused retry runs with an older start time only when the latest run has fresh activity and a successful, same-update retry marker within the owned window. Unrelated historical runs remain excluded. Malformed cluster expiry markers are repaired from validated renewed rules, including after partial tag-write failures; ownership validation and `-WhatIf` remain enforced.
 - Fleet and per-runner copy limits count fresh shared-state operations outside the current plan, including during an exact-ID pilot. Unreadable JSON state blocks capacity evaluation.
 - Heartbeat/progress staleness preserves PowerShell 7 JSON `DateTime` values and parses string timestamps with invariant settings, avoiding false stale-copy detection on non-US regional settings.
 - Catalog selection requires package-type agreement as well as version, preventing Solution and OEM SBE media from being confused when version strings coincide.

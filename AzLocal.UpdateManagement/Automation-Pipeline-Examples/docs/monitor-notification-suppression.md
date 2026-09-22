@@ -62,10 +62,15 @@ import, preparation-only runs, and `-WhatIf` do not create suppression resources
    or less remain. Separately opt-in renewal below can extend an active update's
    window before expiry, subject to a maximum total duration.
 6. Normal `Get-AzLocalUpdateRuns` reconciliation checks marked clusters using fresh
-   ARM update-run reads. Matching runs must start at or after the recorded rule
-   creation and belong to the recorded update. Suppression is removed when the
+   ARM update-run reads. Matching runs belong to the recorded update and normally
+   start at or after rule creation. If no such run exists, the latest run may be
+   a reused retry retaining its original start time: this requires a successful
+   `UpdateRetryAttempted` marker (`RetryStarted`) for the same update, recorded
+   between rule creation and now, and `lastUpdatedTime` between that attempt and
+   now. Historical activity alone is insufficient. Suppression is removed when the
    matching attempts are terminal (`Succeeded`, `Failed`, `Canceled`, `Cancelled`),
-   with no matching nonterminal attempt. An older run cannot remove a new window.
+   with no matching nonterminal attempt. An unrelated older run cannot remove a
+   new window.
 7. Cleanup also removes expired owned rules and their cluster markers. It is
    independent of `UpdateVersionInProgress` removal and works after failure. A
    retry of a completed attempt must establish a fresh suppression window first;
@@ -91,8 +96,9 @@ remain supported without these settings; all three options require schema 6.
 On each reconciliation, the helper first checks for terminal attempts or expiry.
 Only an **enabled, owned rule** with **six hours or less remaining** can renew.
 A fresh ARM read must show an `InProgress` run for the exact recorded cluster and
-update, started at or after the original rule creation and not in the future.
-Missing, older, unknown-state, or unreadable runs cannot authorize an extension.
+update, either started at or after the original rule creation or correlated to a
+reused retry as described above; its start cannot be in the future.
+Missing, uncorrelated older, unknown-state, or unreadable runs cannot authorize an extension.
 Both suppression and renewal must still be opted in on that runner.
 
 Renewal sets expiry to the earlier of **48 hours from the current check** and the
@@ -116,7 +122,9 @@ lasts until matching terminal cleanup or its current expiry. If monitoring stops
 Azure still ends suppression at the last saved expiry without a runner. A failed
 renewal is reported for investigation/retry; if Azure accepted the rule update but
 the cluster expiry-tag write failed, the next reconciliation repairs that marker
-without unnecessarily extending the rule again. `-WhatIf` performs no writes.
+without unnecessarily extending the rule again. Missing, stale, or malformed
+cluster expiry markers are synchronized from the validated renewed rule. Invalid
+ownership or rule schedule metadata still blocks changes. `-WhatIf` performs no writes.
 
 Keep **Update: 4 - Monitor Updates** running for the affected clusters. Its
 `Export-AzLocalUpdateRunMonitorReport` command performs suppression reconciliation

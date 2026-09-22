@@ -298,6 +298,90 @@ Describe 'Monitor suppression lifecycle' {
                 Should -Invoke Get-AzLocalClusterUpdateRuns -ParameterFilter { $resourceId -eq $script:suppressionCluster -and $updateNameFilter -eq 'Solution1' }
             }
 
+            It 'Reconciles a reused retry run: <State>' -TestCases @(
+                @{ State = 'InProgress'; ExpectedAction = 'Extended' },
+                @{ State = 'Succeeded'; ExpectedAction = 'Removed' },
+                @{ State = 'Failed'; ExpectedAction = 'Removed' },
+                @{ State = 'Canceled'; ExpectedAction = 'Removed' }
+            ) {
+                param($State, $ExpectedAction)
+                $attemptUtc = $script:suppressionCreated.AddHours(1)
+                $script:suppressionTags.UpdateRetryAttempted = "$($attemptUtc.ToString('o'));RetryStarted;Solution1"
+                $script:reusedRetryRun = [pscustomobject]@{ properties = [pscustomobject]@{
+                    state = $State
+                    timeStarted = $script:suppressionCreated.AddDays(-1).ToString('o')
+                    lastUpdatedTime = $attemptUtc.AddMinutes(10).ToString('o')
+                } }
+                Mock Get-AzLocalClusterUpdateRuns { $script:reusedRetryRun }
+                $result = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $script:suppressionCluster -ClusterTags $script:suppressionTags
+                $result.ReportAction | Should -Be $ExpectedAction
+                Should -Invoke Get-AzLocalClusterUpdateRuns -Times 1 -Exactly -ParameterFilter { $resourceId -eq $script:suppressionCluster -and $updateNameFilter -eq 'Solution1' }
+            }
+
+            It 'Preserves retry evidence through Ensure reconciliation' {
+                $attemptUtc = $script:suppressionCreated.AddHours(1)
+                $script:suppressionTags.UpdateRetryAttempted = "$($attemptUtc.ToString('o'));RetryStarted;Solution1"
+                Mock Get-AzLocalClusterUpdateRuns { [pscustomobject]@{ properties = [pscustomobject]@{
+                    state = 'Succeeded'
+                    timeStarted = $script:suppressionCreated.AddDays(-1).ToString('o')
+                    lastUpdatedTime = $script:suppressionCreated.AddHours(2).ToString('o')
+                } } }
+                (Invoke-AzLocalMonitorSuppression -Action Ensure -ClusterResourceId $script:suppressionCluster -UpdateName Solution1 -ClusterTags $script:suppressionTags).Ready | Should -BeFalse
+                Should -Invoke Invoke-AzRestJson -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+            }
+
+            It 'Rejects uncorrelated reused runs: <Scenario>' -TestCases @(
+                @{ Scenario = 'missing marker' }, @{ Scenario = 'malformed marker' },
+                @{ Scenario = 'wrong update' }, @{ Scenario = 'failed apply' },
+                @{ Scenario = 'old attempt' }, @{ Scenario = 'future attempt' },
+                @{ Scenario = 'old activity' }, @{ Scenario = 'future activity' },
+                @{ Scenario = 'missing activity' }, @{ Scenario = 'older run' }
+            ) {
+                param($Scenario)
+                $attemptUtc = $script:suppressionCreated.AddHours(1)
+                $update = 'Solution1'
+                $outcome = 'RetryStarted'
+                switch ($Scenario) {
+                    'wrong update' { $update = 'Solution2' }
+                    'failed apply' { $outcome = 'RetryFailed' }
+                    'old attempt' { $attemptUtc = $script:suppressionCreated.AddHours(-1) }
+                    'future attempt' { $attemptUtc = [datetimeoffset]::UtcNow.AddHours(1) }
+                }
+                $script:suppressionTags.UpdateRetryAttempted = "$($attemptUtc.ToString('o'));$outcome;$update"
+                if ($Scenario -eq 'missing marker') { $script:suppressionTags.Remove('UpdateRetryAttempted') }
+                if ($Scenario -eq 'malformed marker') { $script:suppressionTags.UpdateRetryAttempted = 'invalid' }
+                $activity = $script:suppressionCreated.AddHours(2).ToString('o')
+                if ($Scenario -eq 'old activity') { $activity = $attemptUtc.AddSeconds(-1).ToString('o') }
+                if ($Scenario -eq 'future activity') { $activity = [datetimeoffset]::UtcNow.AddHours(1).ToString('o') }
+                if ($Scenario -eq 'missing activity') { $activity = $null }
+                $script:reusedRetryRun = @([pscustomobject]@{ properties = [pscustomobject]@{
+                    state = 'InProgress'; timeStarted = $script:suppressionCreated.AddDays(-2).ToString('o'); lastUpdatedTime = $activity
+                } })
+                if ($Scenario -eq 'older run') {
+                    $script:reusedRetryRun += [pscustomobject]@{ properties = [pscustomobject]@{
+                        state = 'Failed'; timeStarted = $script:suppressionCreated.AddDays(-1).ToString('o'); lastUpdatedTime = $script:suppressionCreated.AddHours(-1).ToString('o')
+                    } }
+                }
+                Mock Get-AzLocalClusterUpdateRuns { $script:reusedRetryRun }
+                (Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $script:suppressionCluster -ClusterTags $script:suppressionTags).ReportAction | Should -Be 'Active / Unchanged'
+                Should -Invoke Invoke-AzRestJson -Times 0 -Exactly -ParameterFilter { $Method -ne 'GET' }
+            }
+
+            It 'Repairs malformed renewed expiry markers while honoring WhatIf: <DryRun>' -TestCases @(
+                @{ DryRun = $false; Writes = 2 }, @{ DryRun = $true; Writes = 1 }
+            ) {
+                param($DryRun, $Writes)
+                $renewed = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $script:suppressionCluster -ClusterTags $script:suppressionTags
+                $script:suppressionTags.UpdateMonitorSuppressionUntil = 'invalid'
+                $result = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $script:suppressionCluster -ClusterTags $script:suppressionTags -WhatIf:$DryRun
+                $result.Status | Should -Be SuppressionActive
+                [math]::Abs(((ConvertTo-AzLocalMonitorSuppressionUtc $result.ExpiresUtc) - (ConvertTo-AzLocalMonitorSuppressionUtc $renewed.ExpiresUtc)).TotalSeconds) | Should -BeLessThan 1
+                Should -Invoke Invoke-AzRestJson -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+                Should -Invoke Set-AzLocalClusterTagsMerge -Times $Writes -Exactly -ParameterFilter {
+                    [math]::Abs(((ConvertTo-AzLocalMonitorSuppressionUtc $Tags.UpdateMonitorSuppressionUntil) - (ConvertTo-AzLocalMonitorSuppressionUtc $script:suppressionRule.tags.RenewalExpiresUtc)).TotalSeconds) -lt 1
+                }
+            }
+
             It 'Caps renewal from original creation and cannot raise a recorded cap' {
                 $script:renewalSettings.MonitorSuppressionMaxTotalHours = 49
                 $result = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $script:suppressionCluster -ClusterTags $script:suppressionTags

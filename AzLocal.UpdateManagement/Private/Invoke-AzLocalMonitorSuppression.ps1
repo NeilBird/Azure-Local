@@ -162,7 +162,11 @@ function Invoke-AzLocalMonitorSuppression {
             if (-not $PSCmdlet.ShouldProcess($ClusterResourceId, 'Recover owned maintenance suppression marker')) { $result.Status = 'WhatIf'; return $result }
             [void](Set-AzLocalClusterTagsMerge -ClusterResourceId $ClusterResourceId -Tags @{ UpdateMonitorSuppression = $operationId; UpdateMonitorSuppressionUntil = $expiry.ToString('o') } -ApiVersion $ApiVersion -Confirm:$false)
         }
-        $reconciled = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $ClusterResourceId -ClusterTags @{ UpdateMonitorSuppression = $operationId } -ApiVersion $ApiVersion
+        $reconcileTags = @{
+            UpdateMonitorSuppression = $operationId
+            UpdateRetryAttempted = Get-TagValue -Tags $ClusterTags -Name 'UpdateRetryAttempted'
+        }
+        $reconciled = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $ClusterResourceId -ClusterTags $reconcileTags -ApiVersion $ApiVersion
         if ($reconciled.Status -eq 'SuppressionRemoved') {
             $result.Status = 'SuppressionPending'
             $result.Message = 'Previous update attempt completed; suppression removed. Retry on a later firing to establish a fresh maintenance window.'
@@ -187,6 +191,23 @@ function Invoke-AzLocalMonitorSuppression {
         $matchingRuns = @($runs | Where-Object {
             $_.properties.timeStarted -and (ConvertTo-AzLocalMonitorSuppressionUtc -Value $_.properties.timeStarted) -ge $created
         } | Sort-Object { ConvertTo-AzLocalMonitorSuppressionUtc -Value $_.properties.timeStarted } -Descending)
+        if ($matchingRuns.Count -eq 0) {
+            $retryAttempt = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value (Get-TagValue -Tags $ClusterTags -Name 'UpdateRetryAttempted')
+            if ($retryAttempt -and $retryAttempt.Outcome -eq 'RetryStarted' -and $retryAttempt.UpdateName -ieq $ownedUpdate -and
+                $retryAttempt.AttemptUtc -ge $created.UtcDateTime -and $retryAttempt.AttemptUtc -le $now.UtcDateTime) {
+                $latestRun = $runs | Where-Object { $_.properties.timeStarted } |
+                    Sort-Object { ConvertTo-AzLocalMonitorSuppressionUtc -Value $_.properties.timeStarted } -Descending | Select-Object -First 1
+                if ($latestRun) {
+                    $runProperties = if ($latestRun.properties -is [System.Collections.IDictionary]) { [pscustomobject]$latestRun.properties } else { $latestRun.properties }
+                    if ($runProperties.PSObject.Properties['lastUpdatedTime'] -and $runProperties.lastUpdatedTime) {
+                        $lastUpdated = ConvertTo-AzLocalMonitorSuppressionUtc -Value $runProperties.lastUpdatedTime
+                        if ($lastUpdated.UtcDateTime -ge $retryAttempt.AttemptUtc -and $lastUpdated -le $now) {
+                            $matchingRuns = @($latestRun)
+                        }
+                    }
+                }
+            }
+        }
         if ($matchingRuns.Count -gt 0) {
             $unfinished = @($matchingRuns | Where-Object { $_.properties.state -notin @('Succeeded', 'Failed', 'Canceled', 'Cancelled') })
             $shouldRemove = $unfinished.Count -eq 0
@@ -245,7 +266,14 @@ function Invoke-AzLocalMonitorSuppression {
         }
         if ($hasRenewalExpiry) {
             $markerExpiry = Get-TagValue -Tags $ClusterTags -Name 'UpdateMonitorSuppressionUntil'
-            if (-not $markerExpiry -or [math]::Abs(((ConvertTo-AzLocalMonitorSuppressionUtc -Value $ClusterTags.UpdateMonitorSuppressionUntil) - $expiry).TotalSeconds) -gt 1) {
+            $markerNeedsSync = $true
+            if ($markerExpiry) {
+                try {
+                    $markerNeedsSync = [math]::Abs(((ConvertTo-AzLocalMonitorSuppressionUtc -Value $ClusterTags.UpdateMonitorSuppressionUntil) - $expiry).TotalSeconds) -gt 1
+                }
+                catch { $markerNeedsSync = $true }
+            }
+            if ($markerNeedsSync) {
                 if ($PSCmdlet.ShouldProcess($ClusterResourceId, 'Synchronize renewed maintenance suppression expiry marker')) {
                     [void](Set-AzLocalClusterTagsMerge -ClusterResourceId $ClusterResourceId -Tags @{ UpdateMonitorSuppressionUntil = $expiry.ToString('o') } -ApiVersion $ApiVersion -Confirm:$false)
                 }
