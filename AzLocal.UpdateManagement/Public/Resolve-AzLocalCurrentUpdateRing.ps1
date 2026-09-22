@@ -37,6 +37,10 @@ function Resolve-AzLocalCurrentUpdateRing {
     .PARAMETER Now
         The UTC moment to resolve. Default: [DateTime]::UtcNow.
 
+    .PARAMETER UpdateRingValue
+        Optional single ring whose matching rows contribute policy. Wildcard
+        schedule rows also contribute. Omit for the normal fleet-wide union.
+
     .OUTPUTS
         [PSCustomObject] with:
           Rings                       [string[]] - deduped, ordered as-encountered
@@ -79,7 +83,10 @@ function Resolve-AzLocalCurrentUpdateRing {
         [PSCustomObject]$Schedule,
 
         [Parameter(Mandatory = $false)]
-        [datetime]$Now = [datetime]::UtcNow
+        [datetime]$Now = [datetime]::UtcNow,
+
+        [Parameter(Mandatory = $false)]
+        [string]$UpdateRingValue
     )
 
     # ---- ISO-8601 week (year, week) for any DateTime ------------------
@@ -211,6 +218,10 @@ function Resolve-AzLocalCurrentUpdateRing {
     $matched = New-Object System.Collections.Generic.List[object]
 
     foreach ($row in @($Schedule.Schedule)) {
+        if ($UpdateRingValue) {
+            $rowRings = @($row.rings -split ';' | ForEach-Object { $_.Trim() })
+            if ($rowRings -notcontains $UpdateRingValue -and $rowRings -notcontains '***') { continue }
+        }
         $weeks = Expand-AzLocalCyclesExpression $row.weeksInCycle $cycleWeeks
         if (-not ($weeks -contains $cycleWeek)) { continue }
         $days = Expand-AzLocalDaysExpression $row.daysOfWeek

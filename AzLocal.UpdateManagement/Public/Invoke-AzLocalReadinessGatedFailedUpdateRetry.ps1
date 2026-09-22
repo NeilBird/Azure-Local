@@ -264,7 +264,7 @@ function Invoke-AzLocalReadinessGatedFailedUpdateRetry {
 
     $retryStarted = @($results | Where-Object { $_.Status -eq 'RetryStarted' }).Count
     $retryAlready = @($results | Where-Object { $_.Status -eq 'RetryAlreadyAttempted' }).Count
-    $retrySkipped = @($results | Where-Object { $_.Status -in @('Skipped', 'NotFound', 'WhatIf') }).Count
+    $retrySkipped = @($results | Where-Object { $_.Status -in @('Skipped', 'NotFound', 'WhatIf', 'SuppressionPending') }).Count
     $retryFailed  = @($results | Where-Object { $_.Status -in @('Failed', 'Error') }).Count
 
     & $emitCounters $retryStarted $retryAlready $retrySkipped $retryFailed

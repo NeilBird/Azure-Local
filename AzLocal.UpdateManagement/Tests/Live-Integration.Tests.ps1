@@ -154,6 +154,84 @@ Describe 'Live-Integration: Authentication and ARG transport pre-conditions' -Ta
     }
 }
 
+Describe 'Live-Integration: Config-2 read-only planning' -Tag 'Live', 'LiveFoundation' -Skip:$SkipLive {
+    BeforeAll {
+        $expected = 'fbaf508b-cb61-4383-9cda-a42bfa0c7bc9'
+        $query = "resources | where type =~ 'microsoft.azurestackhci/clusters' | project id | order by id asc | take 4"
+        $raw = & az graph query --subscriptions $expected -q $query --first 4 -o json --only-show-errors
+        if ($LASTEXITCODE -ne 0) { throw 'Config-2 lab cluster discovery failed.' }
+        $response = ($raw -join "`n") | ConvertFrom-Json -ErrorAction Stop
+        $script:config2ResourceIds = @($response.data | ForEach-Object { [string]$_.id })
+        $script:config2ResourceIds.Count | Should -BeGreaterThan 0
+        foreach ($resourceId in $script:config2ResourceIds) {
+            $resourceId | Should -Match "^/subscriptions/$expected/resourceGroups/[^/]+/providers/Microsoft\.AzureStackHCI/clusters/[^/]+$"
+        }
+        $script:config2TargetRing = 'LiveReadOnly-' + [guid]::NewGuid().ToString('N')
+    }
+
+    It 'Matches CLI plans in fresh jobs and reuses a token for repeated direct ARM reads' {
+        $module = Get-Module AzLocal.UpdateManagement
+        $comparisons = & $module {
+            param([string[]]$ResourceIds, [string]$TargetRing)
+            $entries = @(foreach ($resourceId in @($ResourceIds) + @($ResourceIds)) {
+                [PSCustomObject]@{ ResourceId = $resourceId; UpdateRingValue = $TargetRing }
+            })
+            $worker = {
+                param([object[]]$Batch, [object[]]$Entries, [string]$ModulePath)
+                $workerModule = Import-Module $ModulePath -Force -PassThru -ErrorAction Stop
+                & $workerModule {
+                    param([string]$Mode, [object[]]$WorkerEntries)
+                    $timer = [Diagnostics.Stopwatch]::StartNew()
+                    $output = if ($Mode -eq 'Direct') {
+                        @(Invoke-AzLocalUpdateRingTagPlanBatch -Batch $WorkerEntries -Options @{
+                            Force = $true; ClusterTagFilters = @(); CaptureVerbose = $true
+                        } -Verbose 4>&1)
+                    }
+                    else {
+                        @(foreach ($entry in $WorkerEntries) {
+                            New-AzLocalUpdateRingTagPlan -ClusterEntry $entry -Force $true
+                        })
+                    }
+                    $timer.Stop()
+                    $plans = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                    [PSCustomObject]@{
+                        Mode = $Mode
+                        DurationMs = $timer.ElapsedMilliseconds
+                        Count = $plans.Count
+                        Failed = @($plans | Where-Object { $_.Result -and $_.Result.Status -eq 'Failed' }).Count
+                        Shape = ($plans | Select-Object InputIndex, ResourceId, Result, Plan | ConvertTo-Json -Depth 8 -Compress)
+                        Diagnostics = ($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }) -join "`n"
+                    }
+                } ([string]$Batch[0]) $Entries
+            }
+            $jobs = Invoke-FleetJobsInParallel -InputItems @('Cli', 'Direct') -ScriptBlock $worker `
+                -ThrottleLimit 2 -MaxItemsPerJob 1 -ArgumentList @(, $entries) -ActivityName 'LiveConfig2ReadOnly'
+            foreach ($job in $jobs) {
+                if ($job.Failed) { throw "Config-2 read-only worker failed: $($job.Error)" }
+                $job.Output
+            }
+        } $script:config2ResourceIds $script:config2TargetRing
+
+        @($comparisons).Count | Should -Be 2
+        $cli = $comparisons | Where-Object Mode -eq 'Cli'
+        $direct = $comparisons | Where-Object Mode -eq 'Direct'
+        $cli.Failed | Should -Be 0
+        $direct.Failed | Should -Be 0
+        $direct.Count | Should -Be ($script:config2ResourceIds.Count * 2)
+        $direct.Shape | Should -Be $cli.Shape
+        $direct.Diagnostics | Should -Match "directReads=$($direct.Count); fallbackReads=0; tokenRequests=1"
+        Write-Host ("Config-2 live read comparison: reads={0}; cliMs={1}; directMs={2}; workers=2; writes=0. Small-sample timings are not a fleet benchmark." -f $direct.Count, $cli.DurationMs, $direct.DurationMs)
+    }
+
+    It 'Runs the public parallel command in WhatIf mode without applying tag plans' {
+        $results = @(Set-AzLocalClusterUpdateRingTag -ClusterResourceIds $script:config2ResourceIds `
+            -UpdateRingValue $script:config2TargetRing -Force -ThrottleLimit 2 -WhatIf -PassThru `
+            -LogFolderPath (Join-Path $TestDrive 'config2-dry-run') -ErrorAction Stop)
+        $results.Count | Should -Be $script:config2ResourceIds.Count
+        foreach ($result in $results) { $result.Status | Should -Be 'WhatIf' }
+    }
+}
+
 Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live', 'LiveFoundation' -Skip:$SkipLive {
 
     It 'Bundled starter is inert and preserves implicit subscription scope' {
@@ -165,7 +243,7 @@ Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live', 'LiveFoun
         @($settings.ManagementGroups).Count | Should -Be 0
         $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
         $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
-        (Get-Content -LiteralPath $starterPath -Raw) | Should -Match '(?m)^# schemaVersion: 5\r?$'
+        (Get-Content -LiteralPath $starterPath -Raw) | Should -Match '(?m)^# schemaVersion: 6\r?$'
     }
 
     It 'Parses active reporting and ITSM settings without changing Azure scope' {

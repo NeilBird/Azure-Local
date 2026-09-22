@@ -162,7 +162,7 @@ Describe 'Publish-Module package allow-list' -Tag 'ReleaseGate' {
         }
 
         Get-Content -LiteralPath (Join-Path $script:StagingDir 'Automation-Pipeline-Examples\fleet-settings.example.yml') -Raw |
-            Should -Match '(?m)^# schemaVersion: 5\r?$'
+            Should -Match '(?m)^# schemaVersion: 6\r?$'
     }
 
     It 'excludes repository-only publishing and test content' {

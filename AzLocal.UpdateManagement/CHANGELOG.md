@@ -5,6 +5,32 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.39] - 2026-09-22
+
+### Added
+
+- Apply summaries and JSON record per-cluster `AlertSuppression` evidence (`Enabled`, `N/A`, or `Pending`; historical missing evidence is `Not recorded`). Update: 4 adds an independent Alert Suppression Actions table and CSV/JSON audit artifacts for renewal, removal, unchanged state, limits, and failures. Empty runs clear stale audit datasets. Existing update counters, JUnit classifications, and ITSM triggers are unchanged; suppression failures remain warnings and audit rows rather than failed update runs.
+- Fleet settings schema 6 bundles suppression and separately opt-in `renewMonitorSuppressionDuringUpdates` (default false), with `monitorSuppressionMaxTotalHours` (default 168, range 49-720). Monitoring renews only an enabled owned rule within six hours of expiry with fresh matching InProgress evidence, capped from original creation; expired rules are never revived. The updater backs up and additively migrates v1-v5 files, preserves v5 contents/order, and appends missing commented defaults without enabling features.
+- Strictly opt-in `suppressMonitorNotificationsPerClusterDuringUpdates` (default false). Creates an exact-cluster, 48-hour notification suppression rule; initial apply/retry defers for at least 30 minutes. Monitoring reconciles matching terminal attempts or expiry, including after opt-out. Existing rules, Insights, and AzureEdgeAlerts remain unchanged. Includes an optional companion custom role and full configuration/RBAC/recovery/pilot documentation. Live suppression delivery acceptance remains required.
+- Manual single-cluster sideload validation in GitHub Actions and Azure DevOps, requiring an exact cluster resource ID and exact Ready update name. It runs with fleet `enabled: false`, defaults to preview, and requires explicit dry-run false for live copy/import. It never starts update installation.
+- `UpdateSideloadedVersion` records the exact imported update name; shared state records the update name and cluster resource ID. Apply rejects mismatched staged identities and disallowed versions even with an explicit update name or `Force`; reset clears the identity tag.
+- Step-by-step pilot guidance covers schedule isolation and committing trigger changes, Key Vault secret provisioning, coordinator/task identities, pre-downloaded media catalogs, checksum verification, copy-only checkpoints, and separate import/install approval.
+
+### Changed
+
+- Config: 2 parallel planning uses fresh direct ARM reads with worker-local tokens reused only for the same tenant/account identity. This avoids launching Azure CLI for every cluster read; uncertain account/token metadata or failed direct reads fall back to the existing CLI authentication/recovery path. PATCH approval and transport remain unchanged. Existing `concurrency.maxUpdateRingTagConcurrentJobs` still controls workers (default 4, range 1-16); `1` retains serial CLI processing. Read/batch timings and counters support comparison; no fleet speedup multiplier has been established.
+- Sideload policy resolves from the target cluster's next matching ring day, including applicable wildcard rows, instead of today's fleet-wide union. Explicit validation bypasses the staging wait, not the policy lookup or allowed-version boundary.
+- Imported media can be restaged when a different eligible update is selected, subject to staging lead time, shared copy capacity, and fresh update-state checks. In-flight identity mismatches, unsafe/unknown update states, and failed update reads preserve state and block advancement.
+- Legacy boolean-only apply gates remain compatible. Legacy in-flight sideload state without identity requires operator review; imported legacy state is conservatively restaged. Rejected transitions surface as pipeline warnings without overwriting persisted evidence.
+- No exported-function count change (73). Bundled GitHub Actions and Azure DevOps generation pins are `0.9.39`. Remote SMB/WinRM/scheduled-task/import acceptance remains outstanding; local tests do not establish live end-to-end readiness.
+
+### Fixed
+
+- Suppression renewal and terminal cleanup recognize reused retry runs with an older start time only when the latest run has fresh activity and a successful, same-update retry marker within the owned window. Unrelated historical runs remain excluded. Malformed cluster expiry markers are repaired from validated renewed rules, including after partial tag-write failures; ownership validation and `-WhatIf` remain enforced.
+- Fleet and per-runner copy limits count fresh shared-state operations outside the current plan, including during an exact-ID pilot. Unreadable JSON state blocks capacity evaluation.
+- Heartbeat/progress staleness preserves PowerShell 7 JSON `DateTime` values and parses string timestamps with invariant settings, avoiding false stale-copy detection on non-US regional settings.
+- Catalog selection requires package-type agreement as well as version, preventing Solution and OEM SBE media from being confused when version strings coincide.
+
 ## [0.9.38] - 2026-09-21
 
 ### Fixed
@@ -2273,7 +2299,7 @@ Patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes. No pu
 
 - **New Pester guard** that scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (`tenantId` / `clientId` / `objectId` / `principalId` / `applicationId`), or real public IPv4 addresses outside an explicit allow-list.
 - Auto-excluded: RFC1918 / loopback / link-local / CGNAT / RFC5737 doc ranges / RFC2544 benchmarking / multicast / subnet-mask shapes / well-known public DNS (Google, Cloudflare, Quad9, OpenDNS). The trailing word-boundary on the IPv4 regex excludes version-string false-positives such as SbeVersion `4.5.6.7-RegressionMarker`.
-- Allow-list seeded with the three synthetic GUID fixtures already confirmed safe (sub ID `fbaf508b...`, RunId `add1f87d...`, action-plan ID `1084e062...`).
+- Allow-list seeded with the three existing GUID fixtures for subscription, update-run, and action-plan identifiers.
 - One inert fixture rename in `Tests/AzLocal.UpdateManagement.Tests.ps1`: `SbeVersion = '4.1.2.0'` -> `'4.1.2.0-Marker'` (the BS8 schema test only inspects property names, so the value change is a no-op).
 
 ### Publish-Module.ps1 - exclude maintainer-only `RELEASE-PROCESS.md`

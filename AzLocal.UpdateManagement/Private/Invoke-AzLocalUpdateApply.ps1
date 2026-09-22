@@ -19,6 +19,9 @@ function Invoke-AzLocalUpdateApply {
     # Ensure Azure CLI is available
     Test-AzCliAvailable | Out-Null
 
+    $suppression = Invoke-AzLocalMonitorSuppression -Action Ensure -ClusterResourceId $ClusterResourceId -UpdateName $UpdateName -ApiVersion $ApiVersion
+    if (-not $suppression.Ready) { throw "SuppressionPending: $($suppression.Message)" }
+
     $uri = "https://management.azure.com$ClusterResourceId/updates/$UpdateName/apply?api-version=$ApiVersion"
     
     Write-Verbose "Applying update via POST to: $uri"

@@ -12,6 +12,9 @@ To start updates on Azure Local clusters, users need specific permissions on the
 
 ### Recommended Built-in Roles
 
+**Opt-in notification suppression (v0.9.39):** the base custom role remains unchanged.
+Only participating fleets need the optional [Azure Stack HCI Monitor Suppression Operator (custom) role](../Automation-Pipeline-Examples/azlocal-monitor-suppression-custom-role.json), granting `Microsoft.AlertsManagement/actionRules/read`, `/write`, and `/delete` on cluster resource groups. Assign it to apply/retry and cleanup identities, or explicitly extend your existing role while preserving its GUID and existing actions. Cluster-only assignment does not cover sibling processing-rule resources. See [full RBAC, configuration, and recovery requirements](../Automation-Pipeline-Examples/docs/monitor-notification-suppression.md#rbac).
+
 | Role | Role ID | Description |
 |------|---------|-------------|
 | **Azure Stack HCI Administrator** | `bda0d508-adf1-4af0-9c28-88919fc3ae06` | Full access to cluster and resources, including updates |

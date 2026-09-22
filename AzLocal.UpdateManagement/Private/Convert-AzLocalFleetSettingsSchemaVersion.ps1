@@ -1,7 +1,7 @@
 function Convert-AzLocalFleetSettingsSchemaVersion {
     <#
     .SYNOPSIS
-        Upgrades fleet-settings.yml schema v1, v2, v3, or v4 text to schema v5.
+        Upgrades fleet-settings.yml schema v1 through v5 text to schema v6.
     .DESCRIPTION
         Schema v1 receives the grouped tag-filter example. Schema v2 flat tag
         pairs are converted to named one-tag groups, preserving their OR intent.
@@ -9,8 +9,9 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         Schema v5 adds the UpdateRing tag reconciliation concurrency ceiling.
         Existing comments and line endings are preserved, while recognized
         top-level sections are placed in the canonical v5 order: scope,
-        updateStartWindow, concurrency, reporting, itsm. Schema v5 text is
-        returned unchanged.
+        updateStartWindow, concurrency, reporting, itsm for pre-v5 files.
+        Schema v6 appends missing, commented suppression and renewal settings.
+        Existing v5 section order is preserved. Schema v6 is returned unchanged.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -30,7 +31,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
             return [pscustomobject]@{
                 Migrated    = $false
                 FromVersion = $null
-                ToVersion   = 5
+                ToVersion   = 6
                 NewText     = $Text
                 Reason      = 'NoSchemaDeclaration'
             }
@@ -41,30 +42,30 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
     }
 
     $currentVersion = [int]$matches[0].Groups[2].Value
-    if ($currentVersion -gt 5) {
+    if ($currentVersion -gt 6) {
         throw "Convert-AzLocalFleetSettingsSchemaVersion: '$SourcePath' uses schemaVersion $currentVersion, which is newer than this module supports."
     }
-    if ($currentVersion -eq 5) {
+    if ($currentVersion -eq 6) {
         return [pscustomobject]@{
             Migrated    = $false
-            FromVersion = 5
-            ToVersion   = 5
+            FromVersion = 6
+            ToVersion   = 6
             NewText     = $Text
             Reason      = 'Current'
         }
     }
-    if ($currentVersion -notin @(1, 2, 3, 4)) {
+    if ($currentVersion -notin @(1, 2, 3, 4, 5)) {
         throw "Convert-AzLocalFleetSettingsSchemaVersion: '$SourcePath' uses unsupported schemaVersion $currentVersion."
     }
 
     $match = $matches[0]
-    $replacement = $match.Groups[1].Value + '5' + $match.Groups[3].Value
+    $replacement = $match.Groups[1].Value + '6' + $match.Groups[3].Value
     $newText = $Text.Substring(0, $match.Index) + $replacement + $Text.Substring($match.Index + $match.Length)
-    $newText = [regex]::Replace($newText, '(?im)(fleet settings \(schema version )\d+(\))', '${1}5${2}')
-    $newText = [regex]::Replace($newText, '(?m)^(\s*#\s*AZLOCAL-FLEET-SETTINGS-SCHEMA-)V[1234](\s*)$', '${1}V5${2}')
+    $newText = [regex]::Replace($newText, '(?im)(fleet settings \(schema version )\d+(\))', '${1}6${2}')
+    $newText = [regex]::Replace($newText, '(?m)^(\s*#\s*AZLOCAL-FLEET-SETTINGS-SCHEMA-)V[12345](\s*)$', '${1}V6${2}')
 
     $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
-    $settingsMarker = '# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5'
+    $settingsMarker = '# AZLOCAL-FLEET-SETTINGS-SCHEMA-V6'
     if ($currentVersion -eq 2 -and $newText -match '(?im)^\s*(?:#\s*)?clusterTagFilters\s*:') {
         $lines = [regex]::Split($newText, '\r?\n')
         $convertedLines = [System.Collections.Generic.List[string]]::new()
@@ -101,7 +102,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         }
         $newText = $convertedLines -join $newline
     }
-    elseif ($newText -notmatch '(?im)^\s*#?\s*clusterTagFilters\s*:') {
+    elseif ($currentVersion -lt 5 -and $newText -notmatch '(?im)^\s*#?\s*clusterTagFilters\s*:') {
         $commentedSettings = @(
             $settingsMarker
             '# Optional global cluster admission policy. Tags in a group use AND; groups use OR.'
@@ -125,7 +126,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         $newText += $newline + $commentedSettings + $newline
     }
 
-    if ($newText -notmatch '(?im)^\s*#?\s*updateStartWindow\s*:') {
+    if ($currentVersion -lt 5 -and $newText -notmatch '(?im)^\s*#?\s*updateStartWindow\s*:') {
         $toleranceSettings = @(
             '# Optional UTC allowance around every cluster UpdateStartWindow tag.'
             '# Values are independent, accept 0 to 60 minutes, and default to 0.'
@@ -139,7 +140,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         $newText += $newline + $toleranceSettings + $newline
     }
 
-    if ($newText -notmatch '(?im)^\s*#?\s*concurrency\s*:') {
+    if ($currentVersion -lt 5 -and $newText -notmatch '(?im)^\s*#?\s*concurrency\s*:') {
         $concurrencySettings = @(
             '# Optional concurrency ceiling for UpdateRing tag reconciliation.'
             '# Accepts 1 to 16 concurrent jobs and defaults to 4.'
@@ -168,7 +169,7 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
             })
         }
     }
-    if ($sectionHeadings.Count -gt 0) {
+    if ($currentVersion -lt 5 -and $sectionHeadings.Count -gt 0) {
         $sectionNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         for ($headingIndex = 0; $headingIndex -lt $sectionHeadings.Count; $headingIndex++) {
             $heading = $sectionHeadings[$headingIndex]
@@ -219,10 +220,26 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         $newText = ($orderedBlocks -join ($newline + $newline)) + $newline
     }
 
+    $suppressionSettings = [ordered]@{
+        suppressMonitorNotificationsPerClusterDuringUpdates = 'false'
+        renewMonitorSuppressionDuringUpdates = 'false'
+        monitorSuppressionMaxTotalHours = '168'
+    }
+    $missingSettings = @($suppressionSettings.Keys | Where-Object { $newText -notmatch ('(?im)^(?:#\s*)?' + [regex]::Escape($_) + '\s*:') })
+    if ($missingSettings.Count -gt 0) {
+        if ($newText.Length -gt 0 -and -not $newText.EndsWith($newline)) { $newText += $newline }
+        $newText += $newline + '# Optional cluster notification suppression and bounded renewal (schema 6).' + $newline
+        $newText += '# Both opt-ins default false. Maximum total hours: 49-720 (default 168).' + $newline
+        $newText += '# Renewal needs a matching active run and monitoring within the last 6 hours before expiry.' + $newline
+        foreach ($settingName in $missingSettings) {
+            $newText += '# ' + $settingName + ': ' + $suppressionSettings[$settingName] + $newline
+        }
+    }
+
     return [pscustomobject]@{
         Migrated    = $true
         FromVersion = $currentVersion
-        ToVersion   = 5
+        ToVersion   = 6
         NewText     = $newText
         Reason      = 'Upgraded'
     }

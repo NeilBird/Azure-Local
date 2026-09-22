@@ -1,4 +1,4 @@
-# AzLocal.UpdateManagement fleet settings (schema version 5)
+# AzLocal.UpdateManagement fleet settings (schema version 6)
 #
 # This starter is intentionally fully commented. In this state, every pipeline
 # keeps the existing behavior and queries the subscriptions visible to its Azure
@@ -8,7 +8,27 @@
 # management groups are supported. The pipeline identity needs Reader access (or
 # equivalent resource read permissions) at each configured scope.
 #
-# schemaVersion: 5
+# schemaVersion: 6
+#
+# Strictly opt-in maintenance notification suppression (v0.9.39). Requires the
+# optional Azure Stack HCI Monitor Suppression Operator (custom) role on cluster
+# resource groups for apply and cleanup identities. Leaves existing rules and
+# AzureEdgeAlerts unchanged.
+# First eligible apply defers installation at least 30 minutes; ensure another
+# eligible firing. Initial expiry is 48 hours; keep update monitoring running.
+# See docs/monitor-notification-suppression.md for scope, RBAC, and pilot checks.
+# suppressMonitorNotificationsPerClusterDuringUpdates: false
+#
+# Separately opt-in renewal for long-running updates; requires suppression above.
+# Within the last 6 hours before expiry, monitoring can renew for up to 48 hours
+# from the current check, only for a matching InProgress run. Never revives an
+# expired rule. Keep monitoring hourly (or more frequently) and in cluster scope.
+# Total maximum is measured from ORIGINAL rule creation, accepts 49-720 hours,
+# and defaults to 168 (7 days). The recorded operation cap cannot be increased.
+# Turning renewal off stops extensions, not the current window or cleanup.
+# renewMonitorSuppressionDuringUpdates: false
+# monitorSuppressionMaxTotalHours: 168
+#
 # scope:
 #   managementGroups:
 #     - contoso-platform

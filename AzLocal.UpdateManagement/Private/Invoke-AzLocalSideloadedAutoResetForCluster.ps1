@@ -1,7 +1,8 @@
 function Invoke-AzLocalSideloadedAutoResetForCluster {
     <#
     .SYNOPSIS
-        Evaluates and (when matched) flips UpdateSideloaded=False + clears UpdateVersionInProgress for one cluster.
+        Evaluates and (when matched) flips UpdateSideloaded=False and clears
+        UpdateVersionInProgress and UpdateSideloadedVersion for one cluster.
     .DESCRIPTION
         Implements the auto-reset decision matrix used by Get-AzLocalUpdateRuns
         (default-on) and Reset-AzLocalSideloadedTag (explicit). Returns a single
@@ -9,11 +10,11 @@ function Invoke-AzLocalSideloadedAutoResetForCluster {
 
         Decision matrix (LatestRunState=Succeeded only - any other state -> Skipped/RunNotSucceeded):
             UpdateSideloaded absent, no version  -> NoTag (cluster opted out; nothing to do)
-            UpdateSideloaded absent, orphan ver  -> OrphanCleared (clear stale UpdateVersionInProgress only)
+            UpdateSideloaded absent, orphan ver  -> OrphanCleared (clear both version tags)
             UpdateSideloaded=False               -> Skipped (already reset)
             UpdateSideloaded=True, no version    -> Skipped (warning: no UpdateVersionInProgress)
             UpdateSideloaded=True, mismatch      -> Skipped (mismatch reason)
-            UpdateSideloaded=True, match         -> Reset (PATCH both tags)
+            UpdateSideloaded=True, match         -> Reset (close gate and clear both version tags)
             UpdateSideloaded=True, -Force        -> Reset (bypass match check)
 
         UpdateSideloaded with malformed value is treated as Skipped (with reason) so
@@ -93,6 +94,15 @@ function Invoke-AzLocalSideloadedAutoResetForCluster {
         return [PSCustomObject]$result
     }
     $cluster = $resp.Data
+    if (Get-TagValue -Tags $cluster.tags -Name 'UpdateMonitorSuppression') {
+        try {
+            $suppression = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $ClusterResourceId -ClusterTags $cluster.tags -ApiVersion $ApiVersion
+            Write-Log -Message "Monitor suppression [$ClusterName]: $($suppression.Status). $($suppression.Message)" -Level Info
+        }
+        catch {
+            Write-Log -Message "Monitor suppression cleanup [$ClusterName] requires attention: $($_.Exception.Message)" -Level Warning
+        }
+    }
     $tagSideloaded = Get-TagValue -Tags $cluster.tags -Name $script:UpdateSideloadedTagName
     $tagVersion = Get-TagValue -Tags $cluster.tags -Name $script:UpdateVersionInProgressTagName
     $result.PreviousSideloaded = $tagSideloaded
@@ -187,7 +197,7 @@ function Invoke-AzLocalSideloadedAutoResetForCluster {
             try {
                 [void](Set-AzLocalClusterTagsMerge `
                     -ClusterResourceId $ClusterResourceId `
-                    -Tags @{ $script:UpdateVersionInProgressTagName = $null } `
+                    -Tags @{ $script:UpdateVersionInProgressTagName = $null; $script:UpdateSideloadedVersionTagName = $null } `
                     -ApiVersion $ApiVersion)
                 $result.Action = 'OrphanCleared'
                 $result.Message = "UpdateSideloaded tag absent; cleared orphan UpdateVersionInProgress='$tagVersion' (latest run '$LatestRunUpdateName' Succeeded)."
@@ -263,6 +273,7 @@ function Invoke-AzLocalSideloadedAutoResetForCluster {
             -ClusterResourceId $ClusterResourceId `
             -Tags @{
                 $script:UpdateSideloadedTagName        = 'False'
+                $script:UpdateSideloadedVersionTagName = $null
                 $script:UpdateVersionInProgressTagName = $null
             } `
             -ApiVersion $ApiVersion)

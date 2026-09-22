@@ -16,6 +16,11 @@ function Export-AzLocalUpdateRunMonitorReport {
 
         The cmdlet:
 
+                Reconciles owned maintenance notification suppression for marked inventory
+                entries independently of sideload reset and the current fleet opt-in.
+                Markers prevent SkipWhenIdle from bypassing this cleanup. This requires
+                processing-rule read/delete and cluster tag permissions for opted-in fleets.
+
           1. Resolves the output directory (defaults to './reports' on
              GitHub Actions / Local, or `$env:BUILD_ARTIFACTSTAGINGDIRECTORY`
              on Azure DevOps - matching the v0.8.4 yml).
@@ -120,6 +125,8 @@ function Export-AzLocalUpdateRunMonitorReport {
         value so elapsed comparisons are deterministic.
 
     .PARAMETER PassThru
+        Also returns SuppressionActions, SuppressionCsvPath, and SuppressionJsonPath
+        for the independent per-cluster suppression audit during this run.
         When set, returns a single PSCustomObject summarising the run
         (InFlightCount, LongRunningCount, LongRunningStepCount,
         StepErroredCount, StalledCount, RecentFailureCount,
@@ -235,6 +242,12 @@ function Export-AzLocalUpdateRunMonitorReport {
 
     $monitorCsv = Join-Path -Path $OutputDirectory -ChildPath $CsvFileName
     $monitorXml = Join-Path -Path $OutputDirectory -ChildPath $XmlFileName
+    $suppressionStem = [System.IO.Path]::GetFileNameWithoutExtension($CsvFileName) + '-suppression'
+    $suppressionCsv = Join-Path -Path $OutputDirectory -ChildPath ($suppressionStem + '.csv')
+    $suppressionJson = Join-Path -Path $OutputDirectory -ChildPath ($suppressionStem + '.json')
+    $suppressionActions = [System.Collections.Generic.List[object]]::new()
+    '[]' | Set-Content -LiteralPath $suppressionJson -Encoding utf8 -WhatIf:$false
+    '"ClusterName","ClusterResourceId","Action","Status","ExpiresUtc","RuleId","CheckedUtc","Reason"' | Set-Content -LiteralPath $suppressionCsv -Encoding utf8 -WhatIf:$false
 
     $nowUtc            = $Now.ToUniversalTime()
     $thresholdSpan     = [TimeSpan]::FromHours($LongRunningThresholdHours)
@@ -286,6 +299,9 @@ function Export-AzLocalUpdateRunMonitorReport {
             UnresolvedFailureCount = 0
             AttemptWithoutRunCount = 0
             AttemptGaps            = @()
+            SuppressionActions     = @()
+            SuppressionCsvPath     = $suppressionCsv
+            SuppressionJsonPath    = $suppressionJson
             CsvPath                = $monitorCsv
             XmlPath                = $monitorXml
             Rows                   = @()
@@ -318,6 +334,13 @@ function Export-AzLocalUpdateRunMonitorReport {
                 else {
                     $inventory = @(Get-AzLocalClusterInventory -PassThru 6>$null)
                     $inventoryForTags = @($inventory)
+                }
+                foreach ($inventoryRow in $inventoryForTags) {
+                    $tagBag = if ($inventoryRow -and $inventoryRow.PSObject.Properties['tags']) { $inventoryRow.tags } else { $null }
+                    if (Get-TagValue -Tags $tagBag -Name 'UpdateMonitorSuppression') {
+                        $hasRecentAttempt = $true
+                        break
+                    }
                 }
                 if ($RecentAttemptWindowHours -gt 0) {
                     $attemptCutoff = $nowUtc.AddHours(-$RecentAttemptWindowHours)
@@ -380,6 +403,49 @@ function Export-AzLocalUpdateRunMonitorReport {
         $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
         $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest -PassThru -SkipSideloadedReset 6>$null)
         $inventoryForTags = @($inventory)
+    }
+
+    foreach ($inventoryRow in $inventoryForTags) {
+        $tagBag = if ($inventoryRow -and $inventoryRow.PSObject.Properties['tags']) { $inventoryRow.tags } else { $null }
+        if (-not (Get-TagValue -Tags $tagBag -Name 'UpdateMonitorSuppression')) { continue }
+        $suppressionClusterId = [string]$inventoryRow.ResourceId
+        $suppressionRow = [pscustomobject]@{
+            ClusterName = ($suppressionClusterId -split '/')[-1]
+            ClusterResourceId = $suppressionClusterId
+            Action = 'Failed'
+            Status = 'Error'
+            ExpiresUtc = ''
+            RuleId = ''
+            CheckedUtc = [datetimeoffset]::UtcNow.ToString('o')
+            Reason = ''
+        }
+        try {
+            $suppressionRow.RuleId = Get-AzLocalMonitorSuppressionRuleId -ClusterResourceId $suppressionClusterId
+            $clusterRead = Invoke-AzRestJson -Uri "https://management.azure.com$suppressionClusterId`?api-version=$script:DefaultApiVersion" -Method GET
+            if (-not $clusterRead.Ok -or $clusterRead.Data.id -ine $suppressionClusterId) { throw 'Could not verify current cluster tags.' }
+            if (Get-TagValue -Tags $clusterRead.Data.tags -Name 'UpdateMonitorSuppressionUntil') {
+                try { $suppressionRow.ExpiresUtc = (ConvertTo-AzLocalMonitorSuppressionUtc -Value $clusterRead.Data.tags.UpdateMonitorSuppressionUntil).ToString('o') }
+                catch { $suppressionRow.ExpiresUtc = '' }
+            }
+            $suppression = Invoke-AzLocalMonitorSuppression -Action Reconcile -ClusterResourceId $suppressionClusterId -ClusterTags $clusterRead.Data.tags
+            $suppressionRow.Status = $suppression.Status
+            $suppressionRow.Action = if ($suppression.PSObject.Properties['ReportAction']) { $suppression.ReportAction } else { 'Not verified' }
+            if ($suppression.PSObject.Properties['ExpiresUtc']) { $suppressionRow.ExpiresUtc = $suppression.ExpiresUtc }
+            if ($suppressionRow.Action -in @('Removed', 'Marker cleared', 'Not applicable')) { $suppressionRow.ExpiresUtc = '' }
+            $suppressionRow.Reason = $suppression.Message
+            Write-Log -Message "Monitor suppression [$suppressionClusterId]: $($suppression.Status). $($suppression.Message)" -Level Info
+        }
+        catch {
+            $suppressionRow.Action = 'Failed'
+            $suppressionRow.Status = 'Error'
+            $suppressionRow.Reason = $_.Exception.Message
+            Write-Log -Message "Monitor suppression reconciliation [$suppressionClusterId] requires attention: $($_.Exception.Message)" -Level Warning
+        }
+        $suppressionActions.Add($suppressionRow)
+    }
+    if ($suppressionActions.Count -gt 0) {
+        $suppressionActions | Export-Csv -LiteralPath $suppressionCsv -NoTypeInformation -Encoding utf8 -WhatIf:$false
+        ConvertTo-Json -InputObject $suppressionActions.ToArray() -Depth 5 | Set-Content -LiteralPath $suppressionJson -Encoding utf8 -WhatIf:$false
     }
 
     # ARG can omit nested updateRun resources even when the ARM endpoint and
@@ -1125,6 +1191,24 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add("> **All in-flight runs are healthy (no step errors, per-step <=${LongRunningStepHours}h, overall <=${LongRunningThresholdHours}h) and no unresolved failures.**")
         [void]$md.Add('')
     }
+    if ($suppressionActions.Count -gt 0) {
+        [void]$md.Add('### Alert Suppression Actions')
+        [void]$md.Add('')
+        [void]$md.Add('_Actions during this monitoring run. Failed actions may have partially completed; expiry is last known, not a guarantee of notification delivery._')
+        [void]$md.Add('')
+        [void]$md.Add('| Cluster | Action | Expires UTC | Reason |')
+        [void]$md.Add('|---|---|---|---|')
+        foreach ($suppressionRow in $suppressionActions) {
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName $suppressionRow.ClusterName -ClusterResourceId $suppressionRow.ClusterResourceId -MarkdownTableCell
+            $actionCell = ConvertTo-AzLocalMarkdownTableCell -Value $suppressionRow.Action
+            $expiryCell = if ($suppressionRow.ExpiresUtc) { ConvertTo-AzLocalMarkdownTableCell -Value $suppressionRow.ExpiresUtc } else { '-' }
+            $reasonCell = ConvertTo-AzLocalMarkdownTableCell -Value $suppressionRow.Reason
+            [void]$md.Add("| $clusterCell | $actionCell | $expiryCell | $reasonCell |")
+        }
+        [void]$md.Add('')
+        [void]$md.Add('_Suppression audit artifacts: `' + [System.IO.Path]::GetFileName($suppressionCsv) + '` and `' + [System.IO.Path]::GetFileName($suppressionJson) + '`._')
+        [void]$md.Add('')
+    }
     [void]$md.Add('_Source data: `Get-AzLocalUpdateRuns -Latest -PassThru`. JUnit emitted as `' + $monitorXml + '`; full per-cluster rows in `' + $monitorCsv + '`._')
     if ($InstalledModuleVersion) {
         [void]$md.Add('')
@@ -1144,6 +1228,9 @@ function Export-AzLocalUpdateRunMonitorReport {
             UnresolvedFailureCount = [int]$unresolvedFailed.Count
             AttemptWithoutRunCount = [int]$attemptGaps.Count
             AttemptGaps            = $attemptGaps.ToArray()
+            SuppressionActions     = $suppressionActions.ToArray()
+            SuppressionCsvPath     = $suppressionCsv
+            SuppressionJsonPath    = $suppressionJson
             CsvPath                = $monitorCsv
             XmlPath                = $monitorXml
             Rows                   = $rows

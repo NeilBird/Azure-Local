@@ -2,6 +2,7 @@ function Reset-AzLocalSideloadedTag {
     <#
     .SYNOPSIS
         Resets the UpdateSideloaded tag (True->False) and clears UpdateVersionInProgress
+        and UpdateSideloadedVersion
         on Azure Local clusters whose latest update run has succeeded.
     .DESCRIPTION
         Provides an explicit, scope-required entry point for the same auto-reset logic

@@ -4,9 +4,25 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.38 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0938) `What's New in v0.9.38` section.
+> **For v0.9.39 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0939) `What's New in v0.9.39` section.
 
 ---
+
+### What's New in v0.9.39
+
+**Suppression lifecycle evidence:** apply summaries and JSON now record `AlertSuppression`, including `N/A` when opted out and `Pending` when deferred. Update: 4 shows per-cluster actions during that run, including Extended, Removed, Active / Unchanged, Limit reached, and failures, with matching CSV/JSON audit artifacts. Existing update counters, JUnit results, and ITSM triggers remain unchanged. Renewal users should schedule monitoring at least hourly rather than rely on the shipped six-hour heartbeat. Successful API operations do not establish notification-delivery acceptance.
+
+**Opt-in maintenance notification suppression:** disabled by default. A dedicated cluster-scoped rule suppresses action-group delivery without changing existing alert rules or AzureEdgeAlerts. The first eligible apply waits for a later firing at least 30 minutes afterward; the initial window is 48 hours. Fleet schema 6 also offers separately opt-in active-run renewal, bounded by a maximum total duration (default seven days). The updater preserves existing fleet settings and adds missing options commented out. See the [setup and RBAC guide](../Automation-Pipeline-Examples/docs/monitor-notification-suppression.md) for renewal, monitoring cleanup, the companion role, and required live pilot.
+
+**Lower Config: 2 read overhead:** parallel tag planning reuses worker-local ARM tokens for fresh cluster reads, with the existing CLI path as fallback. The YAML worker limit is unchanged (default 4, range 1-16; 1 retains serial CLI processing), as are dry-run and PATCH approval safeguards. New timings support fleet comparisons; a production speedup multiplier has not been measured.
+
+**Improved sideload pilots:** manually validate one exact cluster and Ready update while fleet sideload remains disabled. Preview defaults to true; live copying/import requires explicit approval. Validation bypasses the staging wait, not the target ring's next-window version policy, and never starts installation.
+
+**Staged identity and restaging safeguards:** `UpdateSideloadedVersion` records the exact imported name. Apply requires identity and allowed-version agreement even with `Force`; reset clears the identity. A newly selected eligible update can replace imported media only after lead-time, copy-capacity, and fresh active-update checks. Shared capacity includes out-of-plan copies, and heartbeat timestamps are culture-independent.
+
+**Setup guidance distinguishes initial work from recurring operations:** the pilot checklist covers runner and task identities, Key Vault secrets, pre-downloaded media catalogs, checksums, schedule isolation, and separate copy/import/install approvals. Legacy in-flight state without identity requires review; imported legacy state is conservatively restaged.
+
+Remote SMB/WinRM/scheduled-task/import end-to-end acceptance remains required before production use. No exported-function count change (73); bundled pipeline pins are `0.9.39`.
 
 ### What's New in v0.9.38
 

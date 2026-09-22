@@ -54,6 +54,12 @@ function Get-AzLocalUpdateRuns {
     .PARAMETER SuppressFormattedOutput
         Suppresses formatted tables and detailed objects written directly to the host.
         Information and log streams remain available for normal redirection.
+    .PARAMETER SkipSideloadedReset
+        Skips the automatic tag-reset phase, including reconciliation of owned
+        maintenance notification suppression. Cleanup otherwise works for marked
+        clusters even after the fleet suppression setting is disabled. Raw mode
+        also bypasses reconciliation. The pipeline monitor report performs its own
+        suppression-only cleanup independently of this switch.
     .OUTPUTS
         PSCustomObject[] - Array of update run objects with the following properties:
         - ClusterName: The cluster name (in multi-cluster mode)

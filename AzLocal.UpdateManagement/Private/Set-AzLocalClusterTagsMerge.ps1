@@ -112,13 +112,10 @@ function Set-AzLocalClusterTagsMerge {
             $toMerge[$key] = $toMergeRequested[$key]
         }
     }
-    # Idempotency: only Delete keys that actually exist on the resource. ARM's Delete
-    # operation expects a {key:value} dictionary; we pass the existing value (its
-    # content is not used for matching, only the key is, but ARM requires the shape).
     $toDelete = [ordered]@{}
     foreach ($key in $toDeleteRequested.Keys) {
         if ($existingTags.ContainsKey($key)) {
-            $toDelete[$key] = $existingTags[$key]
+            $toDelete[$key] = $null
         }
     }
 

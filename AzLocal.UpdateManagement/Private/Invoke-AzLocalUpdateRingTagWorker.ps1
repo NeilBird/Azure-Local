@@ -1,3 +1,116 @@
+function Get-AzLocalUpdateRingClusterRead {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)][string]$ResourceId,
+        [Parameter(Mandatory = $true)][hashtable]$Context
+    )
+
+    $uri = "https://management.azure.com$ResourceId`?api-version=2025-10-01"
+    if ($ResourceId -notmatch '^/subscriptions/([^/]+)/resourceGroups/[^/]+/providers/Microsoft\.AzureStackHCI/clusters/[^/?#]+$') {
+        return [PSCustomObject]@{ Ok = $false; Data = $null; Error = 'Invalid cluster resource ID for direct ARM read.' }
+    }
+    $subscriptionId = $Matches[1]
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $headers = $null
+    $tokenResponse = $null
+    $rawToken = $null
+    $cacheKey = $null
+    try {
+        if (-not $Context.ContainsKey('Accounts')) {
+            $Context.Accounts = @{}
+            $Context.Tokens = @{}
+            $Context.DirectReads = 0
+            $Context.FallbackReads = 0
+            $Context.TokenRequests = 0
+            $Context.ReadMilliseconds = 0L
+            $rawAccounts = & az account list --output json --only-show-errors 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'Account discovery failed.' }
+            $accounts = ($rawAccounts -join "`n") | ConvertFrom-Json -ErrorAction Stop
+            foreach ($account in $accounts) {
+                if ($account.id -and $account.tenantId -and $account.user.name -and $account.user.type) {
+                    $accountKey = '{0}|{1}|{2}' -f $account.tenantId, $account.user.type, $account.user.name
+                    if ($Context.Accounts.ContainsKey([string]$account.id)) {
+                        $Context.Accounts[[string]$account.id] = $null
+                    }
+                    else { $Context.Accounts[[string]$account.id] = $accountKey }
+                }
+            }
+        }
+        $cacheKey = $Context.Accounts[$subscriptionId]
+        if (-not $cacheKey) { throw 'No unambiguous account context available.' }
+        $cached = $Context.Tokens[$cacheKey]
+        if (-not $cached -or $cached.ExpiresUtc -le [DateTimeOffset]::UtcNow.AddMinutes(2)) {
+            $Context.TokenRequests++
+            $rawToken = & az account get-access-token --subscription $subscriptionId --resource 'https://management.azure.com/' --output json --only-show-errors 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'Token acquisition failed.' }
+            $tokenResponse = ($rawToken -join "`n") | ConvertFrom-Json -ErrorAction Stop
+            if (-not $tokenResponse.accessToken -or -not $tokenResponse.expires_on -or
+                [string]$tokenResponse.subscription -ne $subscriptionId -or
+                [string]$tokenResponse.tenant -ne ($cacheKey -split '\|')[0]) { throw 'Token metadata unavailable or inconsistent.' }
+            $expiresUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$tokenResponse.expires_on)
+            if ($expiresUtc -le [DateTimeOffset]::UtcNow.AddMinutes(2)) { throw 'Token expiry is too near.' }
+            $cached = @{ AccessToken = [string]$tokenResponse.accessToken; ExpiresUtc = $expiresUtc }
+            $Context.Tokens[$cacheKey] = $cached
+        }
+        $headers = @{ Authorization = 'Bearer ' + $cached.AccessToken }
+        $data = Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -MaximumRedirection 0 -TimeoutSec 30 -ErrorAction Stop -Verbose:$false -Debug:$false
+        if (-not $data -or [string]$data.id -ne $ResourceId) { throw 'Unexpected ARM resource response.' }
+        $Context.DirectReads++
+        return [PSCustomObject]@{ Ok = $true; Data = $data; Error = $null }
+    }
+    catch {
+        if ($headers) { $headers.Clear() }
+        if ($cacheKey -and $Context.ContainsKey('Tokens')) {
+            if ($Context.Tokens[$cacheKey]) { $Context.Tokens[$cacheKey].Clear() }
+            $Context.Tokens.Remove($cacheKey)
+        }
+        $Context.FallbackReads++
+        Write-Verbose 'Direct ARM read unavailable; using the existing Azure CLI read and authentication recovery path.'
+        return Invoke-AzRestJson -Uri $uri
+    }
+    finally {
+        if ($headers) { $headers.Clear() }
+        $cached = $null
+        $rawToken = $null
+        $tokenResponse = $null
+        $timer.Stop()
+        $Context.ReadMilliseconds += $timer.ElapsedMilliseconds
+        Write-Verbose ("Config-2 cluster read completed: durationMs={0}; directReads={1}; fallbackReads={2}; tokenRequests={3}." -f $timer.ElapsedMilliseconds, $Context.DirectReads, $Context.FallbackReads, $Context.TokenRequests)
+    }
+}
+
+function Invoke-AzLocalUpdateRingTagPlanBatch {
+    [CmdletBinding()]
+    [OutputType([PSCustomObject])]
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Batch,
+        [Parameter(Mandatory = $true)]$Options
+    )
+
+    $readContext = @{ DirectReads = 0; FallbackReads = 0; TokenRequests = 0; ReadMilliseconds = 0L }
+    $batchTimer = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        foreach ($item in $Batch) {
+            New-AzLocalUpdateRingTagPlan -ClusterEntry $item -ClusterTagFilters @($Options.ClusterTagFilters) `
+                -Force ([bool]$Options.Force) -CaptureVerbose ([bool]$Options.CaptureVerbose) -ReadContext $readContext
+        }
+    }
+    finally {
+        $batchTimer.Stop()
+        try {
+            Write-Verbose ("Config-2 planning batch completed: clusters={0}; durationMs={1}; directReads={2}; fallbackReads={3}; tokenRequests={4}; readDurationMs={5}." -f $Batch.Count, $batchTimer.ElapsedMilliseconds, $readContext.DirectReads, $readContext.FallbackReads, $readContext.TokenRequests, $readContext.ReadMilliseconds)
+        }
+        finally {
+            if ($readContext.ContainsKey('Tokens')) {
+                foreach ($token in $readContext.Tokens.Values) { $token.Clear() }
+                $readContext.Tokens.Clear()
+            }
+            $readContext.Clear()
+        }
+    }
+}
+
 function New-AzLocalUpdateRingTagPlan {
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -14,7 +127,10 @@ function New-AzLocalUpdateRingTagPlan {
         [bool]$Force = $false,
 
         [Parameter(Mandatory = $false)]
-        [bool]$CaptureVerbose = $false
+        [bool]$CaptureVerbose = $false,
+
+        [Parameter(Mandatory = $false)]
+        [hashtable]$ReadContext
     )
 
     $logEntries = [System.Collections.Generic.List[object]]::new()
@@ -104,7 +220,12 @@ function New-AzLocalUpdateRingTagPlan {
         [void]$logEntries.Add([PSCustomObject]@{ Level = 'Info'; Message = 'Verifying cluster exists and retrieving current tags...' })
 
         $uri = "https://management.azure.com$resourceId`?api-version=2025-10-01"
-        $restOutput = @(Invoke-AzRestJson -Uri $uri -Verbose:$CaptureVerbose 4>&1)
+        $restOutput = if ($null -ne $ReadContext) {
+            @(Get-AzLocalUpdateRingClusterRead -ResourceId $resourceId -Context $ReadContext -Verbose:$CaptureVerbose 4>&1)
+        }
+        else {
+            @(Invoke-AzRestJson -Uri $uri -Verbose:$CaptureVerbose 4>&1)
+        }
         $clusterResponse = $null
         foreach ($outputItem in $restOutput) {
             if ($outputItem -is [System.Management.Automation.VerboseRecord]) {
