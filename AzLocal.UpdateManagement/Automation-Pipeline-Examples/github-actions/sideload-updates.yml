@@ -18,11 +18,13 @@
 #   Each run advances every in-scope cluster by ONE state transition and exits.
 #   The multi-hour copy itself runs in a detached Windows Scheduled Task, so no
 #   pipeline run is ever long-lived. Drive this on a frequent CRON (e.g. every
-#   30 minutes) so the state machine progresses Copying -> Copied -> Verified ->
-#   Imported across successive short runs. Re-running is always safe.
+#   30 minutes) after pilot acceptance. Progress is Copying -> Copied ->
+#   Discovering -> Imported. Serialize runs and investigate ambiguous outcomes.
 #
 # GATE: the self-hosted job runs only when
-#   config/sideload-settings.yml has enabled: true.
+#   config/sideload-settings.yml has enabled: true, or an explicit manual
+#   single-cluster validation supplies an exact resource ID and Ready update name.
+#   Preview defaults to true; live copy/import requires dry_run=false.
 #
 # AUTHENTICATION:
 #   - Azure (ARG fleet read + Key Vault secret read + UpdateSideloaded tag flip):
@@ -31,8 +33,8 @@
 #     Alternative authentication modes are configured in sideload-settings.yml.
 #   - Cluster WinRM remoting: an Active Directory [pscredential] built from two
 #     Key Vault secrets named in the sideload auth-map row (NOT the pipeline
-#     identity). The detached copy Scheduled Task runs as the runner service
-#     account (needs UNC rights to the shared cache + cluster import share).
+#     identity). The detached copy Scheduled Task uses identity.task, separately
+#     from the runner service account; both need their documented source/UNC rights.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
@@ -57,6 +59,20 @@ on:
 
   workflow_dispatch:
     inputs:
+      single_cluster_validation:
+        description: 'Validate one cluster outside its lead window, even with fleet sideload disabled. Requires resource ID and update name.'
+        type: boolean
+        default: false
+      cluster_resource_id:
+        description: 'Cluster resource ID (exact ARM ID; required for single-cluster validation).'
+        type: string
+        required: false
+        default: ''
+      validation_update_name:
+        description: 'Exact Ready update name for validation; must pass the next ring window allow-list.'
+        type: string
+        required: false
+        default: ''
       update_ring:
         # accepts a single ring (Wave1), a semicolon-delimited list (Prod;Ring2),
         # or '***' (three stars - deliberate, not a typo) to match every cluster
@@ -86,11 +102,14 @@ on:
           - 'true'
 
 env:
+  INPUT_SINGLE_CLUSTER_VALIDATION: ${{ github.event.inputs.single_cluster_validation || 'false' }}
+  INPUT_CLUSTER_RESOURCE_ID: ${{ github.event.inputs.cluster_resource_id || '' }}
+  INPUT_VALIDATION_UPDATE_NAME: ${{ github.event.inputs.validation_update_name || '' }}
   # Module version this workflow YAML was generated against. The install step compares
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.38'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.39'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -130,7 +149,7 @@ jobs:
   # Cost: ~10s on windows-latest. No Azure/Key Vault access. Always runs.
   #
   # Outcomes:
-  #   - Gate OFF (config/sideload-settings.yml has enabled: false):
+  #   - Gate OFF (enabled: false and no explicit manual validation):
   #       preflight succeeds (exit 0) with an informational panel showing how
   #       to enable Step.6. The `sideload` job is then SKIPPED by its own `if:`.
   #   - Gate ON + paths.stateRoot missing: preflight FAILS (exit 1) with
@@ -172,13 +191,23 @@ jobs:
           if ([int]$settings.schemaVersion -ne 1) {
             throw "Unsupported sideload settings schemaVersion '$($settings.schemaVersion)'; this workflow requires 1."
           }
-          $enabled = [bool]$settings.enabled
+          $pilotRequested = $env:INPUT_SINGLE_CLUSTER_VALIDATION -eq 'true'
+          if ($pilotRequested) {
+            if ($env:GITHUB_EVENT_NAME -ne 'workflow_dispatch') { throw 'Single-cluster validation requires a manual run.' }
+            if ($env:INPUT_CLUSTER_RESOURCE_ID -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.AzureStackHCI/clusters/[^/]+$' -or [string]::IsNullOrWhiteSpace($env:INPUT_VALIDATION_UPDATE_NAME)) {
+              throw 'Single-cluster validation requires an exact cluster resource ID and update name.'
+            }
+          } elseif (-not [string]::IsNullOrWhiteSpace($env:INPUT_VALIDATION_UPDATE_NAME)) {
+            throw 'Validation update name requires single-cluster validation mode.'
+          }
+          $enabled = [bool]$settings.enabled -or $pilotRequested
           "enabled=$($enabled.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Value @(
             '## Step.6 - Sideload Updates - Preflight',
             '',
             "- Settings: ``$path`` (schema $($settings.schemaVersion))",
             "- Enabled: ``$enabled``",
+            "- Single-cluster validation: ``$pilotRequested`` (fleet setting unchanged)",
             "- State root: ``$($settings.paths.stateRoot)``"
           )
           if (-not $enabled) {
@@ -368,6 +397,9 @@ jobs:
 
           try {
         $settings = Get-AzLocalSideloadSettings -Path './config/sideload-settings.yml'
+        $pilotRequested = $env:INPUT_SINGLE_CLUSTER_VALIDATION -eq 'true'
+        if ($pilotRequested -and $env:GITHUB_EVENT_NAME -ne 'workflow_dispatch') { throw 'Single-cluster validation requires a manual run.' }
+        if (-not $settings.Enabled -and -not $pilotRequested) { throw 'Fleet sideloading is disabled.' }
 
         # 1. Resolve the per-cluster plan (read-only).
         $planParams = @{
@@ -377,11 +409,15 @@ jobs:
             LeadDays     = [int]$settings.Planning.leadDays
         }
         if ($env:INPUT_UPDATE_RING) { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
+        if ($env:INPUT_CLUSTER_RESOURCE_ID) { $planParams['ClusterResourceId'] = $env:INPUT_CLUSTER_RESOURCE_ID }
+        $planParams['SingleClusterValidation'] = $pilotRequested
+        $planParams['ValidationUpdateName'] = $env:INPUT_VALIDATION_UPDATE_NAME
         if ($settings.Remoting.fqdnSuffix) { $planParams['FqdnSuffix'] = [string]$settings.Remoting.fqdnSuffix }
         $plan = @(Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 10 -StepName 'Resolve sideload plan' -ScriptBlock {
           Resolve-AzLocalSideloadPlan @planParams
         })
         Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
+        if ($pilotRequested -and ($plan.Count -ne 1 -or $plan[0].Status -ne 'Planned')) { throw 'Single-cluster validation did not produce one eligible plan. Check the update, policy, catalog, and scope.' }
 
         # 2. Advance the re-entrant state machine by one transition per cluster.
         $applyParams = @{
@@ -426,6 +462,9 @@ jobs:
           $applyParams.Remove('TaskPassword')
         }
         Write-Host ("Processed {0} cluster(s)." -f $results.Count)
+        foreach ($transition in @($results | Where-Object { $_.Action -in @('Error', 'Failed') })) {
+          Write-Warning ("Sideload transition blocked for '{0}': {1}" -f $transition.ClusterName, $transition.Message)
+        }
 
         # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
         New-Item -ItemType Directory -Path ./reports -Force | Out-Null

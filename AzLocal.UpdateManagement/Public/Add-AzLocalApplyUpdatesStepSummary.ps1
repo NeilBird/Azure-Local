@@ -273,8 +273,8 @@ function Add-AzLocalApplyUpdatesStepSummary {
             [void]$sb.AppendLine()
             [void]$sb.AppendLine((Get-AzLocalCtrlClickTip))
             [void]$sb.AppendLine()
-            [void]$sb.AppendLine('| Cluster | Status | Update | Duration | Message |')
-            [void]$sb.AppendLine('|---|---|---|---|---|')
+            [void]$sb.AppendLine('| Cluster | Status | Update | Duration | Alert Suppression | Message |')
+            [void]$sb.AppendLine('|---|---|---|---|---|---|')
             $startedStates = @('UpdateStarted', 'PreparationStarted', 'AlreadyPrepared', 'Started', 'Success')
             $blockedStates = @('HealthCheckBlocked', 'ScheduleBlocked', 'SideloadedBlocked', 'ExcludedByTag', 'NotConnected')
             $failedStates  = @('Failed', 'Error', 'NotFound')
@@ -293,7 +293,10 @@ function Add-AzLocalApplyUpdatesStepSummary {
                 $clusterResId = if ($clusterIdByName.ContainsKey([string]$r.ClusterName)) { $clusterIdByName[[string]$r.ClusterName] } else { '' }
                 $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
                 $statusCell = ConvertTo-AzLocalMarkdownTableCell -Value ("{0} {1}" -f $icon, $st)
-                [void]$sb.AppendLine("| $clusterCell | $statusCell | $upd | $dur | $msg |")
+                $suppressionCell = if ($r.PSObject.Properties['AlertSuppression'] -and $r.AlertSuppression) {
+                    ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.AlertSuppression)
+                } else { 'Not recorded' }
+                [void]$sb.AppendLine("| $clusterCell | $statusCell | $upd | $dur | $suppressionCell | $msg |")
                 $actionsRendered++
             }
         }

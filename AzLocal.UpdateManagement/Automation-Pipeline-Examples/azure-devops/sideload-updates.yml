@@ -18,11 +18,13 @@
 #   Each run advances every in-scope cluster by ONE state transition and exits.
 #   The multi-hour copy itself runs in a detached Windows Scheduled Task, so no
 #   pipeline run is ever long-lived. Drive this on a frequent CRON (e.g. every
-#   30 minutes) so the state machine progresses Copying -> Copied -> Verified ->
-#   Imported across successive short runs. Re-running is always safe.
+#   30 minutes) after pilot acceptance. Progress is Copying -> Copied ->
+#   Discovering -> Imported. Serialize runs and investigate ambiguous outcomes.
 #
 # GATE: the self-hosted stage runs only when
-#   config/sideload-settings.yml has enabled: true.
+#   config/sideload-settings.yml has enabled: true, or an explicit manual
+#   single-cluster validation supplies an exact resource ID and Ready update name.
+#   Preview defaults to true; live copy/import requires dryRun=false.
 #
 # AUTHENTICATION:
 #   - Azure CLI context (ARG fleet read via 'az graph query' + UpdateSideloaded
@@ -55,10 +57,25 @@ trigger: none  # Manual or scheduled only
 #       include:
 #         - main
 #     always: true
-#     batch: true              # never overlap scheduled reconciliation runs
+#     batch: true              # also enforce exclusive execution; see sideload.md
 # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 parameters:
+  - name: singleClusterValidation
+    displayName: 'Single-cluster validation (bypass lead time, not version policy; works with fleet disabled)'
+    type: boolean
+    default: false
+
+  - name: clusterResourceId
+    displayName: 'Cluster resource ID (exact ARM ID; required for validation)'
+    type: string
+    default: ''
+
+  - name: validationUpdateName
+    displayName: 'Exact Ready update name for validation (must pass next ring window allow-list)'
+    type: string
+    default: ''
+
   - name: updateRing
     # accepts a single ring, 'Prod;Ring2' list, or '***' wildcard (three stars - deliberate).
     displayName: "UpdateRing tag value to scope the plan ('Wave1', 'Prod;Ring2', or '***' for ALL rings)."
@@ -86,7 +103,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.38'
+    value: '0.9.39'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -119,7 +136,7 @@ stages:
 # Cost: ~10s on windows-latest. No Azure / Key Vault access. Always runs.
 #
 # Outcomes:
-#   - Gate OFF (config/sideload-settings.yml has enabled: false):
+#   - Gate OFF (enabled: false and no explicit manual validation):
 #       Preflight succeeds with an informational panel showing how to enable
 #       Step.6. The `Sideload` stage is then SKIPPED by its own condition.
 #   - Gate ON + paths.stateRoot missing: Preflight FAILS with a panel
@@ -152,6 +169,10 @@ stages:
       name: preflight
       env:
         AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
+        INPUT_SINGLE_CLUSTER_VALIDATION: ${{ parameters.singleClusterValidation }}
+        INPUT_CLUSTER_RESOURCE_ID: ${{ parameters.clusterResourceId }}
+        INPUT_VALIDATION_UPDATE_NAME: ${{ parameters.validationUpdateName }}
+        BUILD_REASON: $(Build.Reason)
       inputs:
         targetType: 'inline'
         pwsh: true
@@ -171,7 +192,16 @@ stages:
             if ([int]$settings.schemaVersion -ne 1) {
               throw "Unsupported sideload settings schemaVersion '$($settings.schemaVersion)'; this pipeline requires 1."
             }
-            $gateOn = [bool]$settings.enabled
+            $pilotRequested = $env:INPUT_SINGLE_CLUSTER_VALIDATION -eq 'true'
+            if ($pilotRequested) {
+              if ($env:BUILD_REASON -ne 'Manual') { throw 'Single-cluster validation requires a manual run.' }
+              if ($env:INPUT_CLUSTER_RESOURCE_ID -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.AzureStackHCI/clusters/[^/]+$' -or [string]::IsNullOrWhiteSpace($env:INPUT_VALIDATION_UPDATE_NAME)) {
+                throw 'Single-cluster validation requires an exact cluster resource ID and update name.'
+              }
+            } elseif (-not [string]::IsNullOrWhiteSpace($env:INPUT_VALIDATION_UPDATE_NAME)) {
+              throw 'Validation update name requires single-cluster validation mode.'
+            }
+            $gateOn = [bool]$settings.enabled -or $pilotRequested
             Write-Host "##vso[task.setvariable variable=enabled;isOutput=true]$($gateOn.ToString().ToLowerInvariant())"
 
           Append-Summary '## Step.6 - Sideload Updates - Preflight'
@@ -210,7 +240,7 @@ stages:
           # Gate is ON - validate required configuration.
           Append-Summary '### Master gate'
           Append-Summary ''
-          Append-Summary '- `enabled: true` in `config/sideload-settings.yml`'
+          Append-Summary "- Fleet enabled: ``$($settings.enabled)``; single-cluster validation: ``$pilotRequested`` (fleet setting unchanged)."
           Append-Summary ''
           Append-Summary '### Required configuration'
           Append-Summary ''
@@ -366,6 +396,9 @@ stages:
       env:
         INPUT_UPDATE_RING: ${{ parameters.updateRing }}
         INPUT_DRY_RUN: ${{ parameters.dryRun }}
+        INPUT_SINGLE_CLUSTER_VALIDATION: ${{ parameters.singleClusterValidation }}
+        INPUT_CLUSTER_RESOURCE_ID: ${{ parameters.clusterResourceId }}
+        INPUT_VALIDATION_UPDATE_NAME: ${{ parameters.validationUpdateName }}
         reportsPath: $(reportsPath)
         DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
         DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
@@ -405,6 +438,9 @@ stages:
 
           try {
             $settings = Get-AzLocalSideloadSettings -Path './config/sideload-settings.yml'
+            $pilotRequested = $env:INPUT_SINGLE_CLUSTER_VALIDATION -eq 'true'
+            if ($pilotRequested -and $env:BUILD_REASON -ne 'Manual') { throw 'Single-cluster validation requires a manual run.' }
+            if (-not $settings.Enabled -and -not $pilotRequested) { throw 'Fleet sideloading is disabled.' }
 
           # Establish an Az PowerShell context for the Key Vault credential read.
           # WIF service connection -> federated token. For a secret-based service
@@ -425,11 +461,15 @@ stages:
               LeadDays     = [int]$settings.Planning.leadDays
           }
           if ($env:INPUT_UPDATE_RING) { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
+          if ($env:INPUT_CLUSTER_RESOURCE_ID) { $planParams['ClusterResourceId'] = $env:INPUT_CLUSTER_RESOURCE_ID }
+          $planParams['SingleClusterValidation'] = $pilotRequested
+          $planParams['ValidationUpdateName'] = $env:INPUT_VALIDATION_UPDATE_NAME
           if ($settings.Remoting.fqdnSuffix) { $planParams['FqdnSuffix'] = [string]$settings.Remoting.fqdnSuffix }
           $plan = @(Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 10 -StepName 'Resolve sideload plan' -ScriptBlock {
             Resolve-AzLocalSideloadPlan @planParams
           })
           Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
+          if ($pilotRequested -and ($plan.Count -ne 1 -or $plan[0].Status -ne 'Planned')) { throw 'Single-cluster validation did not produce one eligible plan. Check the update, policy, catalog, and scope.' }
 
           # 2. Advance the re-entrant state machine by one transition per cluster.
           $applyParams = @{
@@ -474,6 +514,9 @@ stages:
               $applyParams.Remove('TaskPassword')
             }
           Write-Host ("Processed {0} cluster(s)." -f $results.Count)
+          foreach ($transition in @($results | Where-Object { $_.Action -in @('Error', 'Failed') })) {
+            Write-Warning ("Sideload transition blocked for '{0}': {1}" -f $transition.ClusterName, $transition.Message)
+          }
 
           # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
           New-Item -ItemType Directory -Path $env:reportsPath -Force | Out-Null

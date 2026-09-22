@@ -93,6 +93,10 @@ function Start-AzLocalClusterUpdate {
         Resource ID (case-insensitive). When a matching key is present the internal
         Get-AzLocalAvailableUpdates call for that cluster is skipped.
     .OUTPUTS
+        When fleet notification suppression is explicitly enabled, installation
+        can return SuppressionPending until a bounded cluster rule has propagated
+        for at least 30 minutes. Preparation and WhatIf do not create suppression.
+        See Automation-Pipeline-Examples/docs/monitor-notification-suppression.md.
         PSCustomObject[] - Array of result objects with cluster name, status, and message.
     .EXAMPLE
         Start-AzLocalClusterUpdate -ClusterNames "MyCluster01" -ResourceGroupName "MyRG" -Force
@@ -1196,6 +1200,23 @@ function Start-AzLocalClusterUpdate {
                     continue
                 }
                 $selectedUpdate = $selection.SelectedUpdate
+                $sideloadedVersion = Get-TagValue -Tags $clusterTags -Name $script:UpdateSideloadedVersionTagName
+                if ($sideloadedVersion) {
+                    $identityGate = Test-AzLocalUpdateSideloadedAllowed -UpdateSideloaded $sideloadedTagValue -SideloadedVersion $sideloadedVersion -SelectedUpdateName ([string]$selectedUpdate.name)
+                    $stagedPolicy = Select-AzLocalNextUpdateForCluster -ReadyUpdates @($selectedUpdate) -AllowedUpdateVersions $AllowedUpdateVersions
+                    if (-not $identityGate.Allowed -or $stagedPolicy.Reason -ne 'Selected') {
+                        $results.Add([pscustomobject]@{
+                            ClusterName = $clusterName
+                            Status = 'SideloadedBlocked'
+                            Message = 'Selected update must match UpdateSideloadedVersion and the current allow-list; explicit UpdateName and Force do not bypass this check.'
+                            UpdateName = $selectedUpdate.name
+                            StartTime = $clusterStartTime
+                            EndTime = Get-Date
+                            Duration = $null
+                        }) | Out-Null
+                        continue
+                    }
+                }
                 if (-not $UpdateName) {
                     # Select the latest ready update by YYMM version from the update name
                     Write-Log -Message "Auto-selected latest update: $($selectedUpdate.name)" -Level Info
@@ -1261,6 +1282,21 @@ function Start-AzLocalClusterUpdate {
                             -UpdateName $selectedUpdate.name
                     }
                     else {
+                        $suppression = Invoke-AzLocalMonitorSuppression -Action Ensure -ClusterResourceId $clusterInfo.id -UpdateName $selectedUpdate.name -ClusterTags $clusterInfo.tags -ApiVersion $ApiVersion
+                        if (-not $suppression.Ready) {
+                            Write-Log -Message $suppression.Message -Level Info
+                            $results.Add([PSCustomObject]@{
+                                ClusterName = $clusterName
+                                Status = 'SuppressionPending'
+                                Message = $suppression.Message
+                                AlertSuppression = 'Pending'
+                                UpdateName = $selectedUpdate.name
+                                StartTime = $clusterStartTime
+                                EndTime = Get-Date
+                                Duration = $null
+                            }) | Out-Null
+                            continue
+                        }
                         $operationResult = Invoke-AzLocalUpdateApply -ClusterResourceId $clusterInfo.id `
                             -UpdateName $selectedUpdate.name `
                             -ApiVersion $ApiVersion
@@ -1304,6 +1340,7 @@ function Start-AzLocalClusterUpdate {
                             ClusterName   = $clusterName
                             Status        = $successStatus
                             Message       = $successMessage
+                            AlertSuppression = $(if ($prepareThisRun -or $suppression.Status -eq 'Disabled') { 'N/A' } elseif ($suppression.Status -eq 'SuppressionActive') { 'Enabled' } else { 'Not verified' })
                             UpdateName    = $selectedUpdate.name
                             StartTime     = $clusterStartTime
                             EndTime       = $endTime
@@ -1393,7 +1430,7 @@ function Start-AzLocalClusterUpdate {
         $succeeded = @($results | Where-Object { $_.Status -in @("UpdateStarted", "PreparationStarted") }).Count
         $wouldUpdate = @($results | Where-Object { $_.Status -in @("WouldUpdate", "WouldPrepare") }).Count
         $failed = @($results | Where-Object { $_.Status -in @("Failed", "Error") }).Count
-        $skipped = @($results | Where-Object { $_.Status -in @("Skipped", "AlreadyPrepared", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") }).Count
+        $skipped = @($results | Where-Object { $_.Status -in @("Skipped", "AlreadyPrepared", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag", "SuppressionPending") }).Count
 
         Write-Log -Message "Total clusters processed: $totalClusters" -Level Info
         if ($WhatIfPreference) {

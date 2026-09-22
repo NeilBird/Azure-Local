@@ -506,8 +506,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.38' {
-            $script:ModuleInfo.Version | Should -Be '0.9.38'
+        It 'Should have version 0.9.39' {
+            $script:ModuleInfo.Version | Should -Be '0.9.39'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -2725,10 +2725,190 @@ Describe 'Function: Set-AzLocalClusterUpdateRingTag' {
             $result.Status | Should -Be 'Failed'
             $result.Message | Should -Be 'Invalid Resource ID format'
         }
+
+        It 'Resolves private read and PATCH helpers in real child processes for valid cluster plans' {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzCliAvailable {}
+                Mock Get-AzLocalFleetSettings { [PSCustomObject]@{ ClusterTagFilters = @(); MaxUpdateRingTagConcurrentJobs = 4 } }
+                Mock Invoke-FleetJobsInParallel {
+                    $modulePath = Join-Path (Split-Path (Split-Path (Get-Command Set-AzLocalClusterUpdateRingTag).ScriptBlock.File -Parent) -Parent) 'AzLocal.UpdateManagement.psd1'
+                    $jobArguments = @($ScriptBlock.ToString()) + @(, [object[]]$InputItems) + $ArgumentList + @($modulePath)
+                    $job = Start-Job -ScriptBlock {
+                        param($WorkerText, $Batch, $Options, $ModulePath)
+                        function global:az {
+                            $global:LASTEXITCODE = 0
+                            if ($args[0] -eq 'account' -and $args[1] -eq 'list') {
+                                return '[{"id":"sub-1","tenantId":"tenant-1","user":{"name":"principal-1","type":"servicePrincipal"}}]'
+                            }
+                            if ($args[0] -eq 'account' -and $args[1] -eq 'get-access-token') {
+                                return (@{ accessToken = 'synthetic-token'; subscription = 'sub-1'; tenant = 'tenant-1'; expires_on = [DateTimeOffset]::UtcNow.AddHours(1).ToUnixTimeSeconds() } | ConvertTo-Json)
+                            }
+                            if ($args[0] -eq 'rest' -and $args[2] -eq 'PATCH') { return '{}' }
+                            throw 'Unexpected CLI command in worker regression.'
+                        }
+                        function global:Invoke-RestMethod {
+                            [CmdletBinding()]
+                            param($Uri, $Method, $Headers, $MaximumRedirection, $TimeoutSec)
+                            if ($Method -ne 'Get' -or $MaximumRedirection -ne 0) { throw 'Unsafe direct read.' }
+                            [PSCustomObject]@{ id = ([uri]$Uri).AbsolutePath; name = 'alpha'; type = 'Microsoft.AzureStackHCI/clusters'; tags = [PSCustomObject]@{ UpdateRing = 'Old' } }
+                        }
+                        & ([scriptblock]::Create($WorkerText)) $Batch $Options $ModulePath
+                    } -ArgumentList $jobArguments
+                    try {
+                        $finished = Wait-Job -Job $job -Timeout 60
+                        if (-not $finished) { throw 'Worker regression timed out.' }
+                        $output = @(Receive-Job -Job $job -ErrorAction Stop)
+                        $job.State | Should -Be 'Completed'
+                        if ($ActivityName -eq 'UpdateRingTag-Plan') {
+                            ($output.VerboseMessages -join ' ') | Should -Match 'directReads=2; fallbackReads=0; tokenRequests=1'
+                            ($output | ConvertTo-Json -Depth 12) | Should -Not -Match 'synthetic-token'
+                        }
+                        $global:_tagParallelCalls += $ActivityName
+                        [PSCustomObject]@{ BatchIndex = 0; Items = $InputItems; Failed = $false; Output = $output; Error = $null; DurationSeconds = 0 }
+                    }
+                    finally {
+                        if ($job.State -eq 'Running') { Stop-Job $job }
+                        Remove-Job $job -Force -WhatIf:$false
+                    }
+                }
+                Set-AzLocalClusterUpdateRingTag -ClusterResourceIds @(
+                    '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha',
+                    '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/beta'
+                ) -UpdateRingValue Ring1 -Force -Confirm:$false -Verbose -LogFolderPath $global:_tagParallelFolder -PassThru
+            }
+            @($result).Count | Should -Be 2
+            @($result.Status | Select-Object -Unique) | Should -Be @('Success')
+            $global:_tagParallelCalls | Should -Be @('UpdateRingTag-Plan', 'UpdateRingTag-Patch')
+        }
     }
 }
 
 Describe 'Internal Helper: UpdateRing tag workers' {
+    Context 'Direct ARM read safety' {
+        BeforeEach {
+            Mock az -ModuleName AzLocal.UpdateManagement {
+                $global:LASTEXITCODE = 0
+                if ($args[1] -eq 'list') {
+                    return '[{"id":"sub-1","tenantId":"tenant-1","user":{"name":"principal-1","type":"servicePrincipal"}},{"id":"sub-2","tenantId":"tenant-2","user":{"name":"principal-1","type":"servicePrincipal"}},{"id":"sub-3","tenantId":"tenant-1","user":{"name":"principal-2","type":"servicePrincipal"}}]'
+                }
+                $subscription = $args[3]
+                $tenant = if ($subscription -eq 'sub-2') { 'tenant-2' } else { 'tenant-1' }
+                return (@{ accessToken = 'synthetic-token'; subscription = $subscription; tenant = $tenant; expires_on = [DateTimeOffset]::UtcNow.AddHours(1).ToUnixTimeSeconds() } | ConvertTo-Json)
+            }
+            Mock Invoke-RestMethod -ModuleName AzLocal.UpdateManagement { [PSCustomObject]@{ id = ([uri]$Uri).AbsolutePath; name = 'alpha'; type = 'Microsoft.AzureStackHCI/clusters'; tags = [PSCustomObject]@{ UpdateRing = 'Ring1'; UpdateExcluded = 'False' } } }
+            Mock Invoke-AzRestJson -ModuleName AzLocal.UpdateManagement { [PSCustomObject]@{ Ok = $false; Data = $null; Error = 'Synthetic CLI failure' } }
+        }
+
+        It 'Keeps token caches isolated across tenants and account identities' {
+            InModuleScope AzLocal.UpdateManagement {
+                $context = @{}
+                try {
+                    foreach ($subscription in @('sub-1', 'sub-2', 'sub-3', 'sub-1')) {
+                        (Get-AzLocalUpdateRingClusterRead -ResourceId "/subscriptions/$subscription/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha" -Context $context).Ok | Should -BeTrue
+                    }
+                    $context.TokenRequests | Should -Be 3
+                    $context.DirectReads | Should -Be 4
+                    Should -Invoke Invoke-AzRestJson -Times 0 -Exactly
+                }
+                finally { $context.Clear() }
+            }
+        }
+
+        It 'Refreshes a near-expiry token before the next read' {
+            InModuleScope AzLocal.UpdateManagement {
+                $context = @{}
+                $resourceId = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                try {
+                    (Get-AzLocalUpdateRingClusterRead -ResourceId $resourceId -Context $context).Ok | Should -BeTrue
+                    $context.Tokens['tenant-1|servicePrincipal|principal-1'].ExpiresUtc = [DateTimeOffset]::UtcNow.AddSeconds(30)
+                    (Get-AzLocalUpdateRingClusterRead -ResourceId $resourceId -Context $context).Ok | Should -BeTrue
+                    $context.TokenRequests | Should -Be 2
+                }
+                finally { $context.Clear() }
+            }
+        }
+
+        It 'Falls back once and fails closed after a <Failure> direct response' -ForEach @(
+            @{ Failure = '401' }, @{ Failure = '403' }, @{ Failure = '429' }, @{ Failure = 'timeout' }, @{ Failure = 'wrong resource' }
+        ) {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ Failure = $Failure } {
+                Mock Invoke-RestMethod {
+                    if ($Failure -eq 'wrong resource') { return [PSCustomObject]@{ id = '/wrong-resource' } }
+                    throw "Synthetic $Failure with synthetic-token"
+                }
+                $context = @{}
+                try {
+                    $output = @(Get-AzLocalUpdateRingClusterRead -ResourceId '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha' -Context $context -Verbose 4>&1)
+                    $response = $output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] }
+                    $response.Ok | Should -BeFalse
+                    $response.Error | Should -Be 'Synthetic CLI failure'
+                    ($output | Out-String) | Should -Not -Match 'synthetic-token'
+                    $context.Tokens.Count | Should -Be 0
+                    $context.FallbackReads | Should -Be 1
+                    Should -Invoke Invoke-AzRestJson -Times 1 -Exactly
+                }
+                finally { $context.Clear() }
+            }
+        }
+
+        It 'Uses the existing CLI path for an unknown subscription without sending an unrelated token' {
+            InModuleScope AzLocal.UpdateManagement {
+                $context = @{}
+                try {
+                    (Get-AzLocalUpdateRingClusterRead -ResourceId '/subscriptions/unknown/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha' -Context $context).Ok | Should -BeFalse
+                    $context.TokenRequests | Should -Be 0
+                    Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+                    Should -Invoke Invoke-AzRestJson -Times 1 -Exactly
+                }
+                finally { $context.Clear() }
+            }
+        }
+
+        It 'Produces 100 fresh plans with two CLI calls without returning credentials' {
+            InModuleScope AzLocal.UpdateManagement {
+                $batch = @(foreach ($index in 1..100) { [PSCustomObject]@{ InputIndex = $index; ResourceId = "/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$index"; UpdateRingValue = 'Ring1' } })
+                $output = @(Invoke-AzLocalUpdateRingTagPlanBatch -Batch $batch -Options @{ Force = $false; ClusterTagFilters = @(); CaptureVerbose = $true } -Verbose 4>&1)
+                $plans = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                $diagnostics = ($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message }) -join "`n"
+                $plans.Count | Should -Be 100
+                @($plans.Result.Status | Select-Object -Unique) | Should -Be @('AlreadyInSync')
+                $diagnostics | Should -Match 'directReads=100; fallbackReads=0; tokenRequests=1'
+                ($plans | ConvertTo-Json -Depth 6) | Should -Not -Match 'synthetic-token'
+                $diagnostics | Should -Not -Match 'synthetic-token'
+                Should -Invoke az -Times 2 -Exactly
+                Should -Invoke Invoke-RestMethod -Times 100 -Exactly
+                Should -Invoke Invoke-AzRestJson -Times 0 -Exactly
+            }
+        }
+    }
+
+    It 'Reuses one token for fresh reads across subscriptions with the same account identity' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock az {
+                $global:LASTEXITCODE = 0
+                if ($args[1] -eq 'list') {
+                    return '[{"id":"sub-1","tenantId":"tenant-1","user":{"name":"principal-1","type":"servicePrincipal"}},{"id":"sub-2","tenantId":"tenant-1","user":{"name":"principal-1","type":"servicePrincipal"}}]'
+                }
+                return (@{ accessToken = 'synthetic-token'; subscription = 'sub-1'; tenant = 'tenant-1'; expires_on = [DateTimeOffset]::UtcNow.AddHours(1).ToUnixTimeSeconds() } | ConvertTo-Json)
+            }
+            Mock Invoke-RestMethod { [PSCustomObject]@{ id = ([uri]$Uri).AbsolutePath; tags = @{ UpdateRing = 'Ring1' } } }
+            Mock Invoke-AzRestJson { throw 'CLI read should not run on the direct path.' }
+            $context = @{}
+            try {
+                foreach ($subscription in @('sub-1', 'sub-2')) {
+                    $response = Get-AzLocalUpdateRingClusterRead -ResourceId "/subscriptions/$subscription/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha" -Context $context
+                    $response.Ok | Should -BeTrue
+                }
+                $context.DirectReads | Should -Be 2
+                $context.TokenRequests | Should -Be 1
+                $context.FallbackReads | Should -Be 0
+                Should -Invoke az -Times 2 -Exactly
+                Should -Invoke Invoke-RestMethod -Times 2 -Exactly -ParameterFilter { $Method -eq 'Get' -and $MaximumRedirection -eq 0 -and $TimeoutSec -eq 30 }
+            }
+            finally { $context.Clear() }
+        }
+    }
+
     It 'Returns an already-in-sync terminal result without a PATCH plan' {
         $global:_tagWorkerRestCalls = 0
         $result = InModuleScope AzLocal.UpdateManagement {
@@ -7990,6 +8170,34 @@ Describe 'Get-AzLocalAvailableUpdates (ARG-batch dispatch)' {
 
 Describe 'Start-AzLocalClusterUpdate (prefetched pass-through)' {
 
+    It 'blocks an explicit staged update that violates <Boundary> even with Force' -ForEach @(
+        @{ Boundary = 'identity'; StagedName = 'Solution12.2608.1003.9'; Allowed = @('Latest') },
+        @{ Boundary = 'policy'; StagedName = 'Solution12.2610.1004.31'; Allowed = @('Solution12.2608.1003.9') }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ StagedName = $StagedName; Allowed = $Allowed } {
+            param($StagedName, $Allowed)
+            $resourceId = '/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/pilot'
+            Mock az { $global:LASTEXITCODE = 0; '{"id":"test"}' }
+            Mock Test-ExportPathWritable { $true }
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo {
+                [pscustomobject]@{ id = $resourceId; name = 'pilot'; tags = @{ UpdateSideloaded = 'True'; UpdateSideloadedVersion = $StagedName }; properties = @{ status = 'ConnectedRecently' } }
+            }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = @{ state = 'UpdateAvailable'; healthState = 'Success' } } }
+            Mock Test-AzLocalClusterHealth { [pscustomobject]@{ IsBlocking = $false; ClusterName = 'pilot' } }
+            Mock Get-LastUpdateRunErrorSummary { [pscustomobject]@{ ErrorStep = ''; ErrorMessage = '' } }
+            Mock Get-HealthCheckFailureSummary { '' }
+            Mock Invoke-AzRestJson {
+                [pscustomobject]@{ Ok = $true; Data = [pscustomobject]@{ id = $resourceId; name = 'pilot'; tags = @{ UpdateSideloaded = 'True'; UpdateSideloadedVersion = $StagedName }; properties = @{ status = 'ConnectedRecently' } } }
+            }
+            $update = [pscustomobject]@{ name = 'Solution12.2610.1004.31'; properties = @{ state = 'Ready'; packageType = 'Solution'; version = '12.2610.1004.31' } }
+            $result = @(Start-AzLocalClusterUpdate -ClusterResourceIds @($resourceId) -PrefetchedAvailableUpdates @{ $resourceId = @($update) } -UpdateName $update.name -AllowedUpdateVersions $Allowed -Force -PassThru)
+            $result.Count | Should -Be 1
+            $result[0].Status | Should -Be 'SideloadedBlocked'
+            Assert-MockCalled Invoke-AzRestJson -Times 0 -ParameterFilter { $Method -in @('POST', 'PUT', 'PATCH', 'DELETE') }
+        }
+    }
+
     Context 'PrefetchedUpdateSummaries skips the internal summary fetch' {
         It 'Should use the pre-fetched summary object and not call Get-AzLocalUpdateSummary' {
             InModuleScope AzLocal.UpdateManagement {
@@ -9066,6 +9274,22 @@ Describe 'Helper Function: Invoke-AzLocalSideloadedAutoResetForCluster (Internal
         $global:azPatchCalled | Should -Be $false
     }
 
+    It 'Deletes timestamp tags by name without matching a reformatted date value' {
+        $global:azGetTagsJson = '{"tags":{"UpdateRing":"Wave1","UpdateMonitorSuppressionUntil":"2026-09-24T13:46:45.1687127+00:00"}}'
+        & (Get-Module $moduleName) {
+            param($resourceId)
+            Set-AzLocalClusterTagsMerge -ClusterResourceId $resourceId -Tags @{ UpdateMonitorSuppressionUntil = $null } -Confirm:$false
+        } $rid | Should -BeTrue
+        $global:azPatchBodies.Count | Should -Be 1
+        $payload = $global:azPatchBodies[0] | ConvertFrom-Json
+        $payload.operation | Should -Be 'Delete'
+        @($payload.properties.tags.PSObject.Properties).Count | Should -Be 1
+        $payload.properties.tags.PSObject.Properties.Name | Should -Contain 'UpdateMonitorSuppressionUntil'
+        $payload.properties.tags.UpdateMonitorSuppressionUntil | Should -BeNullOrEmpty
+        $global:azPatchBodies[0] | Should -Match '"UpdateMonitorSuppressionUntil"\s*:\s*null'
+        $global:azPatchBodies[0] | Should -Not -Match 'UpdateRing'
+    }
+
     It 'Action=OrphanCleared when UpdateSideloaded absent but stale UpdateVersionInProgress matches a Succeeded run' {
         # Cluster opted out of sideloaded workflow (no UpdateSideloaded) but a stale
         # UpdateVersionInProgress tag remains from a previous in-module update. Latest
@@ -9164,6 +9388,23 @@ Describe 'Helper Function: Invoke-AzLocalSideloadedAutoResetForCluster (Internal
         $deleteBody | Should -Match 'UpdateVersionInProgress'
         $deleteBody | Should -Not -Match 'UpdateSideloaded'
         # Existing UpdateRing is preserved structurally - never in any PATCH body.
+        ($global:azPatchBodies -join "`n") | Should -Not -Match 'UpdateRing'
+    }
+
+    It 'clears the exact staged identity on <Scenario>' -ForEach @(
+        @{ Scenario = 'matched reset'; BooleanTag = 'True'; ExpectedAction = 'Reset' }
+        @{ Scenario = 'orphan cleanup'; BooleanTag = ''; ExpectedAction = 'OrphanCleared' }
+    ) {
+        $tags = @{ UpdateVersionInProgress = 'Solution12.2604.1003.209'; UpdateSideloadedVersion = 'Solution12.2604.1003.209'; UpdateRing = 'Wave1' }
+        if ($BooleanTag) { $tags.UpdateSideloaded = $BooleanTag }
+        $global:azGetTagsJson = @{ tags = $tags } | ConvertTo-Json
+        $result = & (Get-Module $moduleName) { param($resourceId) Invoke-AzLocalSideloadedAutoResetForCluster -ClusterName c1 -ClusterResourceId $resourceId -LatestRunState Succeeded -LatestRunUpdateName 'Solution12.2604.1003.209' -Confirm:$false } $rid
+        $result.Action | Should -Be $ExpectedAction
+        $deletes = @($global:azPatchBodies | ForEach-Object { $_ | ConvertFrom-Json } | Where-Object operation -eq 'Delete')
+        $deletes.Count | Should -Be 1
+        $deletes[0].properties.tags.PSObject.Properties.Name | Should -Contain 'UpdateSideloadedVersion'
+        $deletes[0].properties.tags.PSObject.Properties.Name | Should -Contain 'UpdateVersionInProgress'
+        $deletes[0].properties.tags.PSObject.Properties.Name | Should -Not -Contain 'UpdateSideloaded'
         ($global:azPatchBodies -join "`n") | Should -Not -Match 'UpdateRing'
     }
 
@@ -10433,6 +10674,42 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath)) | Should -BeExactly $settingsBefore
     }
 
+    It 'v0.9.39: refreshes <Platform> pilot inputs without migrating sideload configuration' -ForEach @(
+        @{ Platform = 'GitHub'; WorkflowDirectory = '.github\workflows'; FirstInput = 'single_cluster_validation'; RingInput = 'update_ring' }
+        @{ Platform = 'AzureDevOps'; WorkflowDirectory = '.azure-pipelines'; FirstInput = 'singleClusterValidation'; RingInput = 'updateRing' }
+    ) {
+        $repoRoot = Join-Path $script:cpDestRoot ('pilot-upgrade-' + $Platform)
+        $destination = Join-Path $repoRoot $WorkflowDirectory
+        $null = New-Item -ItemType Directory -Path $destination -Force
+        Copy-AzLocalPipelineExample -Destination $destination -Platform $Platform 6>$null | Out-Null
+        $workflowPath = Join-Path $destination 'sideload-updates.yml'
+        $workflowText = Get-Content -LiteralPath $workflowPath -Raw
+        if ($Platform -eq 'GitHub') {
+            $workflowText = $workflowText -replace '(?ms)^      single_cluster_validation:.*?(?=^      update_ring:)', ''
+            $inputPattern = '(?m)^      single_cluster_validation:'
+        }
+        else {
+            $workflowText = $workflowText -replace '(?ms)^  - name: singleClusterValidation.*?(?=^  - name: updateRing)', ''
+            $inputPattern = '(?m)^  - name: singleClusterValidation\s*$'
+        }
+        ($workflowText -match $inputPattern) | Should -BeFalse
+        [IO.File]::WriteAllText($workflowPath, $workflowText, [Text.UTF8Encoding]::new($false))
+        $before = @{}
+        foreach ($name in @('sideload-settings.yml', 'sideload-auth-map.csv', 'sideload-catalog.yml')) {
+            $path = Join-Path (Join-Path $repoRoot 'config') $name
+            Add-Content -LiteralPath $path -Value '# Operator configuration must survive template refresh' -Encoding ASCII
+            $before[$name] = [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))
+        }
+        Update-AzLocalPipelineExample -Destination $destination -Platform $Platform -Confirm:$false 6>$null | Out-Null
+        $refreshed = Get-Content -LiteralPath $workflowPath -Raw
+        ($refreshed -match $inputPattern) | Should -BeTrue
+        $refreshed | Should -Match ([regex]::Escape($RingInput))
+        foreach ($name in $before.Keys) {
+            $path = Join-Path (Join-Path $repoRoot 'config') $name
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($path)) | Should -BeExactly $before[$name]
+        }
+    }
+
     It 'v0.8.7: -SkipStarterSideloadConfig suppresses the sideload starter drop entirely' {
         $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-skip'
         $dest = Join-Path $repoRoot '.github\workflows'
@@ -11126,7 +11403,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             Test-Path -LiteralPath $settingsPath | Should -BeTrue
             (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
             $starterText = Get-Content -LiteralPath $settingsPath -Raw
-            $starterText | Should -Match '(?m)^# schemaVersion: 5\r?$'
+                $starterText | Should -Match '(?m)^# schemaVersion: 6\r?$'
             $starterText | Should -Match '(?m)^#   maxUpdateRingTagConcurrentJobs: 4\r?$'
             $starterText | Should -Match '(?m)^# updateStartWindow:\r?$'
             $starterText | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
@@ -13297,9 +13574,9 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $parameter.ParameterType | Should -Be ([switch])
         }
 
-        It 'Documents automatic fleet-settings schema v1-v4 migration to v5' {
+        It 'Documents automatic fleet-settings schema v1-v5 migration to v6' {
             $parameterHelp = (Get-Help Update-AzLocalPipelineExample -Parameter UpgradeFleetSettingsSchema).description.Text -join ' '
-            $parameterHelp | Should -Match 'schema version 1, 2, 3, or 4 files are upgraded\s+to version 5 automatically'
+            $parameterHelp | Should -Match 'schema version 1, 2, 3, 4, or 5 files are upgraded\s+to version 6 automatically'
         }
 
         It 'Creates a missing starter and automatically upgrades an existing operator file' {
@@ -13314,7 +13591,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 6
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -13351,9 +13628,9 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 $after = [IO.File]::ReadAllText($settingsPath)
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# schemaVersion: 5\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 6\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V6\r?$'
                 $after | Should -Match '(?m)^#   maxUpdateRingTagConcurrentJobs: 4\r?$'
                 $after | Should -Match '(?m)^# updateStartWindow:\r?$'
                 (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 1
@@ -13377,19 +13654,19 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
                 $backupPath = Join-Path (Split-Path -Parent $settingsPath) 'fleet-settings_v1.bak.yml'
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^schemaVersion: 5\r$'
+                $after | Should -Match '(?m)^schemaVersion: 6\r$'
                 $after | Should -Match '(?m)^scope:\r$'
                 $after | Should -Match '(?m)^  managementGroups:\r$'
                 $after | Should -Match '(?m)^    - group-a\r$'
                 $after | Should -Match '(?m)^# OPERATOR SENTINEL\r$'
                 $after | Should -Not -Match '(?<!\r)\n'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V6\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
                 $after | Should -Match '(?m)^#     - name: Production\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#           value: Production\r?$'
-                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$')).Count | Should -Be 1
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
+                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V6\r?$')).Count | Should -Be 1
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 6
 
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
@@ -13400,7 +13677,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             }
         }
 
-        It 'Upgrades active schema v4 to v5 without activating the concurrency override' {
+        It 'Upgrades active schema v4 to v6 without activating the concurrency override' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-v4-upgrade-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
@@ -13415,7 +13692,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $settings = Get-AzLocalFleetSettings -Path $settingsPath
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $settings.SchemaVersion | Should -Be 5
+                $settings.SchemaVersion | Should -Be 6
                 $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 20
                 $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 15
                 $settings.MaxUpdateRingTagConcurrentJobs | Should -Be 4
@@ -13456,11 +13733,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 5\)\r?$'
-                $after | Should -Match '(?m)^# schemaVersion: 5\r?$'
+                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 6\)\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 6\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#         - name: Live-Environment\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V5\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V6\r?$'
                 $after | Should -Not -Match 'SCHEMA-V2'
                 @($after -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }).Count | Should -Be 0
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
@@ -13524,7 +13801,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterFleetSettings -Confirm:$false 6>$null 4>$null | Out-Null
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 6
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
             }
             finally {
@@ -13532,7 +13809,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             }
         }
 
-        It 'Upgrades jumbled active schema v3 to canonical v5 order with comments attached' {
+        It 'Upgrades jumbled active schema v3 to canonical v6 order with comments attached' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-v3-order-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
@@ -13558,7 +13835,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 5
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 6
                 $after | Should -Match '# Scope guidance\r?\nscope:'
                 $after | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
                 $after | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
@@ -25447,6 +25724,90 @@ packages:
 
 Describe 'Sideload (v0.8.7): Resolve-AzLocalSideloadPlan' {
 
+    It 'requires both exact inputs for validation' {
+        { Resolve-AzLocalSideloadPlan -SchedulePath 's.yml' -AuthMapPath 'a.csv' -CatalogPath 'c.yml' -SingleClusterValidation } | Should -Throw '*requires ClusterResourceId and ValidationUpdateName*'
+    }
+
+    It 'fails closed when the exact resource ID is not eligible' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [pscustomobject]@{} }
+            Mock Get-AzLocalSideloadAuthMap { @{} }
+            Mock Get-AzLocalSideloadCatalog { @() }
+            Mock Invoke-AzResourceGraphQuery { @() }
+            { Resolve-AzLocalSideloadPlan -SchedulePath 's.yml' -AuthMapPath 'a.csv' -CatalogPath 'c.yml' -ClusterResourceId '/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/pilot' } | Should -Throw '*exactly one eligible cluster*'
+        }
+    }
+
+    It 'bypasses timing only for the exact pilot and still enforces policy and Ready state' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [pscustomobject]@{} }
+            Mock Get-AzLocalSideloadAuthMap { @{ '1' = [pscustomobject]@{ RemotingTargetFqdn = 'pilot.example.test'; ImportSharePath = '\\pilot\import' } } }
+            Mock Get-AzLocalSideloadCatalog { [pscustomobject]@{ Version = '12.2608.1003.9'; PackageType = 'Solution' } }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings { [pscustomobject]@{ Rings = @('Pilot'); DateUtc = [datetime]'2026-10-21' } }
+            Mock Resolve-AzLocalCurrentUpdateRing { [pscustomobject]@{ AllowedUpdateVersions = @('12.2608.1003.9') } }
+            Mock Invoke-AzResourceGraphQuery {
+                @('pilot', 'other') | ForEach-Object { [pscustomobject]@{ id = "/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/$_"; name = $_; resourceGroup = 'test'; subscriptionId = 'test'; tags = [pscustomobject]@{ UpdateAuthAccountId = '1'; UpdateRing = 'Pilot' } } }
+            }
+            Mock Get-AzLocalAvailableUpdates {
+                @(
+                    [pscustomobject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12.2608.1003.9'; PackageType = 'Solution'; Version = '12.2608.1003.9' },
+                    [pscustomobject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12.2610.1004.31'; PackageType = 'Solution'; Version = '12.2610.1004.31' }
+                )
+            }
+            $params = @{ SchedulePath = 's.yml'; AuthMapPath = 'a.csv'; CatalogPath = 'c.yml'; Now = [datetime]'2026-09-22'; ClusterResourceId = '/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/pilot' }
+            $normal = @(Resolve-AzLocalSideloadPlan @params)
+            $normal[0].Status | Should -Be 'NotDue'
+            $pilot = @(Resolve-AzLocalSideloadPlan @params -SingleClusterValidation -ValidationUpdateName 'Solution12.2608.1003.9')
+            $pilot.Count | Should -Be 1
+            $pilot[0].ClusterName | Should -Be 'pilot'
+            $pilot[0].Status | Should -Be 'Planned'
+            $pilot[0].SingleClusterValidation | Should -BeTrue
+            $denied = @(Resolve-AzLocalSideloadPlan @params -SingleClusterValidation -ValidationUpdateName 'Solution12.2610.1004.31')
+            $denied[0].Status | Should -Be 'NotInAllowList'
+            $absent = @(Resolve-AzLocalSideloadPlan @params -SingleClusterValidation -ValidationUpdateName 'SolutionMissing')
+            $absent[0].Status | Should -Be 'UpdateNotFound'
+            Mock Get-AzLocalSideloadCatalog { [pscustomobject]@{ Version = '12.2608.1003.9'; PackageType = 'SBE' } }
+            $wrongPackage = @(Resolve-AzLocalSideloadPlan @params -SingleClusterValidation -ValidationUpdateName 'Solution12.2608.1003.9')
+            $wrongPackage[0].Status | Should -Be 'NoCatalogEntry'
+            $wrongPackage[0].CatalogEntry | Should -BeNullOrEmpty
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings { @() }
+            $unscheduled = @(Resolve-AzLocalSideloadPlan @params -SingleClusterValidation -ValidationUpdateName 'Solution12.2608.1003.9')
+            $unscheduled[0].Status | Should -Be 'NotScheduled'
+            $unscheduled[0].SelectedUpdateName | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'resolves future <ScheduleRing> policy without borrowing another rings Latest override' -ForEach @(@{ ScheduleRing = 'Pilot' }, @{ ScheduleRing = '***' }) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ ScheduleRing = $ScheduleRing } {
+            param($ScheduleRing)
+            Mock Get-AzLocalApplyUpdatesScheduleConfig {
+                [pscustomobject]@{
+                    CycleWeeks = 1; CycleAnchorYear = 2026; CycleAnchorISOWeek = 1
+                    AllowedUpdateVersions = @('Latest')
+                    Schedule = @(
+                        [pscustomobject]@{ weeksInCycle = '*'; daysOfWeek = 'Wed'; rings = $ScheduleRing; AllowedUpdateVersionsParsed = @('12.2608.1003.9') },
+                        [pscustomobject]@{ weeksInCycle = '*'; daysOfWeek = 'Wed'; rings = 'Other'; AllowedUpdateVersionsParsed = @('Latest') }
+                    )
+                }
+            }
+            Mock Get-AzLocalSideloadAuthMap { @{ '1' = [pscustomobject]@{ RemotingTargetFqdn = 'pilot.example.test'; ImportSharePath = '\\pilot\import' } } }
+            Mock Get-AzLocalSideloadCatalog { [pscustomobject]@{ Version = '12.2608.1003.9'; PackageType = 'Solution' } }
+            Mock Invoke-AzResourceGraphQuery { [pscustomobject]@{ id = '/subscriptions/test/clusters/pilot'; name = 'pilot'; resourceGroup = 'test'; subscriptionId = 'test'; tags = [pscustomobject]@{ UpdateAuthAccountId = '1'; UpdateRing = 'Pilot' } } }
+            Mock Get-AzLocalAvailableUpdates {
+                @(
+                    [pscustomobject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12.2608.1003.9'; PackageType = 'Solution'; Version = '12.2608.1003.9' },
+                    [pscustomobject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12.2610.1004.31'; PackageType = 'Solution'; Version = '12.2610.1004.31' }
+                )
+            }
+            $plan = @(Resolve-AzLocalSideloadPlan -SchedulePath 'schedule.yml' -AuthMapPath 'auth.csv' -CatalogPath 'catalog.yml' -Now ([datetime]'2026-09-22T12:00:00Z'))
+            $plan.Count | Should -Be 1
+            $plan[0].Status | Should -Be 'Planned'
+            $plan[0].NextWindowUtc | Should -Be ([datetime]::SpecifyKind([datetime]'2026-09-23', [DateTimeKind]::Utc))
+            $plan[0].SelectedVersion | Should -Be '12.2608.1003.9'
+            $plan[0].AllowedUpdateVersions | Should -Contain '12.2608.1003.9'
+        }
+    }
+
     It 'Flags clusters whose UpdateAuthAccountId is not in the auth map' {
         InModuleScope AzLocal.UpdateManagement {
             Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
@@ -25680,6 +26041,213 @@ Describe 'Sideload (v0.9.22): typed settings and task safety' {
 }
 
 Describe 'Sideload (v0.8.7): Invoke-AzLocalSideloadUpdate state machine' {
+
+    It 'counts out-of-plan copies against the <Limit> capacity limit' -ForEach @(@{ Limit = 'Fleet' }, @{ Limit = 'Runner' }) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Limit = $Limit } {
+            param($Limit)
+            Mock Get-AzLocalAvailableUpdates { [pscustomobject]@{ UpdateName = 'Solution12.0'; UpdateState = 'Ready' } }
+            Mock Invoke-SideloadCopyStart { throw 'Must not start over capacity' }
+            $root = Join-Path $TestDrive ('capacity-' + $Limit)
+            $active = New-AzLocalSideloadState -ClusterName other -Version '12.0' -State Copying
+            Set-AzLocalSideloadState -StateRoot $root -State $active -Confirm:$false
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0'; SingleClusterValidation = $true }
+            $fleetLimit = if ($Limit -eq 'Fleet') { 1 } else { 10 }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot $root -MaxConcurrentCopies $fleetLimit -MaxConcurrentCopiesPerRunner 1 -Confirm:$false)
+            $result.Count | Should -Be 1
+            $result[0].Action | Should -Be 'Deferred' -Because $result[0].Message
+            if ($Limit -eq 'Fleet') { $result[0].Message | Should -Match 'concurrency limit 1' }
+            else { $result[0].Message | Should -Match 'runner.*copy limit 1' }
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0
+            (Get-AzLocalSideloadState -StateRoot $root -ClusterName other).OperationId | Should -Be $active.OperationId
+        }
+    }
+
+    It 'preserves fresh and stale UTC timestamps across JSON and regional settings' {
+        InModuleScope AzLocal.UpdateManagement {
+            $originalCulture = [Threading.Thread]::CurrentThread.CurrentCulture
+            try {
+                [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('en-GB')
+                foreach ($minutesAgo in @(0, 120)) {
+                    $state = New-AzLocalSideloadState -ClusterName timestamps -Version '12.0' -State Copying
+                    $state.LastHeartbeatUtc = [DateTime]::UtcNow.AddMinutes(-$minutesAgo).ToString('o')
+                    $state.LastProgressUtc = $state.LastHeartbeatUtc
+                    foreach ($record in @($state, ($state | ConvertTo-Json | ConvertFrom-Json))) {
+                        (Test-AzLocalSideloadHeartbeatStale -State $record -StaleMinutes 60) | Should -Be ($minutesAgo -gt 60)
+                        (Test-AzLocalSideloadProgressStale -State $record -StaleMinutes 90) | Should -Be ($minutesAgo -gt 90)
+                    }
+                }
+            }
+            finally { [Threading.Thread]::CurrentThread.CurrentCulture = $originalCulture }
+        }
+    }
+
+    It 'fails closed when out-of-plan shared state cannot be parsed' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-SideloadCopyStart { throw 'Must not start with unknown capacity' }
+            $root = Join-Path $TestDrive 'invalid-capacity'
+            $path = Get-AzLocalSideloadStatePath -StateRoot $root -ClusterName other
+            Set-Content -LiteralPath $path -Value '{broken'
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; Status = 'Planned'; SelectedVersion = '12.0' }
+            { Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot $root -Confirm:$false } | Should -Throw '*Failed to read sideload state*'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0
+        }
+    }
+
+    It 'previews then copies and imports one exact pilot without starting installation' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalAvailableUpdates { [pscustomobject]@{ UpdateName = 'Solution12.0'; UpdateState = 'Ready' } }
+            Mock Get-AzLocalSolutionUpdateDownload { [pscustomobject]@{ PackageType = 'Solution'; MediaPath = 'TestDrive:\bundle.zip' } }
+            Mock Set-AzLocalClusterTagsMerge { }
+            Mock Register-AzLocalSideloadCopyTask { }
+            Mock Remove-AzLocalSideloadCopyTask { }
+            Mock Resolve-AzLocalSideloadCredential { [pscredential]::new('test-user', (ConvertTo-SecureString 'synthetic-test-value' -AsPlainText -Force)) }
+            Mock New-AzLocalPSRemotingSession { [pscustomobject]@{ ComputerName = 'pilot.example.test' } }
+            Mock Remove-PSSession { } -RemoveParameterType Session
+            Mock Test-AzLocalRemoteFileHash { [pscustomobject]@{ Match = $true } }
+            Mock Invoke-AzLocalRemoteSolutionImport { [pscustomobject]@{ ImportState = 'Imported'; DiscoveredName = 'Solution12.0' } }
+            Mock Start-AzLocalClusterUpdate { throw 'Must not install' }
+            $root = Join-Path $TestDrive 'pilot-state'
+            $plan = [pscustomobject]@{
+                ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/pilot'
+                Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0'; SingleClusterValidation = $true
+                AllowedUpdateVersions = @('Solution12.0'); RemotingHost = 'pilot.example.test'; TargetPath = 'TestDrive:\import'; PackageType = 'Solution'
+                CatalogEntry = [pscustomobject]@{ Sha256 = 'ABC' }; AuthRow = [pscustomobject]@{ AuthMechanism = 'Negotiate' }
+            }
+            $null = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot $root -WhatIf
+            Assert-MockCalled Set-AzLocalClusterTagsMerge -Times 0
+            Assert-MockCalled Register-AzLocalSideloadCopyTask -Times 0
+            $first = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot $root -Confirm:$false)
+            $first[0].State | Should -Be 'Copying'
+            $state = Get-AzLocalSideloadState -StateRoot $root -ClusterName pilot
+            $state.UpdateName | Should -Be 'Solution12.0'
+            $state.ClusterResourceId | Should -Be $plan.ClusterResourceId
+            Assert-MockCalled Set-AzLocalClusterTagsMerge -Times 1 -ParameterFilter { $Tags.UpdateSideloaded -eq 'False' -and $Tags.ContainsKey('UpdateSideloadedVersion') -and $null -eq $Tags.UpdateSideloadedVersion }
+            $state.State = 'Copied'
+            Set-AzLocalSideloadState -StateRoot $root -State $state -Confirm:$false
+            $null = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot $root -WhatIf
+            Assert-MockCalled Resolve-AzLocalSideloadCredential -Times 0
+            Assert-MockCalled Invoke-AzLocalRemoteSolutionImport -Times 0
+            (Get-AzLocalSideloadState -StateRoot $root -ClusterName pilot).State | Should -Be 'Copied'
+            $second = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot $root -Confirm:$false)
+            $second[0].State | Should -Be 'Imported'
+            Assert-MockCalled Test-AzLocalRemoteFileHash -Times 1
+            Assert-MockCalled Set-AzLocalClusterTagsMerge -Times 1 -ParameterFilter { $Tags.UpdateSideloaded -eq 'True' -and $Tags.UpdateSideloadedVersion -eq 'Solution12.0' }
+            Assert-MockCalled Start-AzLocalClusterUpdate -Times 0
+        }
+    }
+
+    It 'requires an exact staged identity while preserving legacy boolean-only gates' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Test-AzLocalUpdateSideloadedAllowed -UpdateSideloaded True -SideloadedVersion 'Solution12.0' -SelectedUpdateName 'SBE12.0').Allowed | Should -BeFalse
+            (Test-AzLocalUpdateSideloadedAllowed -UpdateSideloaded True -SideloadedVersion 'Solution12.0' -SelectedUpdateName 'Solution12.0').Allowed | Should -BeTrue
+            (Test-AzLocalUpdateSideloadedAllowed -UpdateSideloaded True -SelectedUpdateName 'Solution12.0').Allowed | Should -BeTrue
+        }
+    }
+
+    It 'opens the import gate only for the discovered exact identity' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Resolve-AzLocalSideloadCredential { [pscredential]::new('test-user', (ConvertTo-SecureString 'synthetic-test-value' -AsPlainText -Force)) }
+            Mock New-AzLocalPSRemotingSession { [pscustomobject]@{ ComputerName = 'pilot.example.test' } }
+            Mock Remove-PSSession { } -RemoveParameterType Session
+            Mock Test-AzLocalRemoteFileHash { [pscustomobject]@{ Match = $true } }
+            Mock Invoke-AzLocalRemoteSolutionImport { [pscustomobject]@{ ImportState = 'Imported'; DiscoveredName = 'Solution12.0' } }
+            Mock Set-AzLocalClusterTagsMerge { }
+            Mock Set-AzLocalSideloadState { }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; RemotingHost = 'pilot.example.test'; TargetPath = 'TestDrive:\import'; PackageType = 'Solution'; CatalogEntry = [pscustomobject]@{ Sha256 = 'ABC' }; AuthRow = [pscustomobject]@{ AuthMechanism = 'Negotiate' } }
+            $state = New-AzLocalSideloadState -ClusterName pilot -Version '12.0' -UpdateName 'Solution12.0' -MediaPath 'TestDrive:\bundle.zip' -TargetPath 'TestDrive:\import'
+            $result = Complete-SideloadImport -Plan $plan -State $state -StateRoot 'TestDrive:\state' -Confirm:$false
+            $result.State | Should -Be 'Imported'
+            Assert-MockCalled Set-AzLocalClusterTagsMerge -Times 1 -ParameterFilter { $Tags.UpdateSideloaded -eq 'True' -and $Tags.UpdateSideloadedVersion -eq 'Solution12.0' }
+            Mock Invoke-AzLocalRemoteSolutionImport { [pscustomobject]@{ ImportState = 'Imported'; DiscoveredName = 'SBE12.0' } }
+            { Complete-SideloadImport -Plan $plan -State $state -StateRoot 'TestDrive:\state' -Confirm:$false } | Should -Throw '*identity does not match*'
+            Assert-MockCalled Set-AzLocalClusterTagsMerge -Times 1
+        }
+    }
+
+    It 'blocks a validation import for a different persisted identity' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { [pscustomobject]@{ State = 'Copied'; Version = '12.0'; UpdateName = 'Other12.0' } }
+            Mock Complete-SideloadImport { throw 'Must not import' }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0'; SingleClusterValidation = $true }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false)
+            $result[0].Message | Should -Match 'identity does not match'
+            Assert-MockCalled Complete-SideloadImport -Times 0
+        }
+    }
+
+    It 'restages a newly selected imported payload only with a safe fresh update state' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { [pscustomobject]@{ State = 'Imported'; Version = '11.0'; UpdateName = 'Solution11.0' } }
+            Mock Get-AzLocalAvailableUpdates { [pscustomobject]@{ UpdateName = 'Solution12.0'; UpdateState = 'Ready' } }
+            Mock Invoke-SideloadCopyStart { [pscustomobject]@{ Retries = 0 } }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0' }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false)
+            $result[0].Action | Should -Be 'Start'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 1
+        }
+    }
+
+    It 'preserves imported state outside the next staging lead window' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { [pscustomobject]@{ State = 'Imported'; Version = '11.0'; UpdateName = 'Solution11.0' } }
+            Mock Invoke-SideloadCopyStart { throw 'Must not restage early' }
+            Mock Set-AzLocalSideloadState { throw 'Must preserve state' }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'NotDue'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0' }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false)
+            $result[0].Action | Should -Be 'Deferred'
+            $result[0].Version | Should -Be '11.0'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0
+            Assert-MockCalled Set-AzLocalSideloadState -Times 0
+        }
+    }
+
+    It 'preserves state when the fresh update read fails' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { [pscustomobject]@{ State = 'Imported'; Version = '11.0'; UpdateName = 'Solution11.0' } }
+            Mock Get-AzLocalAvailableUpdates { throw 'Synthetic unavailable update service' }
+            Mock Invoke-SideloadCopyStart { throw 'Must not restage' }
+            Mock Set-AzLocalSideloadState { throw 'Must preserve state' }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0' }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false)
+            $result[0].Action | Should -Be 'Error'
+            $result[0].Message | Should -Match 'Synthetic unavailable'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0
+            Assert-MockCalled Set-AzLocalSideloadState -Times 0
+        }
+    }
+
+    It 'blocks <Scenario> persisted state without importing' -ForEach @(
+        @{ Scenario = 'legacy in-flight'; PersistedName = ''; PersistedId = ''; ExpectedMessage = 'identity does not match' }
+        @{ Scenario = 'wrong cluster'; PersistedName = 'Solution12.0'; PersistedId = '/subscriptions/other/clusters/pilot'; ExpectedMessage = 'another cluster resource ID' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ PersistedName = $PersistedName; PersistedId = $PersistedId; ExpectedMessage = $ExpectedMessage } {
+            param($PersistedName, $PersistedId, $ExpectedMessage)
+            Mock Get-AzLocalSideloadState { [pscustomobject]@{ State = 'Copied'; Version = '12.0'; UpdateName = $PersistedName; ClusterResourceId = $PersistedId } }
+            Mock Complete-SideloadImport { throw 'Must not import' }
+            Mock Set-AzLocalSideloadState { throw 'Must preserve state' }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0' }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false)
+            $result[0].Message | Should -Match $ExpectedMessage
+            Assert-MockCalled Complete-SideloadImport -Times 0
+            Assert-MockCalled Set-AzLocalSideloadState -Times 0
+        }
+    }
+
+    It 'does not replace imported media while another update is preparing or state is unknown' -ForEach @('Preparing', 'Installing', 'ReadyToInstall', 'Unknown') {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ UnsafeState = $_ } {
+            param($UnsafeState)
+            Mock Get-AzLocalSideloadState { [pscustomobject]@{ State = 'Imported'; Version = '11.0'; UpdateName = 'Solution11.0' } }
+            Mock Get-AzLocalAvailableUpdates {
+                [pscustomobject]@{ UpdateName = 'Solution12.0'; UpdateState = 'Ready' }
+                [pscustomobject]@{ UpdateName = 'Solution11.0'; UpdateState = $UnsafeState }
+            }
+            Mock Invoke-SideloadCopyStart { throw 'Must not start' }
+            $plan = [pscustomobject]@{ ClusterName = 'pilot'; ClusterResourceId = '/subscriptions/test/clusters/pilot'; Status = 'Planned'; SelectedVersion = '12.0'; SelectedUpdateName = 'Solution12.0' }
+            $result = @(Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false)
+            $result[0].Message | Should -Match 'Sideload deferred'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0
+        }
+    }
 
     It 'Skips a cluster that has no state and is not due (Status != Planned)' {
         InModuleScope AzLocal.UpdateManagement {

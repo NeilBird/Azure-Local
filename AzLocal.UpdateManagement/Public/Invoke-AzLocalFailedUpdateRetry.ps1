@@ -67,6 +67,8 @@ function Invoke-AzLocalFailedUpdateRetry {
         prompt.
 
     .OUTPUTS
+        SuppressionPending indicates an opted-in notification suppression window
+        is not yet ready; no retry is started or one-time retry guard consumed.
         PSCustomObject with ClusterName, Status, Message, UpdateName, StartTime,
         EndTime, Duration. Status is one of: RetryStarted, RetryAlreadyAttempted,
         Skipped, NotFound, Failed, WhatIf.
@@ -244,6 +246,11 @@ function Invoke-AzLocalFailedUpdateRetry {
             }
 
             Write-Log -Message "Retrying update '$targetUpdateName' on cluster '$resolvedName'..." -Level Info
+            $suppression = Invoke-AzLocalMonitorSuppression -Action Ensure -ClusterResourceId $clusterInfo.id -UpdateName $targetUpdateName -ClusterTags $clusterInfo.tags -ApiVersion $ApiVersion
+            if (-not $suppression.Ready) {
+                Write-Log -Message $suppression.Message -Level Info
+                return (& $newResult $resolvedName 'SuppressionPending' $suppression.Message $targetUpdateName)
+            }
             $applyResult = Invoke-AzLocalUpdateApply -ClusterResourceId $clusterInfo.id `
                 -UpdateName $targetUpdateName `
                 -ApiVersion $ApiVersion

@@ -103,6 +103,57 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
         )
     }
 
+    It 'allows a complete manual pilot with fleet disabled and rejects incomplete or scheduled pilots for <Platform>' -ForEach @(
+        @{ Platform = 'GitHub'; Index = 0; TriggerVariable = 'GITHUB_EVENT_NAME'; ManualTrigger = 'workflow_dispatch' },
+        @{ Platform = 'AzureDevOps'; Index = 1; TriggerVariable = 'BUILD_REASON'; ManualTrigger = 'Manual' }
+    ) {
+        $workflow = Get-Content -LiteralPath $script:WorkflowPaths[$Index] -Raw
+        $gate = [regex]::Match($workflow, '(?ms)^\s*\$pilotRequested = .*?^\s*\$(enabled|gateOn) = \[bool\]\$settings\.enabled -or \$pilotRequested')
+        $gate.Success | Should -BeTrue
+        $saved = @{}
+        foreach ($name in @('INPUT_SINGLE_CLUSTER_VALIDATION', 'INPUT_CLUSTER_RESOURCE_ID', 'INPUT_VALIDATION_UPDATE_NAME', $TriggerVariable)) {
+            $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+        }
+        try {
+            $settings = @{ enabled = $false }
+            $env:INPUT_SINGLE_CLUSTER_VALIDATION = 'true'
+            $env:INPUT_CLUSTER_RESOURCE_ID = '/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/pilot'
+            $env:INPUT_VALIDATION_UPDATE_NAME = 'Solution12.2608.1003.9'
+            [Environment]::SetEnvironmentVariable($TriggerVariable, $ManualTrigger)
+            . ([scriptblock]::Create($gate.Value))
+            (Get-Variable -Name $gate.Groups[1].Value -ValueOnly) | Should -BeTrue
+            $settings.enabled | Should -BeFalse
+            $env:INPUT_CLUSTER_RESOURCE_ID = ''
+            { . ([scriptblock]::Create($gate.Value)) } | Should -Throw '*exact cluster resource ID*'
+            $env:INPUT_CLUSTER_RESOURCE_ID = '/subscriptions/test/resourceGroups/test/providers/Microsoft.AzureStackHCI/clusters/pilot'
+            [Environment]::SetEnvironmentVariable($TriggerVariable, 'schedule')
+            { . ([scriptblock]::Create($gate.Value)) } | Should -Throw '*manual run*'
+            $env:INPUT_SINGLE_CLUSTER_VALIDATION = 'false'
+            $env:INPUT_VALIDATION_UPDATE_NAME = ''
+            . ([scriptblock]::Create($gate.Value))
+            (Get-Variable -Name $gate.Groups[1].Value -ValueOnly) | Should -BeFalse
+        }
+        finally {
+            foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        }
+    }
+
+    It 'keeps preview enabled and passes exact pilot inputs without inline script interpolation' {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $github = ConvertFrom-Yaml (Get-Content $script:WorkflowPaths[0] -Raw)
+        $ado = ConvertFrom-Yaml (Get-Content $script:WorkflowPaths[1] -Raw)
+        $github.on.workflow_dispatch.inputs.dry_run.default | Should -Be 'true'
+        ($ado.parameters | Where-Object name -eq 'dryRun').default | Should -BeTrue
+        $github.on.workflow_dispatch.inputs.single_cluster_validation.default | Should -BeFalse
+        ($ado.parameters | Where-Object name -eq 'singleClusterValidation').default | Should -BeFalse
+        foreach ($path in $script:WorkflowPaths) {
+            $workflow = Get-Content $path -Raw
+            $workflow | Should -Match ([regex]::Escape('$planParams[''ClusterResourceId''] = $env:INPUT_CLUSTER_RESOURCE_ID'))
+            $workflow | Should -Match ([regex]::Escape('$planParams[''SingleClusterValidation''] = $pilotRequested'))
+            $workflow | Should -Match ([regex]::Escape('$planParams[''ValidationUpdateName''] = $env:INPUT_VALIDATION_UPDATE_NAME'))
+        }
+    }
+
     It 'installs every PowerShell module used by the self-hosted sideload job' -ForEach @(
         @{ Platform = 'GitHub Actions'; Index = 0 }
         @{ Platform = 'Azure DevOps'; Index = 1 }
@@ -172,7 +223,7 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
         $githubWorkflow | Should -Match '(?m)^concurrency:\r?$'
         $githubWorkflow | Should -Match ([regex]::Escape('group: sideload-updates-${{ github.workflow }}'))
         $githubWorkflow | Should -Match '(?m)^\s+cancel-in-progress: false\r?$'
-        $adoWorkflow | Should -Match "(?m)^#\s+batch: true\s+# never overlap scheduled reconciliation runs\r?$"
+        $adoWorkflow | Should -Match "(?m)^#\s+batch: true(?:\s+#.*)?\r?$"
     }
 
     It 'documents pilot acceptance and unverified end-to-end boundaries' {

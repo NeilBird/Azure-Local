@@ -56,7 +56,7 @@ function Export-ResultsToJUnitXml {
     # HealthCheckBlocked remains in the failure bucket - a Critical health check
     # blocking an update IS an operational issue the team should action.
     $failures = @($Results | Where-Object { $_.Status -in @("Failed", "Error", "HealthCheckBlocked") }).Count
-    $skipped  = @($Results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") }).Count
+    $skipped  = @($Results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag", "SuppressionPending") }).Count
     $errors   = @($Results | Where-Object { $_.Status -in @("NotFound", "UpdateNotFound") }).Count
     $timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ss"
     
@@ -167,7 +167,7 @@ function Export-ResultsToJUnitXml {
                 [void]$xmlBuilder.AppendLine("Message: $message")
                 [void]$xmlBuilder.AppendLine("      </error>")
             }
-            { $_ -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") } {
+            { $_ -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag", "SuppressionPending") } {
                 # v0.7.62: previously only literal "Skipped" rendered as <skipped>; the
                 # other "did not apply, but not a failure" Status values fell through to
                 # <system-out>, producing misleading "all green" CI summaries.

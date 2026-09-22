@@ -780,26 +780,15 @@ function Set-AzLocalClusterUpdateRingTag {
                 $workerModule = Import-Module $ModulePath -Force -PassThru -ErrorAction Stop
                 & $workerModule {
                     param([object[]]$WorkerBatch, $WorkerOptions)
-                    foreach ($item in $WorkerBatch) {
-                        New-AzLocalUpdateRingTagPlan `
-                            -ClusterEntry $item `
-                            -ClusterTagFilters @($WorkerOptions.ClusterTagFilters) `
-                            -Force ([bool]$WorkerOptions.Force) `
-                            -CaptureVerbose ([bool]$WorkerOptions.CaptureVerbose)
-                    }
+                    Invoke-AzLocalUpdateRingTagPlanBatch -Batch $WorkerBatch -Options $WorkerOptions -Verbose:([bool]$WorkerOptions.CaptureVerbose)
                 } $Batch $Options
                 return
             }
-            foreach ($item in $Batch) {
-                New-AzLocalUpdateRingTagPlan `
-                    -ClusterEntry $item `
-                    -ClusterTagFilters @($Options.ClusterTagFilters) `
-                    -Force ([bool]$Options.Force) `
-                    -CaptureVerbose ([bool]$Options.CaptureVerbose)
-            }
+            Invoke-AzLocalUpdateRingTagPlanBatch -Batch $Batch -Options $Options -Verbose:([bool]$Options.CaptureVerbose)
         }
 
         Write-Log -Message ("Planning tag reconciliation in {0} job(s), up to {1} active, maximum {2} clusters per job..." -f $plannedJobCount, $activeJobCount, $maxClustersPerJob) -Level Info
+        $planningTimer = [Diagnostics.Stopwatch]::StartNew()
         $planJobResults = Invoke-FleetJobsInParallel `
             -InputItems @($clustersToTag) `
             -ScriptBlock $planWorker `
@@ -808,6 +797,8 @@ function Set-AzLocalClusterUpdateRingTag {
             -ArgumentList @($workerOptions) `
             -ActivityName 'UpdateRingTag-Plan'
 
+        $planningTimer.Stop()
+        Write-Log -Message ("Tag reconciliation planning completed in {0:N1} seconds. Direct ARM reads reuse worker-local tokens; diagnostics include read and batch timings." -f $planningTimer.Elapsed.TotalSeconds) -Level Info
         $planEnvelopes = [System.Collections.Generic.List[object]]::new()
         foreach ($jobResult in $planJobResults) {
             if ($jobResult.Failed) {

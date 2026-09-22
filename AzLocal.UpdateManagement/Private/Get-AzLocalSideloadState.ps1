@@ -18,6 +18,8 @@ function New-AzLocalSideloadState {
     param(
         [Parameter(Mandatory = $true)][string]$ClusterName,
         [Parameter(Mandatory = $true)][string]$Version,
+        [string]$UpdateName = '',
+        [string]$ClusterResourceId = '',
         [string]$TaskName = '',
         [string]$MediaPath = '',
         [string]$TargetPath = '',
@@ -31,6 +33,8 @@ function New-AzLocalSideloadState {
     return [PSCustomObject]@{
         ClusterName       = $ClusterName
         Version           = $Version
+        UpdateName        = $UpdateName
+        ClusterResourceId = $ClusterResourceId
         OperationId       = $OperationId
         State             = $State
         OwningMachine     = $env:COMPUTERNAME
@@ -160,7 +164,10 @@ function Test-AzLocalSideloadHeartbeatStale {
 
     if ($State.State -ne 'Copying') { return $false }
     [DateTime]$last = [DateTime]::MinValue
-    if (-not [DateTime]::TryParse([string]$State.LastHeartbeatUtc, [ref]$last)) {
+    if ($State.LastHeartbeatUtc -is [DateTime]) {
+        $last = $State.LastHeartbeatUtc
+    }
+    elseif (-not [DateTime]::TryParse([string]$State.LastHeartbeatUtc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$last)) {
         return $true
     }
     $ageMinutes = ([DateTime]::UtcNow - $last.ToUniversalTime()).TotalMinutes
@@ -178,17 +185,20 @@ function Test-AzLocalSideloadProgressStale {
     if ($State.State -ne 'Copying') { return $false }
     [DateTime]$lastProgress = [DateTime]::MinValue
     if ($State.PSObject.Properties['LastProgressUtc']) {
-        $progressValue = [string]$State.LastProgressUtc
+        $progressValue = $State.LastProgressUtc
     }
     elseif ($State.PSObject.Properties['StartUtc']) {
-        $progressValue = [string]$State.StartUtc
+        $progressValue = $State.StartUtc
     }
     elseif ($State.PSObject.Properties['LastHeartbeatUtc']) {
-        $progressValue = [string]$State.LastHeartbeatUtc
+        $progressValue = $State.LastHeartbeatUtc
     }
     else {
         return $false
     }
-    if (-not [DateTime]::TryParse($progressValue, [ref]$lastProgress)) { return $true }
+    if ($progressValue -is [DateTime]) {
+        $lastProgress = $progressValue
+    }
+    elseif (-not [DateTime]::TryParse([string]$progressValue, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$lastProgress)) { return $true }
     return (([DateTime]::UtcNow - $lastProgress.ToUniversalTime()).TotalMinutes -gt $StaleMinutes)
 }

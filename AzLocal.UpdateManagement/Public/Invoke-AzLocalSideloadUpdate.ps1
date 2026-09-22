@@ -16,18 +16,26 @@ function Invoke-AzLocalSideloadUpdate {
         can advance/report without cross-agent remoting.
 
         Per cluster, the current shared state determines the action:
-          - (no state) + due-now      -> set UpdateSideloaded=False, ensure media in
-                                          the shared cache, register+start the copy
+          - (no state) + due-now      -> set UpdateSideloaded=False, clear staged
+                                          identity, resolve verified media, start the copy
                                           Scheduled Task, write Copying state.
           - Copying + fresh heartbeat  -> report progress, leave running.
           - Copying + stale heartbeat  -> re-drive on this (live) host (bounded).
           - Copied                     -> open WinRM session, verify remote hash,
                                           import (Add-SolutionUpdate + discovery),
                                           flip UpdateSideloaded=True +
-                                          UpdateVersionInProgress, mark Imported,
+                                          UpdateSideloadedVersion and UpdateVersionInProgress,
+                                          mark Imported,
                                           remove the task.
           - Failed                     -> bounded retry, else surface error.
-          - Imported                   -> done.
+                    - Imported + same identity   -> no new copy or import.
+                    - Imported + new identity    -> restage only when due, capacity permits,
+                                                                                    and a fresh update read is safe.
+
+                Current plans and persisted update identities must agree. Active preparation,
+                installation, unknown state, and failed update reads block advancement.
+                Legacy in-flight state without identity requires operator review. Serialize
+                invocations; these checks are not a distributed lock against apply operations.
 
         All Azure tag writes reuse Set-AzLocalClusterTagsMerge (Tag Contributor
         RBAC only). The KV-derived AD credential is used solely for WinRM.
@@ -137,8 +145,13 @@ function Invoke-AzLocalSideloadUpdate {
     $globalTagFilters = @((Get-AzLocalFleetSettings).ClusterTagFilters)
     $activeCopies = 0
     $activeCopiesOnCurrentRunner = 0
-    foreach ($candidate in $Plan) {
-        $candidateState = Get-AzLocalSideloadState -StateRoot $StateRoot -ClusterName ([string]$candidate.ClusterName)
+    $stateDirectory = Join-Path -Path $StateRoot -ChildPath 'state'
+    $candidateNames = @($Plan | ForEach-Object { [string]$_.ClusterName })
+    if (Test-Path -LiteralPath $stateDirectory -ErrorAction Stop) {
+        $candidateNames += @(Get-ChildItem -LiteralPath $stateDirectory -Filter '*.json' -File -ErrorAction Stop | ForEach-Object { $_.BaseName })
+    }
+    foreach ($candidateName in @($candidateNames | Sort-Object -Unique)) {
+        $candidateState = Get-AzLocalSideloadState -StateRoot $StateRoot -ClusterName $candidateName
         if ($null -ne $candidateState -and [string]$candidateState.State -eq 'Copying' -and
             -not (Test-AzLocalSideloadHeartbeatStale -State $candidateState -StaleMinutes $HeartbeatStaleMinutes) -and
             -not (Test-AzLocalSideloadProgressStale -State $candidateState -StaleMinutes $NoProgressMinutes)) {
@@ -176,6 +189,37 @@ function Invoke-AzLocalSideloadUpdate {
         }
 
         try {
+            if ($p.PSObject.Properties['AllowedUpdateVersions'] -and $p.Status -notin @('Planned', 'NotDue')) {
+                throw 'The current sideload plan is not eligible. Existing state was preserved.'
+            }
+            $selectedName = if ($p.PSObject.Properties['SelectedUpdateName']) { [string]$p.SelectedUpdateName } else { '' }
+            if ($selectedName) {
+                $isPilot = $p.PSObject.Properties['SingleClusterValidation'] -and [bool]$p.SingleClusterValidation
+                $stateName = if ($state -and $state.PSObject.Properties['UpdateName']) { [string]$state.UpdateName } else { '' }
+                $stateResourceId = if ($state -and $state.PSObject.Properties['ClusterResourceId']) { [string]$state.ClusterResourceId } else { '' }
+                if ($stateResourceId -and $stateResourceId -ne $planClusterResourceId) { throw 'Persisted sideload state belongs to another cluster resource ID. No action performed.' }
+                if ($p.Status -notin @('Planned', 'NotDue') -or ($isPilot -and $p.Status -ne 'Planned')) {
+                    throw 'The current sideload plan is not eligible. Existing state was preserved.'
+                }
+                $identityMatches = $state -and $stateName -eq $selectedName -and [string]$state.Version -eq [string]$p.SelectedVersion
+                $restage = $state -and [string]$state.State -eq 'Imported' -and -not $identityMatches
+                if ($restage -and $p.Status -ne 'Planned') {
+                    $results.Add([pscustomobject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Imported'; Version = [string]$state.Version; Message = 'Selected update differs; restaging waits until its lead window.' })
+                    continue
+                }
+                if ($state -and -not $restage -and -not $identityMatches) {
+                    throw 'Persisted sideload update identity does not match the selected update. Resolve the existing operation before proceeding.'
+                }
+                if (-not $state -or $restage -or [string]$state.State -ne 'Imported') {
+                    $currentUpdates = @(Get-AzLocalAvailableUpdates -ClusterResourceId $planClusterResourceId -ErrorAction Stop)
+                    $unsafeUpdates = @($currentUpdates | Where-Object { [string]$_.UpdateState -notin @('Ready', 'Available', 'Installed', 'NotApplicable', 'Superseded', 'HasPrerequisite', 'AdditionalContentRequired') })
+                    $currentSelection = @($currentUpdates | Where-Object { [string]$_.UpdateName -eq $selectedName -and [string]$_.UpdateState -eq 'Ready' })
+                    if ($unsafeUpdates.Count -gt 0 -or $currentSelection.Count -ne 1) {
+                        throw 'Sideload deferred: preparation, installation, unknown state, or a changed Ready update was detected. Existing state was preserved.'
+                    }
+                }
+                if ($restage) { $state = $null }
+            }
             # ---------------- Terminal / in-flight state handling ----------------
             # NOTE: 'continue' inside a PowerShell switch targets the switch, not the
             # enclosing foreach, so each case uses 'break' and the kickoff is guarded
@@ -319,7 +363,7 @@ function Invoke-SideloadCopyStart {
 
     # 1. Close the apply gate so Step.7 cannot apply mid-stage.
     if (-not $SkipGateFlip) {
-        Set-AzLocalClusterTagsMerge -ClusterResourceId ([string]$Plan.ClusterResourceId) -Tags @{ $script:UpdateSideloadedTagName = 'False' } | Out-Null
+        Set-AzLocalClusterTagsMerge -ClusterResourceId ([string]$Plan.ClusterResourceId) -Tags @{ $script:UpdateSideloadedTagName = 'False'; $script:UpdateSideloadedVersionTagName = $null } | Out-Null
     }
 
     # 2. Ensure verified media in the shared cache.
@@ -340,7 +384,7 @@ function Invoke-SideloadCopyStart {
     # a new ID so a superseded worker cannot overwrite the current state.
     $taskName = ('AzLocalSideload_{0}' -f ($clusterName -replace '[^A-Za-z0-9._-]', '_'))
     $operationId = [guid]::NewGuid().ToString('N')
-    $state = New-AzLocalSideloadState -ClusterName $clusterName -Version ([string]$Plan.SelectedVersion) -State 'Copying' -TaskName $taskName -MediaPath ([string]$download.MediaPath) -TargetPath $dest -OperationId $operationId
+    $state = New-AzLocalSideloadState -ClusterName $clusterName -Version ([string]$Plan.SelectedVersion) -UpdateName ([string]$Plan.SelectedUpdateName) -ClusterResourceId ([string]$Plan.ClusterResourceId) -State 'Copying' -TaskName $taskName -MediaPath ([string]$download.MediaPath) -TargetPath $dest -OperationId $operationId
     $state.Retries = $Retries
     $state.Message = if ($Retries -gt 0) { "Copy re-drive queued (retry $Retries)." } else { 'Copy task queued.' }
     Set-AzLocalSideloadState -StateRoot $StateRoot -State $state
@@ -424,10 +468,14 @@ function Complete-SideloadImport {
 
         switch ($importState.ImportState) {
             'Imported' {
+                if ([string]::IsNullOrWhiteSpace([string]$State.UpdateName) -or [string]$importState.DiscoveredName -ne [string]$State.UpdateName) {
+                    throw 'Discovered update identity does not match the staged operation. The sideload gate remains closed.'
+                }
                 # Flip the gate: UpdateSideloaded=True + record the staged version.
                 Set-AzLocalClusterTagsMerge -ClusterResourceId ([string]$Plan.ClusterResourceId) -Tags @{
                     $script:UpdateSideloadedTagName        = 'True'
-                    $script:UpdateVersionInProgressTagName = [string]$State.Version
+                    $script:UpdateSideloadedVersionTagName = [string]$State.UpdateName
+                    $script:UpdateVersionInProgressTagName = [string]$State.UpdateName
                 } | Out-Null
                 $State.State = 'Imported'; $State.Message = "Imported '$($importState.DiscoveredName)'; UpdateSideloaded=True."
                 Set-AzLocalSideloadState -StateRoot $StateRoot -State $State

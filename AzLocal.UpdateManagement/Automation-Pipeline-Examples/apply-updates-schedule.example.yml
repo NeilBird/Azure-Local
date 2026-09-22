@@ -106,6 +106,13 @@ cycleAnchorYear:      2026
 # columns. To keep this file readable, pick ONE convention and stick to
 # it; every example here uses the 'Solution' / 'SBE' name form.)
 #
+# SIDELOAD FIELDS HAVE DIFFERENT CONTRACTS:
+#   For UpdateName 'Solution12.2608.1003.9' and Version '12.2608.1003.9':
+#   - allowedUpdateVersions here accepts EITHER value.
+#   - Manual sideload Exact Ready update name requires the full UpdateName.
+#   - sideload-catalog.yml version matches Version, without the Solution prefix.
+#   Copy OEM SBE names and versions from the returned fields, not a guessed prefix.
+#
 # OEM SBE updates appear in the same Ready-update list as Microsoft
 # Solution updates and are matched by exactly the same rule - the
 # allow-list does NOT care whether the entry is a Solution or an SBE.

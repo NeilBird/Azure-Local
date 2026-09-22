@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.38 - [PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.38)
+**Latest Version:** v0.9.39 - [PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.39)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.38](#whats-new-in-v0938)
+- [What's New in v0.9.39](#whats-new-in-v0939)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -72,25 +72,31 @@ If you are new to this module, work through these in order from a regular PowerS
 | **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:17 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
 | **Pre-update health gate (CI/CD)** | `Test-AzLocalClusterHealth -BlockingOnly` -> `Test-AzLocalUpdateScheduleAllowed` -> `Test-AzLocalFleetHealthGate` -> proceed only on pass |
 | **Manual sideloaded-payload gate (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
-| **Automated disconnected-cluster sideload (Update: 2)** | Configure `config/sideload-settings.yml` -> populate the catalog and auth map -> run `sideload-updates.yml` on a self-hosted runner -> review `Export-AzLocalSideloadStatusReport` -> let Update: 3 apply the imported update. See the [sideload operations guide](Automation-Pipeline-Examples/docs/sideload.md). |
+| **Automated disconnected-cluster sideload (Update: 2)** | Start with the [one-cluster walkthrough and checklist](Automation-Pipeline-Examples/docs/sideload.md#start-here-one-cluster-one-runner): review targeting and lead time, validate the plan, prepare one runner, and test copying before separately approving import and Update: 3. See the [sideload operations guide](Automation-Pipeline-Examples/docs/sideload.md) for the full reference. |
 | **Pause / resume long fleet run** | `Stop-AzLocalFleetUpdate -SaveState` -> ... -> `Resume-AzLocalFleetUpdate -StateFilePath ...` |
 | **Recover from emergency** | `Stop-AzLocalFleetUpdate` -> `Test-AzLocalClusterHealth` (assess) -> `Resume-AzLocalFleetUpdate -RetryFailed` |
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.38
+## What's New in v0.9.39
 
-**Less scrolling for large fleets:** GitHub JUnit report details start collapsed, including failures, under "Expand to view JUnit report details". Counts remain visible; XML artifacts, ITSM, and check outcomes are unchanged. Azure DevOps retains its native Tests view.
+**Suppression lifecycle evidence:** apply summaries and JSON now record `AlertSuppression`, including `N/A` when opted out and `Pending` when deferred. Update: 4 shows per-cluster actions during that run, including Extended, Removed, Active / Unchanged, Limit reached, and failures, with matching CSV/JSON audit artifacts. Existing update counters, JUnit results, and ITSM triggers remain unchanged. Renewal users should schedule monitoring at least hourly rather than rely on the shipped six-hour heartbeat. Successful API operations do not establish notification-delivery acceptance.
 
-**Reports distinguish findings from selection and evidence limits.** Config: 3 explains optional maintenance windows and ring-scoped opt-in. Update: 1 reports its actual scope and qualifies cached readiness. Monitor: 1 shows observed NIC coverage and unmatched ARBs without claiming complete fleet health or proven orphan status.
+**Opt-in maintenance notification suppression:** disabled by default. A dedicated cluster-scoped rule suppresses action-group delivery without changing existing alert rules or AzureEdgeAlerts. The first eligible apply waits for a later firing at least 30 minutes afterward; the initial window is 48 hours. Fleet schema 6 also offers separately opt-in active-run renewal, bounded by a maximum total duration (default seven days). The updater preserves existing fleet settings and adds missing options commented out. See the [setup and RBAC guide](Automation-Pipeline-Examples/docs/monitor-notification-suppression.md) for renewal, monitoring cleanup, the companion role, and required live pilot.
 
-**Counts, links, and machine-readable findings are corrected.** Monitor: 2 labels health-check occurrences and avoids duplicate JUnit severity. Update: 4 distinguishes recent from older unresolved failures. Monitor: 3 corrects distinct SBE counts, overlapping health-failure action counts, the generated timestamp, and failed-run links.
+**Lower Config: 2 read overhead:** parallel tag planning reuses worker-local ARM tokens for fresh cluster reads, with the existing CLI path as fallback. The YAML worker limit is unchanged (default 4, range 1-16; 1 retains serial CLI processing), as are dry-run and PATCH approval safeguards. New timings support fleet comparisons; a production speedup multiplier has not been measured.
 
-Markdown remains the operator-facing output; JUnit remains structured evidence for ITSM and test publishers. Reporting pipelines retain their existing success policy even when reports contain cluster failures. Raw records and historical update-run durations remain unchanged. No public function or export-count change (73); bundled pipeline pins are `0.9.38`.
+**Improved sideload pilots:** manually validate one exact cluster and Ready update while fleet sideload remains disabled. Preview defaults to true; live copying/import requires explicit approval. Validation bypasses the staging wait, not the target ring's next-window version policy, and never starts installation.
+
+**Staged identity and restaging safeguards:** `UpdateSideloadedVersion` records the exact imported name. Apply requires identity and allowed-version agreement even with `Force`; reset clears the identity. A newly selected eligible update can replace imported media only after lead-time, copy-capacity, and fresh active-update checks. Shared capacity includes out-of-plan copies, and heartbeat timestamps are culture-independent.
+
+**Setup guidance distinguishes initial work from recurring operations:** the pilot checklist covers runner and task identities, Key Vault secrets, pre-downloaded media catalogs, checksums, schedule isolation, and separate copy/import/install approvals. Legacy in-flight state without identity requires review; imported legacy state is conservatively restaged.
+
+Remote SMB/WinRM/scheduled-task/import end-to-end acceptance remains required before production use. No exported-function count change (73); bundled pipeline pins are `0.9.39`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See the repository [CHANGELOG.md](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md) for full release details. See [`What's New in v0.9.37`](docs/release-history.md#whats-new-in-v0937) for the previous release.
+See the repository [CHANGELOG.md](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md) for full release details. See [`What's New in v0.9.38`](docs/release-history.md#whats-new-in-v0938) for the previous release.
 
 ## Files
 
@@ -590,7 +596,7 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.38** stay above under [`What's New in v0.9.38`](#whats-new-in-v0938).
+The most recent release notes for **v0.9.39** stay above under [`What's New in v0.9.39`](#whats-new-in-v0939).
 
 ### What's New in v0.9.36
 

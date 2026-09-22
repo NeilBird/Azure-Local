@@ -3,14 +3,29 @@
 # ---------------------------------------------------------------------------
 # Source-controlled list of the Azure Local solution-update media (and OEM SBE
 # packages) the sideloading automation is allowed to stage. The runtime copy
-# path reads ONLY this committed file - it never live-fetches at run time, so
-# the behaviour is deterministic and air-gap friendly.
+# path reads package metadata ONLY from this committed file, not a live catalog.
+# Media may still be downloaded from downloadUri unless it is left empty.
+#
+# VERSION IS NOT THE UPDATE NAME:
+#   Get-AzLocalAvailableUpdates returns UpdateName and Version separately.
+#   Example: UpdateName = Solution12.2608.1003.9, Version = 12.2608.1003.9.
+#   - Catalog version: '12.2608.1003.9' (no Solution prefix).
+#   - Manual Exact Ready update name: 'Solution12.2608.1003.9' (name only).
+#   - Schedule allowedUpdateVersions: accepts EITHER of those values.
+#   Match catalog version to the actual Version and packageType to PackageType.
+#   OEM SBE values may differ in format: copy the returned fields; do not guess
+#   the name by prefixing SBE. If Version is absent, the planner uses UpdateName
+#   for catalog matching. All package rows below are illustrative placeholders.
 #
 # Two package classes (packageType):
 #   Solution : Microsoft CombinedSolutionBundle.<build>.zip, downloadable from a
 #              direct downloadUri (published in the Microsoft Learn
 #              'import and discover updates offline' table). sha256 REQUIRED.
 #              Refresh these rows with: Update-AzLocalSideloadCatalog
+#              For pre-downloaded media, set localPath to the full ZIP path and
+#              downloadUri to ''. Every eligible runner needs that same local
+#              path, or use a shared UNC source readable by both identities.
+#              Replace the example's all-zero SHA256 with the published hash.
 #   SBE      : OEM Solution Builder Extension package that Microsoft does NOT
 #              host. Stage the OEM files yourself and record a sourceFolder
 #              (local or UNC path). downloadUri is not applicable; sha256 is

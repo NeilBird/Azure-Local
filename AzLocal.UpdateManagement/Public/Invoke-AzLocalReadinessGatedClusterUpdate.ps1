@@ -296,7 +296,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
 
     $succeeded         = @($results | Where-Object { $_.Status -eq 'Started' -or $_.Status -eq 'Success' -or $_.Status -eq 'UpdateStarted' }).Count
     $prepared          = @($results | Where-Object { $_.Status -in @('PreparationStarted', 'AlreadyPrepared') }).Count
-    $skipped           = @($results | Where-Object { $_.Status -in @('Skipped', 'NotReady', 'NoUpdatesAvailable', 'NoReadyUpdates', 'NotFound', 'UpdateNotFound', 'NotInAllowList') }).Count
+    $skipped           = @($results | Where-Object { $_.Status -in @('Skipped', 'NotReady', 'NoUpdatesAvailable', 'NoReadyUpdates', 'NotFound', 'UpdateNotFound', 'NotInAllowList', 'SuppressionPending') }).Count
     $failed            = @($results | Where-Object { $_.Status -in @('Failed', 'Error') }).Count
     $healthBlocked     = @($results | Where-Object { $_.Status -eq 'HealthCheckBlocked' }).Count
     $scheduleBlocked   = @($results | Where-Object { $_.Status -eq 'ScheduleBlocked' }).Count
@@ -306,7 +306,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
     & $emitCounters $succeeded $prepared $skipped $failed $healthBlocked $scheduleBlocked $sideloadedBlocked $excludedByTag
 
     # Persist per-cluster apply results to JSON for the downstream Summary step.
-    $projectedResults = @($results | Select-Object ClusterName, Status, UpdateName, Duration, Message)
+    $projectedResults = @($results | Select-Object ClusterName, Status, UpdateName, Duration, AlertSuppression, Message)
     $applyJsonContent = if ($projectedResults.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject $projectedResults -Depth 4 }
     $applyJsonContent | Out-File -FilePath $applyJsonPath -Encoding utf8 -Force -WhatIf:$false
     Write-Host "Wrote per-cluster apply results to $applyJsonPath"

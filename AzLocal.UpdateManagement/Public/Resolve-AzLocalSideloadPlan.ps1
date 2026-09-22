@@ -45,6 +45,18 @@ function Resolve-AzLocalSideloadPlan {
     .PARAMETER SubscriptionId
         Optional subscription scope for the Resource Graph query.
 
+    .PARAMETER ClusterResourceId
+        Exact ARM cluster ID. Requires exactly one eligible result; never falls
+        back to fleet scope.
+
+    .PARAMETER SingleClusterValidation
+        Bypasses lead-time eligibility for one cluster, not version policy.
+        Requires ClusterResourceId and ValidationUpdateName. Policy is resolved
+        for the next matching ring day, even when that day is outside lead time.
+
+    .PARAMETER ValidationUpdateName
+        Exact Ready update name to validate. Does not override the allow-list.
+
     .OUTPUTS
         [PSCustomObject[]] plan + error rows.
     #>
@@ -58,8 +70,20 @@ function Resolve-AzLocalSideloadPlan {
         [Parameter(Mandatory = $false)][string]$UpdateRingValue = '***',
         [Parameter(Mandatory = $false)][string]$FqdnSuffix = '',
         [Parameter(Mandatory = $false)][datetime]$Now = [datetime]::UtcNow,
-        [Parameter(Mandatory = $false)][string]$SubscriptionId
+        [Parameter(Mandatory = $false)][string]$SubscriptionId,
+        [Parameter(Mandatory = $false)]
+        [ValidatePattern('^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.AzureStackHCI/clusters/[^/]+$')]
+        [string]$ClusterResourceId,
+        [Parameter(Mandatory = $false)][switch]$SingleClusterValidation,
+        [Parameter(Mandatory = $false)][string]$ValidationUpdateName
     )
+
+    if ($SingleClusterValidation -and ([string]::IsNullOrWhiteSpace($ClusterResourceId) -or [string]::IsNullOrWhiteSpace($ValidationUpdateName))) {
+        throw 'Single-cluster validation requires ClusterResourceId and ValidationUpdateName.'
+    }
+    if ($ValidationUpdateName -and -not $SingleClusterValidation) {
+        throw 'ValidationUpdateName requires SingleClusterValidation.'
+    }
 
     $config = Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath
     $authMap = Get-AzLocalSideloadAuthMap -Path $AuthMapPath
@@ -68,12 +92,23 @@ function Resolve-AzLocalSideloadPlan {
     $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
     $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
     $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where isnotempty(tags['UpdateAuthAccountId']) $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
+    if ($ClusterResourceId) {
+        $escapedClusterId = $ClusterResourceId.Replace('\', '\\').Replace("'", "\'")
+        $argQuery += " | where id =~ '$escapedClusterId'"
+    }
 
     $clusterRows = if ($PSBoundParameters.ContainsKey('SubscriptionId') -and $SubscriptionId) {
         Invoke-AzResourceGraphQuery -Query $argQuery -SubscriptionId $SubscriptionId
     }
     else {
         Invoke-AzResourceGraphQuery -Query $argQuery
+    }
+
+    if ($ClusterResourceId) {
+        $clusterRows = @($clusterRows | Where-Object { [string]$_.id -eq $ClusterResourceId })
+        if ($clusterRows.Count -ne 1) {
+            throw 'Single-cluster sideload scope must resolve exactly one eligible cluster. Check resource ID, auth tag, ring filter, and fleet scope.'
+        }
     }
 
     # Pre-compute the next 366 days of firings so we can find each cluster's next window.
@@ -96,6 +131,8 @@ function Resolve-AzLocalSideloadPlan {
             NextWindowUtc       = $null
             LeadDays            = $LeadDays
             DueNow              = $false
+            AllowedUpdateVersions = @()
+            SingleClusterValidation = [bool]$SingleClusterValidation
             SelectedVersion     = ''
             SelectedUpdateName  = ''
             PackageType         = ''
@@ -129,7 +166,7 @@ function Resolve-AzLocalSideloadPlan {
 
         # Next apply window for this cluster's ring.
         $nextFiring = $firings | Where-Object {
-            $_.Rings -and ($_.Rings -contains $ringTag) -and ($_.DateUtc -ge $Now.Date)
+            $_.Rings -and ($_.Rings -contains $ringTag -or $_.Rings -contains '***') -and ($_.DateUtc -ge $Now.Date)
         } | Sort-Object DateUtc | Select-Object -First 1
         if ($nextFiring) {
             $row.NextWindowUtc = $nextFiring.DateUtc
@@ -137,9 +174,15 @@ function Resolve-AzLocalSideloadPlan {
             $row.DueNow = ($Now -ge $dueDate)
         }
 
-        # Resolve allow-list for the cluster (today's resolution gives the list).
-        $ringInfo = Resolve-AzLocalCurrentUpdateRing -Schedule $config -Now $Now
+        if (-not $nextFiring) {
+            $row.Status = 'NotScheduled'
+            $row.Message = 'No matching future ring schedule was found. No sideload operation is planned.'
+            $results.Add([PSCustomObject]$row); continue
+        }
+        $ringInfo = Resolve-AzLocalCurrentUpdateRing -Schedule $config -Now $nextFiring.DateUtc -UpdateRingValue $ringTag
         $allowed = @($ringInfo.AllowedUpdateVersions)
+        $row.AllowedUpdateVersions = $allowed
+        if ($SingleClusterValidation) { $row.DueNow = $true }
 
         # Available Ready updates -> adapter shape for Select-AzLocalNextUpdateForCluster.
         $available = @(Get-AzLocalAvailableUpdates -ClusterResourceId ([string]$cluster.id) -ErrorAction SilentlyContinue)
@@ -153,6 +196,14 @@ function Resolve-AzLocalSideloadPlan {
             }
         )
 
+        if ($SingleClusterValidation) {
+            $readyAdapters = @($readyAdapters | Where-Object { $_.name -eq $ValidationUpdateName })
+            if ($readyAdapters.Count -ne 1) {
+                $row.Status = 'UpdateNotFound'
+                $row.Message = 'The exact validation update must be offered in Ready state. No fallback update is selected.'
+                $results.Add([PSCustomObject]$row); continue
+            }
+        }
         $selection = Select-AzLocalNextUpdateForCluster -ReadyUpdates $readyAdapters -AllowedUpdateVersions $allowed
         switch ($selection.Reason) {
             'Selected' {
@@ -163,10 +214,13 @@ function Resolve-AzLocalSideloadPlan {
                 $row.SelectedUpdateName = [string]$sel.name
                 $row.PackageType = [string]$sel.PackageType
 
-                $entry = $catalog | Where-Object { [string]$_.Version -eq $version } | Select-Object -First 1
+                $entry = $catalog | Where-Object {
+                    [string]$_.Version -eq $version -and
+                    (-not $row.PackageType -or [string]$_.PackageType -eq $row.PackageType)
+                } | Select-Object -First 1
                 if ($null -eq $entry) {
                     $row.Status = 'NoCatalogEntry'
-                    $row.Message = "Selected version '$version' for cluster '$clusterName' has no entry in the sideload catalog."
+                    $row.Message = "Selected version '$version' for cluster '$clusterName' has no matching package-type entry in the sideload catalog."
                 }
                 else {
                     $row.CatalogEntry = $entry

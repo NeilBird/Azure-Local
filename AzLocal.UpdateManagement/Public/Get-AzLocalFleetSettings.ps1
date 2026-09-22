@@ -8,7 +8,7 @@ function Get-AzLocalFleetSettings {
         empty, or fully commented file returns the existing implicit Azure
         subscription scope used by earlier module versions.
 
-        Schema versions 1, 3, 4, and 5 support scope.managementGroups. When one or more
+        Schema versions 1, 3, 4, 5, and 6 support scope.managementGroups. When one or more
         management-group IDs are configured, Azure Resource Graph queries that
         do not already specify an explicit subscription use those management
         groups as their query scope.
@@ -25,6 +25,13 @@ function Get-AzLocalFleetSettings {
         limits concurrent jobs used to reconcile UpdateRing tags, accepts 1 to
         16, and defaults to 4.
 
+        Schema version 6 adds suppression and bounded renewal settings.
+        Optional suppressMonitorNotificationsPerClusterDuringUpdates is strictly
+        opt-in (default false). It suppresses action-group notifications using a
+        bounded, cluster-scoped processing rule without disabling existing rules.
+        RenewMonitorSuppressionDuringUpdates defaults false. The maximum total
+        duration MonitorSuppressionMaxTotalHours defaults to 168 (range 49-720).
+
         The parser is deliberately limited to this small operator-owned schema
         so the core fleet pipelines do not require powershell-yaml.
     .PARAMETER Path
@@ -33,7 +40,9 @@ function Get-AzLocalFleetSettings {
     .OUTPUTS
         PSCustomObject with Path, FileFound, SchemaVersion, ScopeMode,
         ManagementGroups, ClusterTagFilters, and
-        MaxUpdateRingTagConcurrentJobs properties.
+        MaxUpdateRingTagConcurrentJobs and
+        SuppressMonitorNotificationsPerClusterDuringUpdates,
+        RenewMonitorSuppressionDuringUpdates, MonitorSuppressionMaxTotalHours properties.
     .EXAMPLE
         Get-AzLocalFleetSettings
 
@@ -102,6 +111,9 @@ function Get-AzLocalFleetSettings {
         UpdateStartWindowAllowBeforeMinutes = 0
         UpdateStartWindowAllowAfterMinutes  = 0
         MaxUpdateRingTagConcurrentJobs = 4
+        SuppressMonitorNotificationsPerClusterDuringUpdates = $false
+        RenewMonitorSuppressionDuringUpdates = $false
+        MonitorSuppressionMaxTotalHours = 168
         MaxRowsPerTable    = 100
         MaxSummaryBytes    = 900000
         MaxIncidentsPerRun = 25
@@ -128,6 +140,8 @@ function Get-AzLocalFleetSettings {
     $clusterTagFiltersDeclared = $false
     $updateStartWindowDeclared = $false
     $concurrencyDeclared = $false
+    $monitorSuppressionDeclared = $false
+    $monitorRenewalDeclared = @{}
     $activeSection = ''
     $managementGroups = [System.Collections.Generic.List[string]]::new()
     $clusterTagFilters = [System.Collections.Generic.List[object]]::new()
@@ -135,6 +149,48 @@ function Get-AzLocalFleetSettings {
     $currentTagFilterTag = $null
 
     foreach ($line in $activeLines) {
+        if ($line -match '^(renewMonitorSuppressionDuringUpdates|monitorSuppressionMaxTotalHours)\s*:') {
+            $settingName = $Matches[1]
+            if ($monitorRenewalDeclared.ContainsKey($settingName)) {
+                throw "Get-AzLocalFleetSettings: $settingName must be declared once."
+            }
+            if ($settingName -ieq 'renewMonitorSuppressionDuringUpdates') {
+                if ($line -notmatch '^renewMonitorSuppressionDuringUpdates\s*:\s*(true|false)\s*(?:#.*)?$') {
+                    throw 'Get-AzLocalFleetSettings: renewMonitorSuppressionDuringUpdates must be an unquoted true or false.'
+                }
+                $result.RenewMonitorSuppressionDuringUpdates = $Matches[1] -ieq 'true'
+            }
+            else {
+                $maxTotalHours = 0
+                if ($line -notmatch '^monitorSuppressionMaxTotalHours\s*:\s*([0-9]+)\s*(?:#.*)?$' -or
+                    -not [int]::TryParse($Matches[1], [ref]$maxTotalHours) -or $maxTotalHours -lt 49 -or $maxTotalHours -gt 720) {
+                    throw 'Get-AzLocalFleetSettings: monitorSuppressionMaxTotalHours must be an unquoted integer from 49 to 720.'
+                }
+                $result.MonitorSuppressionMaxTotalHours = $maxTotalHours
+            }
+            $monitorRenewalDeclared[$settingName] = $true
+            $activeSection = ''
+            $inScope = $false
+            $inManagementGroups = $false
+            $inClusterTagFilters = $false
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
+            continue
+        }
+        if ($line -match '^suppressMonitorNotificationsPerClusterDuringUpdates\s*:') {
+            if ($monitorSuppressionDeclared -or $line -notmatch '^suppressMonitorNotificationsPerClusterDuringUpdates\s*:\s*(true|false)\s*(?:#.*)?$') {
+                throw "Get-AzLocalFleetSettings: suppressMonitorNotificationsPerClusterDuringUpdates must be declared once as an unquoted true or false."
+            }
+            $result.SuppressMonitorNotificationsPerClusterDuringUpdates = $Matches[1] -ieq 'true'
+            $monitorSuppressionDeclared = $true
+            $activeSection = ''
+            $inScope = $false
+            $inManagementGroups = $false
+            $inClusterTagFilters = $false
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
+            continue
+        }
         if ($line -match '^\s*schemaVersion\s*:\s*([0-9]+)\s*(?:#.*)?$') {
             $schemaVersion = [int]$Matches[1]
             continue
@@ -292,10 +348,13 @@ function Get-AzLocalFleetSettings {
     }
 
     if ($null -eq $schemaVersion) {
-        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1, 3, 4, or 5."
+        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1, 3, 4, 5, or 6."
     }
-    if ($schemaVersion -notin @(1, 3, 4, 5)) {
-        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1, 3, 4, and 5."
+    if ($schemaVersion -notin @(1, 3, 4, 5, 6)) {
+        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1, 3, 4, 5, and 6."
+    }
+    if ($schemaVersion -lt 6 -and ($monitorSuppressionDeclared -or $monitorRenewalDeclared.Count -gt 0)) {
+        throw 'Get-AzLocalFleetSettings: monitor suppression and renewal settings require schemaVersion: 6.'
     }
     if ($schemaVersion -eq 1 -and $clusterTagFiltersDeclared) {
         throw "Get-AzLocalFleetSettings: scope.clusterTagFilters requires schemaVersion: 3."

@@ -1,0 +1,16 @@
+{
+  "Name": "Azure Stack HCI Monitor Suppression Operator (custom)",
+  "IsCustom": true,
+  "Description": "Customer-managed custom role - Optional companion to the Azure Stack HCI Update Operator custom role. Allows maintenance alert processing rule management only when notification suppression is explicitly enabled. Assign at participating cluster resource groups.",
+  "Actions": [
+    "Microsoft.AlertsManagement/actionRules/read",
+    "Microsoft.AlertsManagement/actionRules/write",
+    "Microsoft.AlertsManagement/actionRules/delete"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/providers/Microsoft.Management/managementGroups/<your-mg-id>"
+  ]
+}
