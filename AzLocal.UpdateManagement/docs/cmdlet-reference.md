@@ -1146,7 +1146,7 @@ Resumes a previously interrupted fleet update operation from a saved state file.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `-StateFilePath` | String | Yes* | - | Path to the saved state file |
-| `-State` | PSCustomObject | Yes* | - | State object loaded via `Import-AzLocalFleetState` |
+| `-State` | PSCustomObject | Yes* | - | State returned by a fleet operation or parsed from its JSON checkpoint |
 | `-RetryFailed` | Switch | No | - | Also retry clusters that previously failed (not just pending) |
 | `-MaxRetries` | Int | No | `3` | Maximum additional retry attempts for failed clusters (0-10) |
 | `-Force` | Switch | No | - | Skip confirmation prompts |
@@ -1164,9 +1164,15 @@ Resume-AzLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -Force
 Resume-AzLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -RetryFailed -Force
 
 # Load state manually and resume
-$state = Import-AzLocalFleetState -Path "C:\Logs\fleet-state.json"
+$state = Get-Content -LiteralPath "C:\Logs\fleet-state.json" -Raw | ConvertFrom-Json
 Resume-AzLocalFleetUpdate -State $state -RetryFailed -MaxRetries 5 -Force
 ```
+
+A checkpoint is a JSON progress record, not a VM snapshot. Resume retains the
+original run ID, completed cluster results, and cumulative attempt counts. Each
+completed resume batch replaces the full checkpoint atomically. `-WhatIf` and
+declined confirmation leave the state unchanged. Keep checkpoint files in an
+access-controlled location; they contain fleet identities and operation results.
 
 **Sample Output:**
 
@@ -1326,7 +1332,7 @@ Single-pass data collector that gathers everything `New-AzLocalFleetStatusHtmlRe
 - Pass data between pipeline stages as a JSON artifact (`-ExportPath`).
 - Avoid the redundant API calls that happen if you call the readiness / inventory / health functions separately.
 
-Honours `-ThrottleLimit 1-8` for parallel collection; default 4.
+Collection concurrency is managed internally; this command has no `-ThrottleLimit` parameter.
 
 **Parameter sets:** `ByResourceId` / `ByName` / `ByTag` / `All` (mirrors the other fleet functions).
 
@@ -1335,7 +1341,6 @@ Honours `-ThrottleLimit 1-8` for parallel collection; default 4.
 |-----------|------|---------|-------------|
 | `-IncludeUpdateRuns` | Switch | - | Collect latest update run history per cluster. |
 | `-IncludeHealthDetails` | Switch | - | Collect detailed health-check failure data per cluster. |
-| `-ThrottleLimit` | Int 1-8 | 4 | Parallel workers. Set 1 for sequential / debugging. |
 | `-MaxClusters` | Int 0-100000 | 0 (no cap) | Optional cap when `-AllClusters` is used. |
 | `-ExportPath` | String | - | JSON path for the artifact. |
 
@@ -1343,7 +1348,7 @@ Honours `-ThrottleLimit 1-8` for parallel collection; default 4.
 
 ```powershell
 # One-step: collect + render
-$data = Get-AzLocalFleetStatusData -AllClusters -ThrottleLimit 4 -IncludeUpdateRuns -IncludeHealthDetails
+$data = Get-AzLocalFleetStatusData -AllClusters -IncludeUpdateRuns -IncludeHealthDetails
 New-AzLocalFleetStatusHtmlReport -StatusData $data -OutputPath 'C:\Reports\fleet.html'
 
 # CI/CD: collect in job 1, render in job 2 from the artifact

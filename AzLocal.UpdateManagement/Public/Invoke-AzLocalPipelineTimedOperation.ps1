@@ -82,6 +82,13 @@ function Invoke-AzLocalPipelineTimedOperation {
     $platform = if ($env:GITHUB_ACTIONS -eq 'true') { 'GitHubActions' } elseif ($env:TF_BUILD -eq 'True') { 'AzureDevOps' } else { 'Local' }
     $runId = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_RUN_ID } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_BUILDID } else { '' }
     $runAttempt = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_RUN_ATTEMPT } elseif ($platform -eq 'AzureDevOps') { [string]$env:SYSTEM_JOBATTEMPT } else { '' }
+    $localSessionId = ''
+    if (-not $runId) {
+        if (-not (Test-Path Variable:script:PipelineTimingLocalSessionId)) {
+            $script:PipelineTimingLocalSessionId = [guid]::NewGuid().ToString('D')
+        }
+        $localSessionId = $script:PipelineTimingLocalSessionId
+    }
     $sourceVersion = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_SHA } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_SOURCEVERSION } else { '' }
     $sourceRef = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_REF } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_SOURCEBRANCH } else { '' }
     $trigger = if ($platform -eq 'GitHubActions') { [string]$env:GITHUB_EVENT_NAME } elseif ($platform -eq 'AzureDevOps') { [string]$env:BUILD_REASON } else { '' }
@@ -112,6 +119,7 @@ function Invoke-AzLocalPipelineTimedOperation {
     $writeReport = {
         param([System.Collections.IDictionary]$CurrentOperation)
 
+        $tempPath = $null
         try {
             $parent = Split-Path -Parent $Path
             if ($parent -and -not (Test-Path -LiteralPath $parent)) {
@@ -123,18 +131,29 @@ function Invoke-AzLocalPipelineTimedOperation {
             if (Test-Path -LiteralPath $Path -PathType Leaf) {
                 try {
                     $existing = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-                    if ($existing.PSObject.Properties['startedUtc'] -and $existing.startedUtc) {
+                    $sameRun = $true
+                    $expectedIdentity = @{ pipelineName = $PipelineName; platform = $platform; runId = $runId; runAttempt = $runAttempt }
+                    if (-not $runId) { $expectedIdentity['localSessionId'] = $localSessionId }
+                    foreach ($identityKey in $expectedIdentity.Keys) {
+                        if (-not $existing.PSObject.Properties[$identityKey] -or [string]$existing.$identityKey -cne [string]$expectedIdentity[$identityKey]) {
+                            $sameRun = $false
+                            break
+                        }
+                    }
+                    if ($sameRun -and $existing.PSObject.Properties['startedUtc'] -and $existing.startedUtc) {
                         [datetime]$parsedStart = [datetime]::MinValue
                         if ([datetime]::TryParse([string]$existing.startedUtc, [ref]$parsedStart)) {
                             $reportStartedUtc = $parsedStart.ToUniversalTime()
                         }
                     }
-                    foreach ($item in @($existing.operations)) {
-                        if ($item -and [string]$item.invocationId -ne $invocationId) { [void]$operations.Add($item) }
+                    if ($sameRun) {
+                        foreach ($item in @($existing.operations)) {
+                            if ($item -and [string]$item.invocationId -ne $invocationId) { [void]$operations.Add($item) }
+                        }
                     }
                 }
                 catch {
-                    Write-Warning ("Pipeline timing report could not be read and will be rebuilt: {0}" -f $_.Exception.Message)
+                    Write-Warning ("Pipeline timing report could not be read and will be rebuilt ({0})." -f $_.Exception.GetType().Name) -WarningAction Continue
                 }
             }
             [void]$operations.Add([pscustomobject]$CurrentOperation)
@@ -150,6 +169,7 @@ function Invoke-AzLocalPipelineTimedOperation {
                 platform = $platform
                 runId = $runId
                 runAttempt = $runAttempt
+                localSessionId = $localSessionId
                 sourceVersion = $sourceVersion
                 sourceRef = $sourceRef
                 trigger = $trigger
@@ -169,10 +189,15 @@ function Invoke-AzLocalPipelineTimedOperation {
             $json = $report | ConvertTo-Json -Depth 8
             $tempPath = '{0}.{1}.tmp' -f $Path, $invocationId
             Write-Utf8NoBomFile -Path $tempPath -Content $json
-            Move-Item -LiteralPath $tempPath -Destination $Path -Force -WhatIf:$false
+            Move-Item -LiteralPath $tempPath -Destination $Path -Force -WhatIf:$false -ErrorAction Stop
         }
         catch {
-            Write-Warning ("Pipeline timing telemetry write failed for step {0} '{1}': {2}" -f $StepNumber, $StepName, $_.Exception.Message)
+            Write-Warning ("Pipeline timing telemetry write failed for step {0} ({1})." -f $StepNumber, $_.Exception.GetType().Name) -WarningAction Continue
+        }
+        finally {
+            if ($tempPath -and (Test-Path -LiteralPath $tempPath)) {
+                Remove-Item -LiteralPath $tempPath -Force -WhatIf:$false -ErrorAction SilentlyContinue
+            }
         }
     }
 

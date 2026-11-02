@@ -106,14 +106,14 @@ function Invoke-AzRestJson {
                       $errText -match 'AADSTS700024' -or
                       $errText -match 'assertion is not within its valid time range')
             if ($is401) {
-                Write-Verbose "Invoke-AzRestJson: detected 401 / token-expiry on $Method $Uri; refreshing access token and retrying once."
+                Write-Verbose "Invoke-AzRestJson: detected 401 / token-expiry on $Method $resourcePath; refreshing access token and retrying once."
                 $refreshExit = 1
                 try {
                     $null = & az account get-access-token --resource 'https://management.azure.com/' --output none 2>&1
                     $refreshExit = $LASTEXITCODE
                 }
                 catch {
-                    Write-Verbose "Invoke-AzRestJson: cached token refresh failed: $($_.Exception.Message)"
+                    Write-Verbose "Invoke-AzRestJson: cached token refresh failed: $(ConvertTo-ScrubbedCliOutput -Text $_.Exception.Message)"
                 }
                 if ($refreshExit -ne 0) {
                     [void](Repair-AzLocalAzureCliAuthentication)

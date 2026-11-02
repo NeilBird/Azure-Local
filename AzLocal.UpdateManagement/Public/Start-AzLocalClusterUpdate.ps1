@@ -270,7 +270,7 @@ function Start-AzLocalClusterUpdate {
             $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
             $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
             
-            Write-Verbose "ARG Query: $argQuery"
+            Write-Verbose "Querying cluster inventory through Azure Resource Graph."
             
             try {
                 # Run Azure Resource Graph query across all accessible subscriptions,

@@ -46,8 +46,8 @@ function Add-AzLocalPipelineVersionBanner {
     .PARAMETER PinnedVersion
         The module version the operator pinned via the
         REQUIRED_MODULE_VERSION env var / workflow input. Empty / $null
-        means "latest (fix-forward)". Used only for the human-readable
-        "pin status" segment of the rendered banner.
+        means "latest (fix-forward)". A nonempty pin must match the loaded
+        module version or the command fails before producing a banner.
 
     .PARAMETER ModuleName
         The PSGallery module to look up. Defaults to
@@ -139,6 +139,10 @@ function Add-AzLocalPipelineVersionBanner {
         throw "Add-AzLocalPipelineVersionBanner: module '$ModuleName' is not loaded. Call Import-Module before invoking this cmdlet."
     }
     $installed = [version]$installedModule.Version
+
+    if (-not [string]::IsNullOrWhiteSpace($PinnedVersion) -and $installed -ne [version]$PinnedVersion) {
+        throw "Loaded $ModuleName v$installed does not match requested version v$PinnedVersion. Import the requested version explicitly before running the workload."
+    }
 
     $latest = $null
     if (-not $SkipPSGalleryQuery) {

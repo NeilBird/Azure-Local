@@ -3,8 +3,9 @@
     Compresses bounded snapshots of the selected clusters' current copy logs.
 .DESCRIPTION
     Reads shared state and logs without modifying them. The ZIP manifest records
-    snapshot offsets, truncation, and unavailable files. No credentials or runner
-    service logs are collected. Output is reporting, including during dry runs.
+    snapshot offsets, truncation, and unavailable files. Credential files and
+    runner service logs are not collected. Log bytes are not redacted; review
+    the archive before sharing. Output is reporting, including during dry runs.
 #>
 [CmdletBinding()]
 [OutputType([string])]
@@ -98,10 +99,30 @@ try {
             $records.Add([pscustomobject]$record)
         }
     }
+    $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+    $robocopy = Get-Command robocopy.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $robocopyVersion = if ($robocopy) { (Get-Item -LiteralPath $robocopy.Source).VersionInfo.FileVersion } else { $null }
+    $platform = if ($env:GITHUB_ACTIONS -eq 'true') { 'GitHubActions' } elseif ($env:TF_BUILD -eq 'True') { 'AzureDevOps' } else { 'Local' }
+    $incompleteCount = @($records.ToArray() | Where-Object { $_.Status -ne 'Captured' -or $_.Truncated }).Count
+    $omittedCount = [Math]::Max(0, $selectedClusters.Count - $MaxClusters)
     $manifest = [ordered]@{
+        CollectionId = [guid]::NewGuid().ToString('D')
+        CollectionStatus = if ($incompleteCount -gt 0 -or $omittedCount -gt 0) { 'Partial' } else { 'Complete' }
+        Context = [ordered]@{
+            Platform = $platform
+            RunId = if ($platform -eq 'GitHubActions') { $env:GITHUB_RUN_ID } elseif ($platform -eq 'AzureDevOps') { $env:BUILD_BUILDID } else { $null }
+            RunAttempt = if ($platform -eq 'GitHubActions') { $env:GITHUB_RUN_ATTEMPT } elseif ($platform -eq 'AzureDevOps') { $env:SYSTEM_JOBATTEMPT } else { $null }
+            PowerShellVersion = [string]$PSVersionTable.PSVersion
+            PowerShellEdition = [string]$PSVersionTable.PSEdition
+            DotNetVersion = [string][Environment]::Version
+            ModuleVersion = if ($module) { [string]$module.Version } else { $null }
+            ModuleVersionStatus = if ($module) { 'Loaded' } else { 'NotLoaded' }
+            RobocopyVersion = $robocopyVersion
+            RobocopyVersionStatus = if ($robocopyVersion) { 'Detected' } else { 'Unavailable' }
+        }
         SnapshotUtc = [DateTime]::UtcNow.ToString('o'); MaxLogBytes = $MaxLogBytes
         MaxTotalLogBytes = $MaxTotalLogBytes; CapturedLogBytes = $totalBytes
-        OmittedClusterCount = [Math]::Max(0, $selectedClusters.Count - $MaxClusters)
+        OmittedClusterCount = $omittedCount
         Records = $records.ToArray()
     }
     $manifestStream = $archive.CreateEntry('manifest.json').Open()
@@ -115,6 +136,9 @@ try {
     $archiveStream.Dispose()
     $archiveStream = $null
     Move-Item -LiteralPath $temporaryPath -Destination $destination -Force -WhatIf:$false
+    if ($manifest.CollectionStatus -eq 'Partial') {
+        Write-Warning ("Sideload diagnostics collection is partial: {0} incomplete or truncated record(s), {1} omitted cluster(s). Review manifest.json before sharing." -f $incompleteCount, $omittedCount) -WarningAction Continue
+    }
     return $destination
 }
 finally {

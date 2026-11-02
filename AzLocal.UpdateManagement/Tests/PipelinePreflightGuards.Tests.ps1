@@ -31,6 +31,11 @@ BeforeAll {
     # Force Local host for the default (logic) contexts.
     $env:GITHUB_ACTIONS = $null
     $env:TF_BUILD       = $null
+
+    $script:AddedAzStub = -not (Get-Command az -ErrorAction SilentlyContinue)
+    if ($script:AddedAzStub) {
+        function global:az { throw 'Unexpected unmocked Azure CLI call in preflight tests.' }
+    }
 }
 
 AfterAll {
@@ -38,6 +43,7 @@ AfterAll {
     $env:TF_BUILD            = $script:SavedTfBuild
     $env:GITHUB_STEP_SUMMARY = $script:SavedStepSummary
     $env:GITHUB_OUTPUT       = $script:SavedGithubOutput
+    if ($script:AddedAzStub) { Remove-Item function:\az -ErrorAction SilentlyContinue }
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
@@ -98,7 +104,22 @@ Describe 'Assert-AzLocalAzureSubscriptionAccess' {
 
         It 'Throws when the account list JSON is empty / whitespace' {
             { Assert-AzLocalAzureSubscriptionAccess -SubscriptionListJson '   ' } |
-                Should -Throw -ExpectedMessage '*no accessible Azure subscriptions*'
+                Should -Throw -ExpectedMessage '*subscription enumeration failed*'
+        }
+
+        It 'Rejects invalid account-list payload <Json> as an enumeration failure' -ForEach @(
+            @{ Json = '[invalid' }
+            @{ Json = 'null' }
+            @{ Json = '{"id":"s1","state":"Enabled"}' }
+            @{ Json = '[42]' }
+        ) {
+            { Assert-AzLocalAzureSubscriptionAccess -SubscriptionListJson $Json } |
+                Should -Throw -ExpectedMessage '*subscription enumeration failed*'
+        }
+
+        It 'Rejects a failed login even when cached subscriptions exist' {
+            { Assert-AzLocalAzureSubscriptionAccess -LoginFailed -SubscriptionListJson '[{"id":"s1","state":"Enabled"}]' } |
+                Should -Throw -ExpectedMessage '*Azure login failed*'
         }
 
         It 'Throws when every visible subscription is Disabled (not Enabled)' {
@@ -161,6 +182,56 @@ Describe 'Assert-AzLocalAzureSubscriptionAccess' {
 
             $out = Get-Content -Path $env:GITHUB_OUTPUT -Raw
             $out | Should -Match 'subscription_count=2'
+        }
+
+        It 'Reports failed login without RBAC advice or a fabricated zero count under Stop preference' {
+            $ErrorActionPreference = 'Stop'
+            { Assert-AzLocalAzureSubscriptionAccess -LoginFailed -SubscriptionListJson '[]' } |
+                Should -Throw -ExpectedMessage '*Azure login failed*'
+
+            $summary = Get-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Raw
+            $summary | Should -Match 'Azure login attempts failed'
+            $summary | Should -Not -Match 'Assign an RBAC role'
+            $output = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+            $output | Should -Match 'subscription_access_status=LoginFailed'
+            $output | Should -Not -Match 'subscription_count='
+        }
+
+        It 'Reports invalid JSON as an enumeration failure without a fabricated zero count' {
+            { Assert-AzLocalAzureSubscriptionAccess -SubscriptionListJson '[invalid' } |
+                Should -Throw -ExpectedMessage '*subscription enumeration failed*'
+
+            (Get-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Raw) | Should -Match 'returned invalid JSON'
+            $output = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+            $output | Should -Match 'subscription_access_status=EnumerationFailed'
+            $output | Should -Not -Match 'subscription_count='
+        }
+
+        It 'Reports a nonzero CLI exit and scrubs its error instead of recommending RBAC changes' {
+            Mock -ModuleName AzLocal.UpdateManagement az {
+                $global:LASTEXITCODE = 7
+                'ERROR: connection timed out --password "test-secret-value"'
+            }
+            { Assert-AzLocalAzureSubscriptionAccess } | Should -Throw '*subscription enumeration failed*'
+            $summary = Get-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Raw
+            $summary | Should -Match 'exit code 7'
+            $summary | Should -Match 'connection timed out'
+            $summary | Should -Not -Match 'test-secret-value|Assign an RBAC role'
+            (Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw) | Should -Not -Match 'subscription_count='
+        }
+
+        It 'Does not invoke the CLI after failed pipeline login' {
+            Mock -ModuleName AzLocal.UpdateManagement az { throw 'Must not enumerate stale cached accounts.' }
+            { Assert-AzLocalAzureSubscriptionAccess -LoginFailed } | Should -Throw '*Azure login failed*'
+            Should -Invoke -ModuleName AzLocal.UpdateManagement az -Times 0 -Exactly
+        }
+
+        It 'Counts valid CLI results after a successful login retry' {
+            Mock -ModuleName AzLocal.UpdateManagement az {
+                $global:LASTEXITCODE = 0
+                '[{"id":"s1","state":"Enabled"}]'
+            }
+            Assert-AzLocalAzureSubscriptionAccess -LoginFailed:$false -PassThru | Should -Be 1
         }
     }
 }

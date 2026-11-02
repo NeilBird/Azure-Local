@@ -41,23 +41,25 @@ function ConvertTo-ScrubbedCliOutput {
 
         $s = $Text
 
+        $argumentValue = '"(?:\\.|[^"\\])*"|''(?:''''|[^''])*''|[^\s,;]+'
+        $cliArgs = '(?i)((?<![\w-])(?:--(?:password|client-?secret|tenant-?secret|sas-?token|token|key)|-p)(?:\s+|=))(' + $argumentValue + ')'
+        $s = [regex]::Replace($s, $cliArgs, '$1<redacted>')
+        $querySecrets = '(?i)([?&](?:sig|signature|sas_?token|access_?token|refresh_?token|id_?token|token|password|client_?secret|secret|api[-_]?key|key|code)=)(?!<redacted>)[^&#\s"''<>]*'
+        $s = [regex]::Replace($s, $querySecrets, '$1<redacted>')
+
         # 1. Bearer <token>
         $s = [regex]::Replace($s, '(?i)(bearer\s+)[A-Za-z0-9\-_\.=]+', '$1<redacted>')
 
         # 2. JSON-style credential fields: "name":"value"
-        $jsonKeys = '(?i)(\"(?:access_?token|refresh_?token|id_?token|password|client_?secret|clientSecret|secret|authorization|sas_?token|sasToken)\"\s*:\s*\")[^\"]*(\")'
+        $jsonKeys = '(?i)("(?:access_?token|refresh_?token|id_?token|password|client_?secret|clientSecret|secret|authorization|sas_?token|sasToken)"\s*:\s*")(?:\\.|[^"\\])*(")'
         $s = [regex]::Replace($s, $jsonKeys, '$1<redacted>$2')
 
         # 2b. Unquoted diagnostic fragments: access_token=value / password: value
-        $plainKeys = '(?i)(\b(?:access_?token|refresh_?token|id_?token|password|client_?secret|clientSecret|secret|authorization|sas_?token|sasToken)\b\s*[:=]\s*)(?!<redacted>)[^\s,;]+'
+        $plainKeys = '(?i)(\b(?:access_?token|refresh_?token|id_?token|password|client_?secret|clientSecret|secret|authorization|sas_?token|sasToken)\b\s*[:=]\s*)(?!<redacted>)(' + $argumentValue + ')'
         $s = [regex]::Replace($s, $plainKeys, '$1<redacted>')
 
         # 3. Standalone JWTs (3 base64url segments, middle segment typically starts with eyJ)
         $s = [regex]::Replace($s, 'eyJ[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}', '<redacted-jwt>')
-
-        # 4. CLI argument forms: --password foo  /  -p foo
-        $cliArgs = '(?i)(--(?:password|client-?secret|tenant-?secret|sas-?token|token|key)\s+)\S+'
-        $s = [regex]::Replace($s, $cliArgs, '$1<redacted>')
 
         # 5. HTTP header form: Authorization: ...
         $s = [regex]::Replace($s, '(?im)^(\s*authorization\s*:\s*).*$', '$1<redacted>')

@@ -1,10 +1,14 @@
 # CI/CD Pipeline Examples for Azure Local Cluster Update Management
 
-> **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
+> **Disclaimer**: This module is **not** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
 This folder is the setup-and-configure landing page for the example GitHub Actions and Azure DevOps pipelines that ship with the `AzLocal.UpdateManagement` PowerShell module. It walks an operator from "nothing wired" to "a staged-rollout update programme runs itself, with optional ServiceNow ticketing on failures".
 
 It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/README.md). If something here is unclear, that file is a good cross-reference for the connector portion.
+
+**Recommended automation platform:** GitHub Actions is the primary development and validation platform for this module and the recommended starting point for new deployments. Azure DevOps examples are an alternative for organizations that standardize on Azure DevOps; the recommendation is specific to this project, not a claim that one platform is inherently more secure.
+
+**Validation boundary:** both sets of examples receive automated template and module-level regression checks. Those checks do not execute Azure DevOps service connections, agents, approvals, schedules, or artifact tasks end to end. GitHub Actions being the primary platform does not certify every feature or configuration either. Establish non-production acceptance for your chosen platform and selected module/template versions before enabling production writes or schedules. See [ownership and upgrade lifecycle](#59-pipeline-ownership-and-upgrade-lifecycle).
 
 **Reporting semantics (v0.9.38):** Markdown summaries are the operator-facing output. JUnit XML supplies structured findings to ITSM and test publishers; a reported cluster failure does not by itself fail a reporting pipeline. Update-run durations in JUnit describe historical operations, not the report job's execution time. NIC summaries describe observed coverage, and unmatched resource bridges require investigation before any remediation.
 
@@ -39,10 +43,13 @@ GitHub JUnit publishers use `collapsed: always` with an **Expand to view JUnit r
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
    - [5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1)
     - [5.6 Test an exact module candidate](#56-test-an-exact-module-candidate)
+    - [5.7 GitHub action pin maintenance](#57-github-action-pin-maintenance)
+    - [5.8 Azure DevOps dependency governance](#58-azure-devops-dependency-governance)
+    - [5.9 Pipeline ownership and upgrade lifecycle](#59-pipeline-ownership-and-upgrade-lifecycle)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
      - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
-    - [6.1.2 (Optional) Configure fleet scope, update-window allowances, and reporting](#612-optional-configure-fleet-scope-update-window-allowances-and-reporting)
+    - [6.1.2 (Optional) Configure fleet scope, update-window allowances, concurrency, and reporting](#612-optional-configure-fleet-scope-update-window-allowances-concurrency-and-reporting)
    - [6.2 Plan update rings, windows, and exclusions](#62-plan-update-rings-windows-and-exclusions)
    - [6.3 Apply tags](#63-apply-tags)
    - [6.4 Pre-flight readiness assessment](#64-pre-flight-readiness-assessment)
@@ -62,9 +69,11 @@ GitHub JUnit publishers use `collapsed: always` with an **Expand to view JUnit r
 11. [Security model](#11-security-model)
 12. [Troubleshooting pipelines](#12-troubleshooting-pipelines)
   - [12.1 Capture a diagnostic run](#121-capture-a-diagnostic-run)
-  - [12.2 Read the transcript](#122-read-the-transcript)
-  - [12.3 Investigate zero or unexpected results](#123-investigate-zero-or-unexpected-results)
-  - [12.4 Common failures](#124-common-failures)
+  - [12.2 Diagnose performance](#122-diagnose-performance-with-pipeline-timingsjson)
+  - [12.3 Read the transcript](#123-read-pipeline-transcriptlog)
+  - [12.4 Investigate zero or unexpected results](#124-investigate-zero-or-unexpected-results)
+  - [12.5 Common failures](#125-common-failures)
+  - [12.6 Revert module and templates](#126-revert-the-module-and-pipeline-templates)
 13. [File layout](#13-file-layout)
 14. [Optional: Sideload updates to disconnected / air-gapped clusters (Update: 2)](#14-optional-sideload-updates-to-disconnected--air-gapped-clusters-update-2)
 15. [Pipeline reference](#15-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
@@ -151,7 +160,10 @@ By the end of this guide you will have:
 - An end-to-end "ring-based" rollout pattern: Pilot -> Wave2 -> Production, with each ring gated on the previous wave's success.
 - **Optional**: a ServiceNow integration that opens deduped incidents for clusters whose run status indicates the module's own retries cannot recover (failures, blocking health checks, sideloaded payload missing) - see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
 - **Optional** (v0.9.1): a fleet-wide **subscription-exclusion list** that filters decommissioned, lab, or out-of-scope subscriptions out of *every* Azure Resource Graph query (inventory, readiness, fleet status, update runs, connectivity) without touching any pipeline logic - see [section 6.1.1](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan).
-- Every workflow fails early when Azure subscription access is missing. Reporting workflows also verify that their expected report exists before publishing tests, so the first error is actionable rather than a downstream "report not found" message.
+- Every workflow fails early when Azure subscription access cannot be verified. From v0.9.40, GitHub templates pass failed login outcomes through `Assert-AzLocalAzureSubscriptionAccess -LoginFailed`; this stops before reading cached accounts. Login and CLI/JSON failures emit `subscription_access_status=LoginFailed` or `EnumerationFailed`, without a fabricated `subscription_count=0` or RBAC advice. A successfully enumerated empty/disabled subscription list still produces the subscription-access remediation and count.
+- Optional GitHub pipeline timing/transcript uploads warn visibly on failure without failing an otherwise successful job. Azure DevOps uses `continueOnError` only on the equivalent optional upload tasks: failures remain visible as `SucceededWithIssues`, and downstream `succeeded()` checks can still run. Neither platform softens workload or required report artifact failures. Inspect the upload task when diagnostic evidence is unavailable.
+- Azure DevOps `AzureCLI@2` authentication remains a hard task failure, so it does not need GitHub's two-attempt login-outcome signal. Its shared subscription guard still distinguishes CLI/JSON enumeration failures from a valid empty subscription list. These changes do not retry failed update writes or hide Azure/provider failures.
+- Reporting workflows verify expected reports before publishing tests. Both Apply templates publish JUnit only when the file exists, including reports generated by failed producers. A successful Apply step must produce `apply-results.json` and, when results are nonempty, `update-results.xml`; a legitimate empty-target run does not require JUnit. ADO records successful producer completion and detects JUnit availability in a separate always-running task, which does not require the module when the producer failed. Refresh committed templates to receive these conditions.
 
 The pipelines are **fully opt-in additive layers** over the module. The PowerShell functions also work without any pipeline at all - see [section 10](#10-standalone-html-report-no-pipeline) for the ad-hoc / desktop story.
 
@@ -545,6 +557,14 @@ Once the rights to create custom roles become available in the tenant, follow th
 
 ## 4. Choose your CI/CD platform and authentication
 
+Choose **GitHub Actions for new deployments** unless your organization requires
+another platform. Azure DevOps examples remain available for ADO-standardized
+environments, with platform-specific acceptance required before production use.
+The recommendations in sections 4.1 and 4.2 concern secretless authentication
+within each platform, not equal end-to-end validation coverage. Review the
+[example-pipeline lifecycle](#59-pipeline-ownership-and-upgrade-lifecycle) alongside
+your platform choice.
+
 There are three supported authentication patterns, listed from **most to least secure**. Pick one - you do not need all three.
 
 | Method | Security | Secret to manage | Best for |
@@ -880,7 +900,7 @@ In GitHub Actions, log in with:
 
 ```yaml
 - name: Azure CLI Login (Managed Identity)
-  uses: azure/login@v2
+  uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
   with:
     auth-type: IDENTITY
     client-id: ${{ secrets.AZURE_CLIENT_ID }}  # only required for user-assigned identity
@@ -939,7 +959,7 @@ If you must use client secrets:
 
 Both platforms expect the YAML files inside this folder to land in a platform-specific location in your **consumer** repo.
 
-> **Already wired and just want to upgrade after a new module release?** Don't repeat the steps below. `Copy-AzLocalPipelineExample` drops a **turnkey `Update-Module-And-Pipelines.ps1`** into your repo root - run that one command from your locally-cloned repo and it upgrades the module on your workstation **and** refreshes the pipeline YAMLs (preserving your customisations) **and** commits + pushes the result. See [section 5.5](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1).
+> **Already wired and upgrading after a module release?** Don't repeat initial setup. From your locally cloned consumer repo, run the generated `.\Update-Module-And-Pipelines.ps1 -NoPush` to update the local module and refresh managed templates while preserving supported customizations. Review and validate the changes before committing and promoting them. Without `-NoPush`, the helper also commits and pushes. See [section 5.5](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1) and the [upgrade lifecycle](#59-pipeline-ownership-and-upgrade-lifecycle).
 
 > **Shortcut**: install the module first and use `Copy-AzLocalPipelineExample` to copy this entire folder out of the module install location into a working folder, instead of cloning the repo or hunting through `$module.ModuleBase`:
 >
@@ -1225,7 +1245,7 @@ By default every example pipeline installs the **latest** `AzLocal.UpdateManagem
 
 ### 5.4 Azure DevOps onboarding checklist
 
-The example pipelines have **near-100% functional parity** across GitHub Actions and Azure DevOps - the same cmdlets, parameters, gating logic, outputs, artifacts, scheduled cron, and the event-driven apply -> monitor trigger all run identically on both platforms. The only differences are **platform-idiomatic setup steps** that Azure DevOps requires and GitHub Actions does not. None are bugs, but a first-time ADO operator will hit them in this order. Work through the checklist before handing the project to a new user.
+The Azure DevOps examples are designed to expose the same module operations as the GitHub Actions examples, using platform-native authentication, artifacts, tests, and scheduling. This is intended feature alignment, not a claim of identical runtime behavior or equivalent end-to-end validation. Work through the checklist and retain evidence from your own non-production ADO runs before handing over the deployment. Workload Identity Federation remains the recommended authentication method when choosing ADO; it does not change the project's GitHub Actions platform recommendation.
 
 #### Pre-import (do once for the project)
 
@@ -1255,9 +1275,9 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
 
 #### FAQ
 
-- **Is anything missing on the Azure DevOps side?** No. Every cmdlet, parameter, gate, artifact (CSV / JSON / JUnit XML / HTML / step summary), scheduled cron, and the event-driven apply -> monitor trigger exist on both platforms. The deltas above are setup ergonomics, not feature gaps.
+- **Is the Azure DevOps deployment equivalent?** The examples target the same module operations, but template coverage is not proof of runtime equivalence. Verify authentication, stage outputs, concurrency, schedules, the apply-to-monitor trigger, and artifact/test publication in your ADO environment.
 - **Why do ADO run-form parameters look like `updateRing` while GitHub uses `update_ring`?** Cosmetic only. ADO parameters use PascalCase and GitHub inputs use snake_case by platform convention; both map to the same PascalCase PowerShell cmdlet parameters (`-UpdateRing`) at runtime.
-- **Artifacts and test results - same?** Yes, via platform-native tasks: GitHub uploads with `actions/upload-artifact` + renders JUnit with a test-reporter action and writes `$GITHUB_STEP_SUMMARY`; ADO uses `PublishBuildArtifacts` + `PublishTestResults@2` (Tests tab) + `##vso[task.uploadsummary]` (Summary tab). The files produced are identical.
+- **Artifacts and test results - same?** Both use module-generated reports, but publication and presentation are platform-specific: GitHub uses artifact and test-reporter actions plus `$GITHUB_STEP_SUMMARY`; ADO uses artifact tasks, `PublishTestResults@2`, and `##vso[task.uploadsummary]`. Verify that expected files, test results, and summaries are available in your chosen platform.
 - **Do the schedules differ?** No - the default cron expressions match line-for-line across both platforms. As shipped, `apply-updates` has every `cron:` commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers on both platforms, so it never fires on a schedule until you add one.
 - **Module version pinning?** Identical strategy on both - latest-from-PSGallery by default, with the same `GENERATED_AGAINST_MODULE_VERSION` drift-detection pin and `Add-AzLocalPipelineVersionBanner` notice.
 
@@ -1267,7 +1287,7 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
 
 ### 5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`
 
-Once your repo is wired (sections 5.1-5.4), keeping it current after a new `AzLocal.UpdateManagement` release is **a single command** - no re-copying YAMLs, no manual version bumps, no hand-written commit. When you first ran `Copy-AzLocalPipelineExample` it dropped a **turnkey `Update-Module-And-Pipelines.ps1`** into your repo root with your platform and workflow folder already baked in *(default-on since v0.8.98 for `-Platform GitHub` / `AzureDevOps`; pass `-SkipStarterUpdater` to suppress it)*.
+Once your repo is wired (sections 5.1-5.4), `Update-Module-And-Pipelines.ps1` coordinates the local module update and template refresh. It does not validate production readiness. Start with `-NoPush` so the change can be reviewed and tested before rollout. `Copy-AzLocalPipelineExample` drops this managed helper into your repo root with your platform and workflow folder already baked in *(default-on since v0.8.98 for `-Platform GitHub` / `AzureDevOps`; pass `-SkipStarterUpdater` to suppress it)*.
 
 **Prerequisites:** the consumer repo **cloned locally**, **`git` installed** and on `PATH`, and PowerShell Gallery reachable from your workstation. (This is an admin-workstation script - it is *not* run by the pipelines.)
 
@@ -1275,14 +1295,16 @@ Once your repo is wired (sections 5.1-5.4), keeping it current after a new `AzLo
 
 ```powershell
 # From inside your locally-cloned pipelines repo:
-.\Update-Module-And-Pipelines.ps1
+.\Update-Module-And-Pipelines.ps1 -NoPush
 ```
 
-That one command does three things, in order, and **only acts when something actually changed**:
+The helper performs the following operations; the recommended `-NoPush` invocation skips step 3:
 
-1. **Upgrades the module on your workstation** - queries PSGallery and runs `Install-Module` **only if** the published version is newer than what you have installed (then imports it). If you are already current, it skips the install.
+1. **Selects the module on your workstation** - normally resolves the latest listed PSGallery version, or the exact `-RequiredVersion` when specified. It installs that selected version if absent, even when a higher version is already installed, then imports the selected version explicitly.
 2. **Refreshes the pipeline YAMLs and supported configuration schemas** via the marker-aware `Update-AzLocalPipelineExample` - it replaces everything **outside** the `AZLOCAL-CUSTOMIZE` marker regions while **preserving your customisations inside them** (schedule crons, service-connection names, runner labels, ITSM secret bindings, the exclusion/schedule paths, etc.). It also refreshes the managed `config\` starters and the dropped `README.md` when the module ships newer templates. When `config\apply-updates-schedule.yml` uses an older supported schema, the refresh saves the exact original as `apply-updates-schedule.v<old>.old.yml`, performs only registered additive migrations, preserves the operator-owned `schedule:` section and newline style byte-for-byte, validates the migrated canonical file, and restores the original automatically on failure.
-3. **Commits and pushes** - stages the workflow folder, the repo-root `config\` folder, the managed `README.md`, and the updater script itself (which may self-refresh), then commits and pushes **only if** the refresh produced a diff.
+3. **Commits and pushes** - stages the workflow folder, the repo-root `config\` folder, the managed `README.md`, the `DevChannel\` helper, and the updater script itself (which may self-refresh), then commits and pushes **only if** the refresh produced a diff. This operates on the currently checked-out consumer-repository branch; it does not create or switch branches.
+
+This updater does **not** create, change, or remove `REQUIRED_MODULE_VERSION`. An existing runtime pin remains in effect even after a local refresh. For coordinated candidate selection and pinning, use the development-channel helper in section 5.6 instead.
 
 **Useful options:**
 
@@ -1290,13 +1312,13 @@ That one command does three things, in order, and **only acts when something act
 |---|---|
 | *(none)* | Upgrade module if needed, refresh YAMLs, then commit + push any changes. |
 | `-RequiredVersion <version>` | Install and import that exact PSGallery version, including an unlisted candidate, then refresh from its bundled templates. |
-| `-NoPush` | Refresh the YAMLs only - **skip** the `git add` / commit / push so you can review with `git status` / `git diff` and push yourself. |
+| `-NoPush` | Update the local module and refresh managed files, but **skip** `git add` / commit / push so you can review and validate before rollout. It is not a read-only preview. |
 | `-Scope AllUsers` | Install the module machine-wide on upgrade (needs an elevated session). Default is `CurrentUser` (no elevation). |
 | `-RepoRoot` / `-Platform` / `-WorkflowSubPath` | Overrides for the values baked in at drop time - rarely needed. |
 
 > **Self-managing:** the script is a **managed file** - `Copy-`/`Update-AzLocalPipelineExample` auto-refresh it in place when the module ships a newer template, and the run above stages that self-update too. Tune its behaviour with the **parameters** above rather than editing the body (body edits are replaced on refresh).
 
-> **Prefer to review before pushing?** Run `.\Update-Module-And-Pipelines.ps1 -NoPush`, inspect `git diff` and the versioned schedule backup, then commit and push manually. `-WhatIf` previews the refresh without writing or creating a backup. The marker-aware merge preserves `AZLOCAL-CUSTOMIZE` regions, and schedule migration never parses and reserializes operator rows.
+> **Review before rollout:** inspect `git diff` and versioned configuration backups, then test on a non-production branch/environment before approving production promotion. Omitting `-NoPush` enables automatic commit and push; use that only under an approved automation policy. `-WhatIf` previews the refresh without writing or creating a backup. The marker-aware merge preserves `AZLOCAL-CUSTOMIZE` regions, and schedule migration never parses and reserializes operator rows. Follow [section 5.9](#59-pipeline-ownership-and-upgrade-lifecycle) for version selection and recovery.
 
 ---
 
@@ -1304,18 +1326,211 @@ That one command does three things, in order, and **only acts when something act
 
 `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` drop a managed `Apply-ModuleDevelopmentChannel.ps1` into the repo-root `DevChannel\` folder for both platforms. Pass `-SkipDevelopmentChannelHelper` to suppress it.
 
-```powershell
-# Pin every bundled pipeline to an exact PSGallery version.
-.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion 0.9.29
+**What "DevChannel" means:** temporary candidate-version selection in your existing consumer pipeline repository. It is not a separate Git branch, repository, package feed, or copy of the module's source code. `DevChannel\` is only the helper's folder. The helper is **the normal updater plus runtime-pin management**: it calls `Update-Module-And-Pipelines.ps1`, so both helpers refresh the same managed files on the same checked-out branch. Neither modifies the upstream module-development repository.
 
-# Restore latest-listed templates, then remove the pin.
-.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+| Purpose | Normal updater | Development-channel helper |
+|---|---|---|
+| Select local module and templates | Latest listed by default, or `-RequiredVersion` | Exact candidate, or latest listed with `-Disable` |
+| Refresh managed repository files | Yes | Yes, by calling the normal updater |
+| Manage runtime pin | No; existing pin is unchanged | Sets/removes the GitHub variable; prints required ADO commands |
+| Commit and push refreshed files | By default; `-NoPush` skips Git staging, commit, and push | Same behavior, through the updater |
+
+Publish the candidate to Gallery first; an unlisted version is sufficient if exact lookup resolves it. **Normally run only the development-channel helper, not both scripts:**
+
+```powershell
+# Refresh the candidate's templates and set the pin; leave files for review.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion 0.9.40 -NoPush
+
+# After acceptance/listing, or to stop testing: refresh latest-listed templates,
+# then remove the pin; leave files for review.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable -NoPush
 ```
 
-The helper refreshes local templates before changing the runtime pin. Disable preflights the rollback before cleanup and stops when an older template would remove a candidate-only `AZLOCAL-CUSTOMIZE` section. The [development-channel testing runbook](docs/development-channel-testing.md) covers the full enable, validation, disable, approval, and recovery flow.
+**`-NoPush` does not prevent remote pin changes.** On GitHub, the repository variable is still changed after a successful local refresh. Review, commit, and push the resulting files before starting validation. Without `-NoPush`, the updater commits and pushes changed managed files before the helper changes the pin.
+
+**A branch alone does not isolate this pin.** `REQUIRED_MODULE_VERSION` is repository-wide for workflows that read it, including scheduled runs; a supported manual version input can override it. Use a separate test consumer repository for isolation and keep scheduled/state-changing workflows disabled until deliberately approved. In ADO, a shared variable group can affect multiple linked pipelines. The helper creates neither a test repository nor a test environment.
+
+The helper validates the candidate and refreshes local templates before changing the runtime pin. `-Disable` calls the updater's latest-listed selection and rollback preflight before cleanup; it stops when an older template would remove a candidate-only `AZLOCAL-CUSTOMIZE` section. This is a template refresh, not a Git history rollback. The [development-channel testing runbook](docs/development-channel-testing.md) covers the full enable, validation, disable, approval, and recovery flow.
 
 - **GitHub:** validates the exact Gallery version, then uses authenticated `gh` to set or delete the non-secret `REQUIRED_MODULE_VERSION` repository variable.
 - **Azure DevOps:** validates the exact Gallery version, then prints the variable-group create/update command with that version. With `-Disable`, it prints the delete command. Replace `<group-id>` and run the displayed command.
+
+---
+
+### 5.7 GitHub action pin maintenance
+
+From **0.9.40**, all bundled remote GitHub action references use
+verified full commit SHAs with readable version comments. Pins are template-owned,
+outside `AZLOCAL-CUSTOMIZE` regions. The module author approves action revisions
+centrally; copy, refresh, and workflow execution never resolve moving action tags.
+Azure DevOps task references are unchanged.
+
+After an approved release, install/import the new module and refresh the committed
+workflows using section 5.5 or
+`Update-AzLocalPipelineExample -Platform GitHub -Destination .\.github\workflows`.
+Review and commit the diff. **Installing the
+module alone does not update action SHAs already in your repository.** Normal
+marker-aware refresh preserves supported schedules, runner choices, and secret
+bindings without `-Force`; a repeated refresh is unchanged. Markerless legacy
+workflows still require the documented explicit migration or manual merge. Do not
+move action lines into customization regions, where they would escape refresh.
+
+Maintainers should review upstream releases and advisories monthly, and expedite
+material security fixes or runtime compatibility deadlines. Review and test each
+selected revision, verify its commit in the official action repository (dereference
+annotated tags), update template SHAs and version comments together, and publish
+through the existing [release process](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/docs/RELEASE-PROCESS.md#github-action-pin-review).
+Not every upstream release needs adoption. Pinning stops automatic uptake of fixes
+from moving tags, so monitoring remains necessary. It fixes the referenced action
+revision, not every dependency or resource downloaded by that action at runtime.
+
+After publication and consumer refresh, validate checkout, Azure authentication,
+artifact upload/download, and reporting in an authorized non-production environment.
+Cover all five action types; do not start cluster updates or other state-changing
+workflows solely to test pins. Offline YAML/tests do not establish organization
+policy acceptance. Confirm and record that separately in the appropriate tracking
+system without disclosing private repository or issue details in public documentation.
+
+---
+
+### 5.8 Azure DevOps dependency governance
+
+From **0.9.40**, the upstream offline Pester suite checks the bundled Azure DevOps
+YAML against these approved built-in task references: `PowerShell@2`, `AzureCLI@2`,
+`PublishPipelineArtifact@1`, `DownloadPipelineArtifact@2`,
+`PublishBuildArtifacts@1`, and `PublishTestResults@2`. The gate also recognizes
+`pwsh:` as PowerShell task shorthand and permits `checkout: self` / `none`.
+New task identities, versions, or step shortcuts require deliberate test and
+dependency review. Script contents are not mistaken for task references.
+
+**This is a repository regression guard, not runtime enforcement or content
+pinning.** It does not certify scripts, downloaded packages, or consumer edits.
+Task references, inputs, authentication, and permissions are unchanged. ADO
+continues receiving minor task updates within the selected majors. Unlike GitHub
+commit SHAs, [exact ADO task versions](https://learn.microsoft.com/azure/devops/pipelines/process/tasks#task-versions)
+are version selectors, not cryptographic content pins; versions must exist in the
+target organization. Freezing them requires a separate compatibility and security
+update plan.
+
+Maintainers must review ADO task releases, advisories, retirements, and runtime
+PowerShell dependencies before **every module release**, recording keep/update
+decisions and evidence under the
+[ADO release checklist](https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/docs/RELEASE-PROCESS.md#azure-devops-dependency-review).
+Runtime installs, including `AzLocal.UpdateManagement`, `powershell-yaml`,
+`Az.Accounts`, and `Az.KeyVault`, remain outside task version controls. Neither
+Microsoft ownership nor an empty advisory list establishes absence of risk.
+
+#### Administrator checklist
+
+Review these controls with the organization administrator before changing them;
+organization-wide restrictions can affect other teams. The module does not apply
+or verify these settings automatically.
+
+- In **Organization settings > Pipelines > Settings > Task restrictions**, disable
+  Marketplace tasks if they are not needed. Keep built-in tasks enabled. Restrict
+  extension management and direct custom-task installation permissions too:
+  directly uploaded tasks remain available despite Marketplace restrictions.
+- Enable **Limit job authorization scope to current project for non-release
+  pipelines** and **Protect access to repositories in YAML pipelines**. Check
+  required cross-project access explicitly instead of granting collection-wide
+  access. See [job authorization scope](https://learn.microsoft.com/azure/devops/pipelines/process/access-tokens#job-authorization-scope).
+- Authorize service connections only for the pipelines that need them, rather
+  than all pipelines. Prefer workload identity federation and least-privilege
+  Azure roles scoped to the intended fleet. Protect production access with
+  branch checks and approvals appropriate to scheduled operations.
+- Protect pipeline and script changes with branch review policies. Isolate
+  self-hosted agents, especially fabric-connected sideload agents; do not run
+  untrusted pull-request code on them or expose production credentials to it.
+
+Record approved settings and acceptance results privately. Validate authorized
+read-only workflows after changes; do not start cluster updates to test security
+settings. See [Microsoft's pipeline security guidance](https://learn.microsoft.com/azure/devops/pipelines/security/misc)
+and [protected resources](https://learn.microsoft.com/azure/devops/pipelines/process/about-resources#use-resources-to-enhance-security).
+
+---
+
+### 5.9 Pipeline ownership and upgrade lifecycle
+
+The pipelines are **versioned examples**, not a separately serviced product or a
+managed deployment. The module release is the distribution unit for cmdlets,
+templates, and refresh helpers. An upstream template correction therefore needs
+a module release before the normal Gallery-based refresh can deliver it. Operators
+may maintain their own changes, but must review and reapply changes outside the
+documented customization regions when refreshing.
+
+#### Three independent version choices
+
+| Layer | What selects it | What an update does not do |
+|---|---|---|
+| Local module and bundled templates | The module imported on the workstation; the starter updater installs/imports its selected Gallery version. | Installing it alone does not rewrite files in the consumer repository. |
+| Committed pipeline YAML and configuration | Initial copy or an explicit refresh, followed by review and a consumer-repository commit. `GENERATED_AGAINST_MODULE_VERSION` records the source template version. | The generation stamp is not a runtime pin or proof of compatibility. A refresh does not change an existing `REQUIRED_MODULE_VERSION` setting. |
+| Runner module | The workflow's runtime selection: latest listed by default, or an explicit version through the documented pin/development-channel controls. | A newer module on an agent does not refresh committed YAML. Latest-listed resolution can advance between runs without a repository change. |
+
+Starting with v0.9.40 templates, each job resolves its selected module version
+once and imports that exact version in every subsequent task. The internal
+`AZLOCAL_RUN_MODULE_VERSION` job variable carries the selection; do not override
+it. A newer installed version cannot override an explicit pin or the selected
+latest-listed version. The version banner fails if the loaded version differs
+from an explicit pin. Separate jobs can resolve different latest versions if a
+release appears between them; use an explicit pin when the entire multi-job run
+must use one approved version. Refresh committed templates to obtain this fix.
+
+Keep these choices coordinated. A drift warning is diagnostic, not a guarantee
+that mismatched versions are safe. Do not remove the warning or edit only the
+generation stamp to make versions appear aligned. Exact-version change control
+needs both the selected templates and runtime pin; see [section 5.3](#53-optional-configuration-not-recommended-pin-the-module-version)
+and the [development-channel runbook](docs/development-channel-testing.md).
+
+#### Responsibilities and acceptance
+
+| Owner | Responsibility |
+|---|---|
+| Module maintainer | Ship reviewed templates with the module, test copy/refresh and supported migrations, record dependency decisions and compatibility changes, and distinguish offline checks from live platform evidence. |
+| Pipeline operator | Own the consumer repository, identities, permissions, agents, schedules, approvals, downstream customizations, monitoring, and acceptance of each rollout. |
+
+For both platforms, test identity and expected inventory, configuration parsing,
+report/test/artifact publication, gate outputs, and selected runner prerequisites.
+For ADO, also validate variable-group and service-connection authorization, stage
+output bindings, concurrency controls, and monitor triggering. Offline YAML tests
+do not establish these service-level behaviors. Start with read-only checks and
+supported previews; readiness assessment can refresh Azure state, and an apply
+dry-run is not proof of a successful cluster update. Approve live write tests and
+non-production cluster updates separately. Enable production schedules only after
+the required acceptance and operational ownership are established.
+
+#### Review-first upgrade and recovery
+
+1. Start from a clean consumer working tree on a review branch. Record the current
+  repository commit, imported module version, generation stamps, runtime version
+  selection, and configuration backups. Keep production schedules controlled by
+  the existing change policy while testing.
+2. Read the module release notes, prerequisite changes, and migration guidance.
+  Choose latest-listed or an exact approved version deliberately. For a coordinated
+  exact-version trial, use section 5.6 rather than assuming a local install pins
+  the runner.
+3. Run the updater with `-NoPush`, optionally selecting `-RequiredVersion` for the
+  local template source. Review YAML, configuration migrations/backups, managed
+  helper and README changes, action pins, and task references. Only documented
+  `AZLOCAL-CUSTOMIZE` bodies are preserved in YAML; arbitrary edits elsewhere can
+  be replaced. Keep operator runbooks outside managed files. Use `-Force` only
+  for a reviewed migration, not to silence a conflict.
+4. Commit reviewed changes to the test branch and exercise the selected platform
+  in an authorized non-production environment. Record the commit, actual runtime
+  module version, template version, run IDs, and results. Then approve production
+  promotion and observe the first scheduled runs. A green template test is not
+  deployment acceptance.
+5. If validation fails, withhold promotion and retain diagnostics. Restore the
+  known-good consumer files/configuration through a reviewed revert or backups
+  and restore the corresponding runtime selection. Reverting YAML alone does not
+  roll back a latest-listed runtime. Follow the development-channel recovery
+  procedure if candidate pins are active; do not blindly remove them or assume
+  schema migrations are reversible. Revalidate before resuming automation.
+
+Restoring pipeline files or module selection does **not** undo Azure tag changes,
+sideload operations, or cluster updates already started. Handle those through
+their operation-specific recovery procedures. Urgent downstream fixes should be
+tracked and reviewed locally and reconciled with the next module-shipped template;
+do not assume the refresher will preserve an undocumented patch.
 
 ---
 
@@ -1846,7 +2061,7 @@ Monitor: 3 also emits `supplementary_data_complete` (`true` / `false`) and `inco
 
 **v0.9.22 scaling:** the complete `healthCheckResult` arrays are still expanded client-side so ARG's bounded `mv-expand` behavior cannot silently drop checks, but the wire query now begins at 50 cluster rows per page and orders by resource ID. If even that page is too large, the shared ARG helper automatically halves it and follows continuation tokens until the complete fleet is returned.
 
-It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalfleethealthfailures) cmdlet under the covers.
+It calls [`Get-AzLocalFleetHealthFailures`](../docs/cmdlet-reference.md#get-azlocalfleethealthfailures) under the covers.
 
 | Artefact | Description |
 |---|---|
@@ -2470,18 +2685,29 @@ The report includes executive summary cards, cluster information, a status table
 
 For a one-off manual run, set `diagnostics=true` on the GitHub Actions or Azure DevOps run form. For a scheduled, event-driven, or persistent manual investigation, set `DEBUG_VERBOSE=true` as described in [section 5.2.2](#522-diagnostics-for-any-pipeline-run), reproduce the problem, download the diagnostics artifact, then set the variable back to `false`.
 
-The artifact is published with `always()` semantics, including when the principal workload fails. GitHub artifacts default to 14 days and honor `DEBUG_RETENTION_DAYS` from 1-90; Azure DevOps artifacts follow the project pipeline-retention policy.
+Artifact publication is attempted with `always()` semantics, including when the principal workload fails. This does not guarantee that files exist or upload succeeds. Checkout, login, extension installation, module installation/import, transcript startup, and runner failures can occur before workload capture. Use the native platform step logs for those failures and for upload errors. A cancelled or lost runner may not execute cleanup or publication. GitHub artifacts default to 14 days and honor `DEBUG_RETENTION_DAYS` from 1-90; Azure DevOps artifacts follow the project pipeline-retention policy.
 
 The artifact contents are deliberate:
 
 | Run mode | Files | Availability |
 |---|---|---|
-| Normal | `pipeline-timings.json` | Every run |
-| `diagnostics=true` or `DEBUG_VERBOSE=true` | `pipeline-timings.json`, `pipeline-transcript.log` | Manual input applies only to manually queued runs; the shared variable applies to every trigger |
+| Normal | `pipeline-timings.json` | Once a timed workload starts and telemetry can be written |
+| `diagnostics=true` or `DEBUG_VERBOSE=true` | `pipeline-timings.json`, `pipeline-transcript.log` | Transcript only after successful capture startup; manual input applies only to manually queued runs, while the shared variable applies to every trigger |
+| Sideload diagnostics | Bounded copy-log ZIP with `manifest.json` | Only if the collector is reached; missing, rejected, omitted and truncated files are recorded, not silently treated as captured |
+
+The platform packages the general diagnostics artifact; there is no general
+module-generated ZIP that captures the whole job. The sideload collector is a
+separate ZIP writer. Its manifest records a collection ID, platform/run context,
+actual PowerShell/.NET/loaded-module/robocopy versions where available, and
+`Complete` or `Partial` collection status. Unknown versions are marked unavailable
+or not loaded. A partial-collection warning does not change the copy outcome.
+Shared copy logs can belong to an earlier operation; compare each record's
+operation ID and timestamps with the run being investigated. Original log bytes
+are preserved, not redacted or supplemented with runner-service logs.
 
 ### 12.2 Diagnose performance with `pipeline-timings.json`
 
-The timing report is generated on every run so successful runs can be compared over time without first reproducing them in diagnostic mode. Each principal workload is executed through `Invoke-AzLocalPipelineTimedOperation`, which writes the report before starting the operation and updates it in `finally`. Workload output is preserved, and a workload failure is recorded before the original error is rethrown.
+The timing report is generated when a timed workload is reached, without requiring diagnostic mode. Each principal workload is executed through `Invoke-AzLocalPipelineTimedOperation`, which writes the report before starting the operation and updates it in `finally`. Workload output is preserved, and a workload failure is recorded before the original error is rethrown.
 
 The top-level JSON fields are:
 
@@ -2490,6 +2716,7 @@ The top-level JSON fields are:
 | `schemaVersion` | Report contract version; currently `1`. |
 | `pipelineName`, `pipelineVersion` | Stable template identity and the version it was generated against. |
 | `platform`, `runId`, `runAttempt` | `GitHubActions`, `AzureDevOps`, or `Local`, plus native run correlation values. |
+| `localSessionId` | Fallback correlation when no native run ID exists; changes when the local module session changes. |
 | `sourceVersion`, `sourceRef`, `trigger`, `runnerOs`, `diagnosticsEnabled` | Non-secret source revision, ref, trigger, runner platform, and transcript-capture state needed to reproduce the run context. |
 | `moduleVersion`, `powerShellVersion`, `powerShellEdition` | Runtime versions needed when comparing performance. |
 | `startedUtc`, `lastUpdatedUtc`, `wallClockDurationMs` | Report time span. Wall clock includes the gaps between recorded operations in the same report, not just their summed execution time. |
@@ -2497,11 +2724,21 @@ The top-level JSON fields are:
 
 Each operation records `stepNumber`, `stepName`, `invocationId`, start/end UTC timestamps, `durationMs`, `status`, `errorType`, and a scrubbed `errorMessage`. It also records `resourceGraphQueryCount`, aggregate row/page and retry totals, and `resourceGraphQueries`. Each structured query entry contains table/fingerprint identity, query length, aggregate scope mode/count, requested/effective page size, safety cap, rows/pages, truncation and retry counters, cooldown time, timestamps, status, and scrubbed failure details. Full KQL and subscription or management-group identifiers are never stored. Nested operations attribute each query only to the innermost active operation, avoiding duplicate totals under both a principal step and its internal Monitor step.
 
-Step numbers are loose ordering keys (`10`, `20`, `30`) so later releases can insert operations without renumbering the report. A completed operation is `Succeeded` or `Failed`. If the PowerShell process or runner is terminated after the initial atomic write but before `finally`, the valid last report retains `Running`, a null end/duration, and its invocation ID; compare that record with the platform timeout or cancellation event.
+Step numbers are loose ordering keys (`10`, `20`, `30`) so later releases can insert operations without renumbering the report. A completed operation is `Succeeded` or `Failed`. If the PowerShell process or runner is terminated after the initial write but before `finally`, the last completed report write retains `Running`, a null end/duration, and its invocation ID; compare that record with the platform timeout or cancellation event.
+
+Only operations with the same pipeline, platform, run ID and attempt accumulate.
+A different identity starts a fresh report at the same path. Local calls append
+within the same module session; use a new `-Path` or remove the old timing file
+to start another logical local run in that session. Avoid concurrent writers to
+one path. Retain the report from each run separately when comparing performance.
 
 For a long but successful run, compare reports for the same `pipelineName`, `pipelineVersion`, module version, scope, and trigger shape. Sort or chart `operations[].durationMs` by `stepNumber`; this separates a slower principal workload from platform queue time, module installation, authentication, artifact upload, or other unwrapped setup. `wallClockDurationMs` is not the full native job duration unless the first and last recorded operations span that job.
 
-The report intentionally contains no KQL, ARM response body, URI query string, token, or credential. Failure messages pass through the shared credential scrubber. Timing-write failures emit a warning but never replace the workload result. Files are written through a temporary file and atomic replacement so readers do not observe partially serialized JSON.
+Structured query telemetry excludes full KQL, ARM bodies and URI query strings.
+Failure messages pass through the shared credential scrubber, but arbitrary
+service text can contain additional operational details; this is not a guarantee
+of complete redaction. Timing-write failures emit a nonfatal warning. Files are
+fully serialized to a temporary file before replacement.
 
 ### 12.3 Read `pipeline-transcript.log`
 
@@ -2513,7 +2750,7 @@ The report intentionally contains no KQL, ARM response body, URI query string, t
 
 Diagnostics deliberately do **not** enable `az --debug` or log full KQL, successful ARM response bodies, access tokens, or URI query parameters. Credential-shaped CLI error fragments are scrubbed before they are written or returned. A malformed JSON failure can include the existing bounded, scrubbed first 500 characters of the invalid response so the parse failure remains diagnosable.
 
-There is one important PowerShell boundary: a transcript records emitted data; it cannot invent output for a `catch` block that intentionally suppresses an exception. Pipeline-owning cmdlets and the shared ARG/ARM wrappers emit or propagate operational failures, but benign parsing fallbacks can remain quiet by design. Therefore the presence of a transcript is guaranteed when diagnostics are enabled; a line for every internal `catch` is not. An abrupt end with no final workload message is itself useful evidence and should be compared with the pipeline step error immediately following transcript capture.
+There is one important PowerShell boundary: a transcript records emitted data; it cannot invent output for a `catch` block that intentionally suppresses an exception. Pipeline-owning cmdlets and the shared ARG/ARM wrappers emit or propagate operational failures, but benign parsing fallbacks can remain quiet by design. Neither transcript creation nor a line for every internal `catch` is guaranteed. An abrupt end should be compared with native platform logs. Arbitrary host output is not passed through a whole-transcript scrubber; never print credentials in custom steps, and review artifacts before sharing.
 
 ### 12.4 Investigate zero or unexpected results
 

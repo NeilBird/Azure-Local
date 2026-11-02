@@ -4,6 +4,10 @@
 
 Each pipeline section heading below uses **`Config: N`**, **`Monitor: N`**, or **`Update: N`** naming to match the operator-facing workflow names. These identifiers appear in the workflow `name:` fields (GH Actions), ADO pipeline import names, the parent README's section 1.1 table, and these section headings. The execution order in the [end-to-end runbook](../README.md#6-end-to-end-runbook-bring-an-estate-online) is operational - read it for the recommended sequence.
 
+**Security hardening in v0.9.40:** every GitHub workflow below uses verified full commit SHA action pins, including commented login alternatives. Action majors, inputs, triggers, runner choices, permissions, authentication, and artifacts are unchanged. Pins remain template-owned and propagate through initial copy and marker-aware refresh. Azure DevOps task references are unchanged; both platforms' generation stamps are 0.9.40. See [pin maintenance and rollout](../README.md#57-github-action-pin-maintenance); installing the module alone does not refresh committed workflows.
+
+**ADO review guardrails in v0.9.40:** upstream YAML-aware tests enforce the approved built-in task set and reviewed step shortcuts. Per-release dependency review and an [administrator checklist](../README.md#58-azure-devops-dependency-governance) complement the tests. This is not runtime enforcement; task updates, package installs, authentication, and organization settings are unchanged.
+
 ---
 
 ## Default triggers and schedules (at a glance)
@@ -174,7 +178,7 @@ Values from 2 to 16 enable parallel workers, each processing at most 100 cluster
 > | Medium (10-50 clusters) | 24-48 hours ahead | `'0 2 * * 4'` (Thu 02:00 ahead of a Sat 02:00 Update: 3) | Lets you raise tickets / engage cluster owners on per-cluster issues before the weekend. |
 > | Large (50+ clusters) | 48-72 hours ahead | `'0 2 * * 3'` (Wed 02:00 ahead of a Sat 02:00 Update: 3) | Allows time to escalate, swap clusters into a deferral ring (`UpdateExcluded=True`), or stage parallel mitigation. |
 >
-> **Known gap**: the Config: 3 schedule-coverage audit currently validates Update: 3 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Update: 1 cron is correctly anchored to a Update: 3 cron. Pair Update: 1 and Update: 3 cron edits in the same PR so the lead-time relationship is reviewable. The end-to-end runbook in the parent README's [section 8.1.1](../README.md#811-recommended-step5-pre-flight-schedule-per-ring) has worked examples for the most common ring layouts.
+> **Known gap**: the Config: 3 schedule-coverage audit currently validates Update: 3 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Update: 1 cron is correctly anchored to a Update: 3 cron. Pair Update: 1 and Update: 3 cron edits in the same PR so the lead-time relationship is reviewable. The end-to-end runbook in the parent README's [section 8.1.1](../README.md#811-recommended-update-1-assess-update-readiness-pre-flight-schedule-per-ring) has worked examples for the most common ring layouts.
 
 ## Update: 2 - Sideload Updates (Opt-in)
 

@@ -86,21 +86,18 @@ function Resume-AzLocalFleetUpdate {
     $clustersToProcess = $pendingClusters
     if ($RetryFailed) {
         $clustersToProcess += $failedClusters
-        # Reset failed clusters to pending
-        foreach ($cluster in $failedClusters) {
-            $cluster.Status = "Pending"
-            $cluster.Attempts = 0
-            $cluster.LastError = $null
-        }
-        $resumeState.FailedCount = 0
     }
     
     if ($clustersToProcess.Count -eq 0) {
-        Write-Log -Message "No clusters to process. All clusters have succeeded." -Level Success
+        Write-Log -Message "No pending clusters selected for resume." -Level Info
         return $resumeState
     }
     
     Write-Log -Message "Clusters to process: $($clustersToProcess.Count)" -Level Info
+
+    if (-not $PSCmdlet.ShouldProcess($resumeState.RunId, "Resume fleet operation on $($clustersToProcess.Count) cluster(s)")) {
+        return $resumeState
+    }
     
     # Confirmation
     if (-not $Force) {
@@ -111,31 +108,61 @@ function Resume-AzLocalFleetUpdate {
         }
     }
     
-    # Collect resource IDs for processing
-    $resourceIds = $clustersToProcess | ForEach-Object { $_.ResourceId }
-    
-    # Use Invoke-AzLocalFleetOperation with the specific clusters
     $params = @{
-        ClusterResourceIds = $resourceIds
         Operation = $resumeState.Operation
         BatchSize = $resumeState.BatchSize
         ThrottleLimit = $resumeState.ThrottleLimit
         MaxRetries = $MaxRetries
         Force = $true
         PassThru = $true
+        Confirm = $false
     }
     
     if ($resumeState.UpdateName) {
         $params['UpdateName'] = $resumeState.UpdateName
     }
     
-    if ($resumeState.StateFilePath) {
-        $params['StateFilePath'] = $resumeState.StateFilePath
+    $checkpointPath = if ($StateFilePath) { $StateFilePath } else { $resumeState.StateFilePath }
+    $clusterByResourceId = @{}
+    foreach ($cluster in $resumeState.Clusters) {
+        $clusterByResourceId[$cluster.ResourceId] = $cluster
+    }
+    $resumeState.EndTime = $null
+    for ($batchOffset = 0; $batchOffset -lt $clustersToProcess.Count; $batchOffset += $resumeState.BatchSize) {
+        $batchEnd = [math]::Min($batchOffset + $resumeState.BatchSize - 1, $clustersToProcess.Count - 1)
+        $params['ClusterResourceIds'] = @($clustersToProcess[$batchOffset..$batchEnd] | ForEach-Object { $_.ResourceId })
+        try {
+            $batchResult = Invoke-AzLocalFleetOperation @params
+            if (-not $batchResult) { throw 'The resumed fleet batch returned no state.' }
+            foreach ($updated in $batchResult.Clusters) {
+                $original = $clusterByResourceId[$updated.ResourceId]
+                $original.Attempts = [int]$original.Attempts + [int]$updated.Attempts
+                foreach ($propertyName in @('Status', 'LastAttempt', 'LastError', 'Result')) {
+                    $original.$propertyName = $updated.$propertyName
+                }
+            }
+        }
+        finally {
+            $script:FleetOperationState = $resumeState
+        }
+        $resumeState.TotalClusters = @($resumeState.Clusters).Count
+        $resumeState.SucceededCount = @($resumeState.Clusters | Where-Object Status -eq 'Succeeded').Count
+        $resumeState.FailedCount = @($resumeState.Clusters | Where-Object Status -eq 'Failed').Count
+        $resumeState.PendingCount = @($resumeState.Clusters | Where-Object Status -eq 'Pending').Count
+        $resumeState.CompletedCount = $resumeState.SucceededCount + $resumeState.FailedCount
+        $resumeState.CurrentBatch = [math]::Ceiling($resumeState.CompletedCount / $resumeState.BatchSize)
+        if ($batchEnd -eq $clustersToProcess.Count - 1) {
+            $resumeState.EndTime = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+        }
+        if ($checkpointPath) {
+            Export-AzLocalFleetState -State $resumeState -Path $checkpointPath | Out-Null
+        }
+        if ($batchEnd -lt $clustersToProcess.Count - 1) {
+            Start-Sleep -Seconds 30
+        }
     }
     
-    $result = Invoke-AzLocalFleetOperation @params
-    
     if ($PassThru) {
-        return $result
+        return $resumeState
     }
 }

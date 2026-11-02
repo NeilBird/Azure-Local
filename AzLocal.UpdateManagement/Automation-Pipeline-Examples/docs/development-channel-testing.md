@@ -4,6 +4,17 @@ Use the development channel to validate an exact `AzLocal.UpdateManagement` Powe
 
 This is a release-validation mechanism, not a permanent production pin. For long-lived version pinning, see [Module version pinning](appendix-module-version-pinning.md).
 
+## What the channel changes
+
+`DevChannel/` is just the helper's folder, not a separate Git branch, repository, package feed, or copy of the module's source code. The helper is **the normal updater plus runtime-pin management**. It calls `Update-Module-And-Pipelines.ps1` to refresh managed files in the same consumer repository on the currently checked-out branch; it does not create or switch branches or modify the upstream module-development repository. Normally run the development-channel helper alone, not both scripts.
+
+There are two distinct changes:
+
+1. **Version-controlled files:** the selected module's templates refresh the consumer working tree. By default the updater stages, commits, and pushes changed managed files. `-NoPush` skips these Git operations, but still installs/imports the module and edits files locally.
+2. **Runtime configuration outside Git:** after refresh succeeds, the helper sets/removes the GitHub `REQUIRED_MODULE_VERSION` repository variable, or prints commands for you to update the ADO variable group. The normal updater alone never changes this pin.
+
+The GitHub pin is **repository-wide, not branch-specific**, for workflows that read it; a supported manual version input can override it. A feature branch is not sufficient isolation, and a shared ADO variable group can affect multiple linked pipelines. Use a separate test consumer repository for isolation and keep scheduled/state-changing workflows disabled until deliberately approved. Neither helper provisions a test repository or environment.
+
 ## Prerequisites
 
 - Run from a pipeline repository populated by `Copy-AzLocalPipelineExample` or `Update-AzLocalPipelineExample`.
@@ -24,14 +35,14 @@ Find-Module -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Reposit
 From the pipeline repository root:
 
 ```powershell
-.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate>
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate> -NoPush
 ```
 
 The helper performs these operations in order:
 
 1. Validates that PowerShell Gallery resolves the exact candidate.
 2. Calls `Update-Module-And-Pipelines.ps1 -RequiredVersion <candidate>`.
-3. Installs and imports that exact module version, refreshes the pipeline YAMLs from its bundled templates, and commits and pushes changed managed files.
+3. Through the updater, installs and imports that exact module version and refreshes the pipeline YAMLs from its bundled templates. Without `-NoPush`, the updater also commits and pushes changed managed files.
 4. Applies the runtime pin only after the local refresh succeeds.
 
 For GitHub, step 4 creates or updates the non-secret repository variable `REQUIRED_MODULE_VERSION` through `gh`. For Azure DevOps, the helper prints the variable-group create and update commands; replace `<group-id>` and run the applicable command.
@@ -43,7 +54,7 @@ For GitHub, step 4 creates or updates the non-secret repository variable `REQUIR
 .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate> -Platform AzureDevOps
 ```
 
-Use `-NoPush` to leave refreshed files uncommitted for review. The platform pin is still changed after a successful local refresh, so commit and push the reviewed files before starting pipeline validation.
+Use `-NoPush` to leave refreshed files uncommitted for review. **The GitHub pin is still changed after a successful local refresh**; `-NoPush` is not a read-only preview. For ADO, the printed command still needs to be run separately. Commit and push the reviewed files before starting pipeline validation.
 
 ## Validate the candidate
 
@@ -65,17 +76,19 @@ Inspect every run summary, JUnit report, `pipeline-timings.json`, and any reques
 After the candidate is listed, or when testing must stop, run:
 
 ```powershell
-.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable -NoPush
 ```
 
 Disable uses the reverse safety order:
 
 1. Resolves and imports the latest listed Gallery version without falling back to a possibly unlisted installed version.
 2. Preflights pipeline rollback with that target module before changing files or uninstalling newer versions.
-3. Refreshes and commits the latest-listed templates.
+3. Refreshes the latest-listed templates, committing and pushing them unless `-NoPush` is used.
 4. Removes the GitHub runtime pin, or prints the Azure DevOps variable-group delete command.
 
 This ordering ensures a failed rollback leaves the candidate pin in place instead of running older templates with a newer unlisted module.
+
+This is a template refresh, not a Git history rollback. With `-NoPush`, review, commit, and push the resulting diff before resuming workflows; the GitHub pin has already been removed after successful refresh.
 
 ### Newer installed versions
 

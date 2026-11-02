@@ -99,7 +99,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.39'
+    value: '0.9.40'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -173,6 +173,9 @@ stages:
           while ($true) {
               $installAttempt++
               try {
+                  if (-not $installArgs.ContainsKey('RequiredVersion')) {
+                      $installArgs.RequiredVersion = [string](Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction Stop).Version
+                  }
                   Install-Module @installArgs
                   break
               } catch {
@@ -185,7 +188,10 @@ stages:
                   Start-Sleep -Seconds $installRetryDelay
               }
           }
-          Import-Module AzLocal.UpdateManagement -Force
+          $env:AZLOCAL_RUN_MODULE_VERSION = [string]$installArgs.RequiredVersion
+          Write-Host "##vso[task.setvariable variable=AZLOCAL_RUN_MODULE_VERSION]$env:AZLOCAL_RUN_MODULE_VERSION"
+          if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+          Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
           Add-AzLocalPipelineVersionBanner `
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
@@ -206,7 +212,8 @@ stages:
         scriptLocation: 'inlineScript'
         inlineScript: |
           $ErrorActionPreference = 'Stop'
-          Import-Module AzLocal.UpdateManagement -Force
+          if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+          Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
           Assert-AzLocalAzureSubscriptionAccess
 
     # Use Azure CLI task with Workload Identity Federation (OIDC)
@@ -242,7 +249,8 @@ stages:
         scriptLocation: 'inlineScript'
         inlineScript: |
           $ErrorActionPreference = 'Stop'
-          Import-Module AzLocal.UpdateManagement -Force
+          if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+          Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
           $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
               $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
           )
@@ -275,6 +283,7 @@ stages:
     - task: PublishPipelineArtifact@1
       displayName: 'Publish pipeline performance diagnostics'
       condition: always()
+      continueOnError: true
       inputs:
         targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
         artifact: 'azlocal-fleet-update-status-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
@@ -291,7 +300,8 @@ stages:
         pwsh: true
         script: |
           $ErrorActionPreference = 'Stop'
-          Import-Module AzLocal.UpdateManagement -Force
+          if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+          Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
           Assert-AzLocalPipelineReport -Path '$(reportsPath)/*.xml' -ProducingStepName 'Collect Fleet Update Status'
 
     # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
@@ -383,7 +393,8 @@ stages:
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          Import-Module AzLocal.UpdateManagement -Force
+          if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+          Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
 
           $configPath = $env:ITSM_CONFIG_PATH
           $dryRun     = [System.Convert]::ToBoolean("${{ parameters.itsmDryRun }}")
@@ -447,5 +458,6 @@ stages:
         targetType: 'inline'
         pwsh: true
         script: |
-          Import-Module AzLocal.UpdateManagement -Force
+          if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+          Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
           Add-AzLocalPipelineSupportFooter

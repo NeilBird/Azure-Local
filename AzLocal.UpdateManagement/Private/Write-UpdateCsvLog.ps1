@@ -8,6 +8,7 @@ function Write-UpdateCsvLog {
         health check failures and update run error details.
     #>
     [CmdletBinding()]
+    [OutputType([void])]
     param(
         [Parameter(Mandatory = $true)]
         [ValidateSet('Skipped', 'Started')]
@@ -50,12 +51,12 @@ function Write-UpdateCsvLog {
     $safeClusterName            = ConvertTo-SafeCsvField -Value $ClusterName
     $safeResourceGroup          = ConvertTo-SafeCsvField -Value $ResourceGroup
     $safeSubscriptionId         = ConvertTo-SafeCsvField -Value $SubscriptionId
-    $safeMessage                = ConvertTo-SafeCsvField -Value $Message
+    $safeMessage                = ConvertTo-SafeCsvField -Value (ConvertTo-ScrubbedCliOutput -Text $Message)
     $safeUpdateState            = ConvertTo-SafeCsvField -Value $UpdateState
     $safeHealthState            = ConvertTo-SafeCsvField -Value $HealthState
-    $safeHealthCheckFailures    = ConvertTo-SafeCsvField -Value $HealthCheckFailures
+    $safeHealthCheckFailures    = ConvertTo-SafeCsvField -Value (ConvertTo-ScrubbedCliOutput -Text $HealthCheckFailures)
     $safeLastUpdateErrorStep    = ConvertTo-SafeCsvField -Value $LastUpdateErrorStep
-    $safeLastUpdateErrorMessage = ConvertTo-SafeCsvField -Value $LastUpdateErrorMessage
+    $safeLastUpdateErrorMessage = ConvertTo-SafeCsvField -Value (ConvertTo-ScrubbedCliOutput -Text $LastUpdateErrorMessage)
 
     # Escape quotes in values for CSV
     $escapedClusterName = $safeClusterName -replace '"', '""'
@@ -81,11 +82,10 @@ function Write-UpdateCsvLog {
     
     if ($logPath) {
         try {
-            Add-Content -Path $logPath -Value $csvLine -Encoding UTF8 -ErrorAction SilentlyContinue -WhatIf:$false
+            Add-Content -LiteralPath $logPath -Value $csvLine -Encoding UTF8 -ErrorAction Stop -WhatIf:$false
         }
         catch {
-            # CSV log write failure is non-critical - continue silently
-            Write-Verbose "Failed to write to CSV log: $($_.Exception.Message)"
+            Write-Warning ("Failed to write to CSV log ({0}); the workload will continue." -f $_.Exception.GetType().Name) -WarningAction Continue
         }
     }
 }

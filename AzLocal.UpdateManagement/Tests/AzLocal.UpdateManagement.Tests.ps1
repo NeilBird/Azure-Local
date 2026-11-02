@@ -506,8 +506,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.39' {
-            $script:ModuleInfo.Version | Should -Be '0.9.39'
+        It 'Should have version 0.9.40' {
+            $script:ModuleInfo.Version | Should -Be '0.9.40'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -545,7 +545,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # v0.7.67 polish: companion to the Latest Version banner guard.
             # The TOC's main-body "What's New in vX.Y.Z" link must always
             # point at the current manifest version - prior versions live
-            # under the Release History sub-list.
+            # in docs/release-history.md.
             $manifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
             $readmePath   = Join-Path -Path $PSScriptRoot -ChildPath '..\README.md'
             $manifestVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
@@ -561,9 +561,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $match.Groups['displayed'].Value | Should -Be $manifestVersion -Because 'the TOC main-body What''s New entry must point at the current manifest ModuleVersion'
             $match.Groups['anchor'].Value | Should -Be $manifestVersionAnchor -Because "the TOC anchor must collapse to the manifest ModuleVersion (#whats-new-in-v$manifestVersionAnchor)"
             # The TOC must list ONLY the current release's What's New entry.
-            # Prior versions live under the Release History sub-list (as
-            # indented `  - [...]` entries, which this top-level `^- ` pattern
-            # does not match). Stale top-level entries (e.g. a leftover
+            # Prior versions live in docs/release-history.md.
+            # Stale top-level entries (e.g. a leftover
             # "What's New in v0.8.7" from an earlier bump) must be removed.
             $allTocMatches = [regex]::Matches($readmeContent, $pattern)
             $allTocMatches.Count | Should -Be 1 -Because "the TOC must list only the current release What's New entry; prior versions belong under Release History (found: $(($allTocMatches | ForEach-Object { $_.Groups['displayed'].Value }) -join ', '))"
@@ -575,7 +574,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # main body (v0.7.66 release missed moving v0.7.65 to Release
             # History; v0.7.67 publish missed moving v0.7.66). The current-
             # release section is the only one that should be `##` in the main
-            # body; every prior section MUST live under `## Release History`
+            # body; every prior section lives in docs/release-history.md
             # as `### What's New in vX.Y.Z`.
             $manifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
             $readmePath   = Join-Path -Path $PSScriptRoot -ChildPath '..\README.md'
@@ -587,6 +586,53 @@ Describe 'Module: AzLocal.UpdateManagement' {
                            ForEach-Object { $_.Line })
             $h2Matches.Count | Should -Be 1 -Because "exactly one '## What's New' section must exist in the README main body (found: $($h2Matches -join '; '))"
             $h2Matches[0] | Should -Be "## What's New in v$manifestVersion" -Because 'the sole main-body What''s New section must match the current manifest ModuleVersion'
+        }
+
+        It 'README.md links to a complete, ordered release archive without duplicating older entries' {
+            $moduleRoot = Split-Path -Parent $PSScriptRoot
+            $manifestVersion = [version](Import-PowerShellDataFile (Join-Path $moduleRoot 'AzLocal.UpdateManagement.psd1')).ModuleVersion
+            $readme = Get-Content (Join-Path $moduleRoot 'README.md') -Raw
+            $history = Get-Content (Join-Path $moduleRoot 'docs/release-history.md') -Raw
+            $changelog = Get-Content (Join-Path $moduleRoot 'CHANGELOG.md') -Raw
+            $readmeHistory = [regex]::Match($readme, '(?ms)^## Release History\r?\n(?<body>.*?)(?=^## |\z)')
+            $readmeHistory.Success | Should -BeTrue
+            $readmeHistory.Groups['body'].Value | Should -Match '\]\(docs/release-history\.md\)'
+            $readme | Should -Not -Match '(?m)^### What''s New in v'
+            $expectedVersions = @([regex]::Matches($changelog, '(?m)^## \[(?<version>\d+\.\d+\.\d+)\]') |
+                ForEach-Object { [version]$_.Groups['version'].Value } |
+                Where-Object { $_ -ge [version]'0.9.37' -and $_ -le $manifestVersion })
+            $expectedVersions.Count | Should -BeGreaterThan 0
+            $expectedVersions += @('0.9.0', '0.8.73', '0.8.72', '0.8.71', '0.8.7', '0.8.6', '0.8.4', '0.8.3', '0.7.95', '0.7.94', '0.7.93', '0.7.92', '0.7.91', '0.7.90', '0.7.89')
+            $sections = [regex]::Matches($history, '(?ms)^### What''s New in v(?<version>\d+\.\d+\.\d+)\r?\n(?<body>.*?)(?=^### What''s New in v|\z)')
+            $versions = @($sections | ForEach-Object { $_.Groups['version'].Value })
+            $versions[0] | Should -Be ([string]$manifestVersion)
+            foreach ($version in $expectedVersions) {
+                $versions | Should -Contain ([string]$version) -Because "v$version must remain in the canonical archive"
+            }
+            foreach ($section in $sections) {
+                $section.Groups['body'].Value.Trim() | Should -Not -BeNullOrEmpty
+            }
+            for ($index = 1; $index -lt $versions.Count; $index++) {
+                ([version]$versions[$index]) | Should -BeLessThan ([version]$versions[$index - 1]) -Because 'archived versions must be unique and newest first'
+            }
+        }
+
+        It 'Pipeline guidance distinguishes platform validation and coordinated example upgrades' {
+            $moduleRoot = Split-Path -Parent $PSScriptRoot
+            $readme = Get-Content (Join-Path $moduleRoot 'README.md') -Raw
+            $guide = Get-Content (Join-Path $moduleRoot 'Automation-Pipeline-Examples/README.md') -Raw
+            $releaseProcess = Get-Content (Join-Path $moduleRoot 'docs/RELEASE-PROCESS.md') -Raw
+            foreach ($text in @($readme, $guide)) {
+                $text | Should -Match 'GitHub Actions is the primary development and validation platform'
+                $text | Should -Match '#59-pipeline-ownership-and-upgrade-lifecycle'
+            }
+            $guide | Should -Match '(?m)^### 5\.9 Pipeline ownership and upgrade lifecycle'
+            $guide | Should -Match 'generation stamp is not a runtime pin'
+            $guide | Should -Match 'Latest-listed resolution can advance between runs'
+            $guide | Should -Match 'Reverting YAML alone does not\s+roll back a latest-listed runtime'
+            $guide | Should -Not -Match 'near-100% functional parity|run identically on both platforms'
+            $guide | Should -Match '(?m)^\.\\Update-Module-And-Pipelines\.ps1 -NoPush\s*$'
+            $releaseProcess | Should -Match 'Record validation separately for each platform'
         }
 
         It 'CHANGELOG.md first "## [X.Y.Z]" heading matches manifest ModuleVersion' {
@@ -676,7 +722,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 $content | Should -Match 'pipeline-transcript\.log' -Because "$($yaml.Name) must use the stable opt-in transcript filename"
                 $content | Should -Match 'pipeline-timings\.json' -Because "$($yaml.Name) must publish the always-on timing report"
                 $content | Should -Match '(?m)^\s*if:\s*always\(\)\s*$' -Because "$($yaml.Name) must publish timings after successful and failed workloads"
-                $content | Should -Match 'actions/upload-artifact@v6' -Because "$($yaml.Name) must publish a Node.js 24-compatible diagnostics artifact"
+                $content | Should -Match 'actions/upload-artifact@[0-9a-f]{40}\s+# v6\.' -Because "$($yaml.Name) must publish a Node.js 24-compatible diagnostics artifact"
                 $content | Should -Match 'github\.run_id.*github\.run_attempt' -Because "$($yaml.Name) artifact name must identify the run attempt"
                 $content | Should -Match "retention-days:\s*\`$\{\{\s*fromJSON\(vars\.DEBUG_RETENTION_DAYS\s*\|\|\s*'14'\)\s*\}\}" -Because "$($yaml.Name) diagnostics retention must use DEBUG_RETENTION_DAYS with a 14-day fallback"
             }
@@ -5374,6 +5420,72 @@ Describe 'Function: Export-AzLocalFleetState' {
 }
 
 Describe 'Function: Resume-AzLocalFleetUpdate' {
+
+    Context 'Checkpoint preservation' {
+        BeforeEach {
+            $script:resumeFixture = [pscustomobject]@{
+                RunId = 'original-run'; Operation = 'GetStatus'; StartTime = '2026-01-01T00:00:00Z'; EndTime = $null
+                TotalClusters = 3; CompletedCount = 2; SucceededCount = 1; FailedCount = 1; PendingCount = 1
+                BatchSize = 1; ThrottleLimit = 1; CurrentBatch = 2; TotalBatches = 3; UpdateName = ''; LastSaved = $null
+                StateFilePath = Join-Path $TestDrive ("resume-state-{0}.json" -f [guid]::NewGuid())
+                Clusters = @(
+                    [pscustomobject]@{ ResourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/done'; Status = 'Succeeded'; Attempts = 1; LastAttempt = 'old'; LastError = $null; Result = 'retained' }
+                    [pscustomobject]@{ ResourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/pending'; Status = 'Pending'; Attempts = 0; LastAttempt = $null; LastError = $null; Result = $null }
+                    [pscustomobject]@{ ResourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/failed'; Status = 'Failed'; Attempts = 3; LastAttempt = 'old'; LastError = 'old failure'; Result = $null }
+                )
+            }
+            Mock Write-Log {} -ModuleName AzLocal.UpdateManagement
+            Mock Start-Sleep {} -ModuleName AzLocal.UpdateManagement
+            Mock Invoke-FleetOpClusterAction -ModuleName AzLocal.UpdateManagement {
+                $ClusterState.Status = 'Succeeded'
+                $ClusterState.Attempts = 1
+                $ClusterState.Result = 'resumed'
+            }
+        }
+
+        It 'retains original run identity, completed results, cumulative attempts and full checkpoints' {
+            $result = Resume-AzLocalFleetUpdate -State $script:resumeFixture -RetryFailed -Force -PassThru
+            $result.RunId | Should -Be 'original-run'
+            $result.TotalClusters | Should -Be 3
+            $result.SucceededCount | Should -Be 3
+            $result.Clusters[0].Result | Should -Be 'retained'
+            $result.Clusters[2].Attempts | Should -Be 4
+            $saved = Get-Content $result.StateFilePath -Raw | ConvertFrom-Json
+            $saved.RunId | Should -Be 'original-run'
+            @($saved.Clusters).Count | Should -Be 3
+            $saved.PendingCount | Should -Be 0
+        }
+
+        It 'preserves the previous checkpoint if writing its replacement fails' {
+            $null = Export-AzLocalFleetState -State $script:resumeFixture -Path $script:resumeFixture.StateFilePath
+            $before = Get-Content $script:resumeFixture.StateFilePath -Raw
+            Mock Write-Utf8NoBomFile { throw 'simulated disk failure' } -ModuleName AzLocal.UpdateManagement
+            { Export-AzLocalFleetState -State $script:resumeFixture -Path $script:resumeFixture.StateFilePath } | Should -Throw '*disk failure*'
+            (Get-Content $script:resumeFixture.StateFilePath -Raw) | Should -Be $before
+            @(Get-ChildItem $TestDrive -Filter '*.partial').Count | Should -Be 0
+        }
+
+        It 'does not mutate failed rows or prompt or save when WhatIf is requested' {
+            $before = $script:resumeFixture | ConvertTo-Json -Depth 10
+            Mock Read-Host { throw 'Unexpected prompt' } -ModuleName AzLocal.UpdateManagement
+            $null = Resume-AzLocalFleetUpdate -State $script:resumeFixture -RetryFailed -WhatIf
+            ($script:resumeFixture | ConvertTo-Json -Depth 10) | Should -Be $before
+            Test-Path $script:resumeFixture.StateFilePath | Should -BeFalse
+            Should -Invoke Invoke-FleetOpClusterAction -ModuleName AzLocal.UpdateManagement -Times 0
+        }
+
+        It 'keeps the previous complete checkpoint if the next batch fails' {
+            Mock Invoke-AzLocalFleetOperation -ModuleName AzLocal.UpdateManagement {
+                if ($ClusterResourceIds[0] -like '*/failed') { throw 'interrupted' }
+                [pscustomobject]@{ Clusters = @([pscustomobject]@{ ResourceId = $ClusterResourceIds[0]; Status = 'Succeeded'; Attempts = 1; LastAttempt = 'new'; LastError = $null; Result = 'resumed' }) }
+            }
+            { Resume-AzLocalFleetUpdate -State $script:resumeFixture -RetryFailed -Force } | Should -Throw '*interrupted*'
+            $saved = Get-Content $script:resumeFixture.StateFilePath -Raw | ConvertFrom-Json
+            @($saved.Clusters).Count | Should -Be 3
+            $saved.Clusters[0].Result | Should -Be 'retained'
+            $saved.Clusters[2].Attempts | Should -Be 3
+        }
+    }
     
     Context 'Parameter Validation' {
         BeforeAll {
@@ -5560,7 +5672,7 @@ Describe 'Function: Test-AzLocalClusterHealth' {
     }
 
     Context 'v0.8.77 strict-mode regression: missing properties.healthCheckResult' {
-        # Production Step.05/06 (Azure/AzLocal.UpdateManagement) emitted
+        # Production Step.05/06 emitted
         # `Checking: <ClusterName>... Error: The property 'healthCheckResult'
         # cannot be found on this object.` for clusters whose ARM update
         # summary genuinely had no `healthCheckResult` field (typical for
@@ -6583,6 +6695,76 @@ Describe 'Config: 2 pipelines fail after publishing per-cluster failure evidence
     }
 }
 
+Describe 'v0.9.40: Diagnostic credential scrubbing' {
+    It 'sanitizes every public Export-Csv pipeline at its export boundary' {
+        foreach ($file in Get-ChildItem (Join-Path $PSScriptRoot '../Public') -Filter '*.ps1') {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$parseErrors)
+            $exports = $ast.FindAll({ param($Node) $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Export-Csv' }, $true)
+            foreach ($exportCommand in $exports) {
+                $exportCommand.Parent.Extent.Text | Should -Match 'ConvertTo-SafeCsvCollection' -Because $file.Name
+            }
+        }
+    }
+
+    It 'reports log write failures without throwing even when warning and error preferences are Stop' {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Directory = $TestDrive } {
+            $savedPaths = @($script:LogFilePath, $script:ErrorLogPath, $script:UpdateSkippedLogPath)
+            try {
+                $script:LogFilePath = Join-Path $Directory 'missing/log.txt'
+                $script:ErrorLogPath = Join-Path $Directory 'missing/error.txt'
+                $script:UpdateSkippedLogPath = Join-Path $Directory 'missing/skipped.csv'
+                $warnings = @()
+                Write-Log -Message 'password=FAKE_PASSWORD' -Level Error -ErrorAction Stop -WarningAction Stop -WarningVariable +warnings
+                Write-UpdateCsvLog -LogType Skipped -ClusterName alpha -Message 'password=FAKE_PASSWORD' -ErrorAction Stop -WarningAction Stop -WarningVariable +warnings
+                @($warnings).Count | Should -Be 3
+                ($warnings -join ' ') | Should -Match 'Failed to write'
+                ($warnings -join ' ') | Should -Not -Match 'FAKE_PASSWORD'
+            }
+            finally {
+                $script:LogFilePath = $savedPaths[0]
+                $script:ErrorLogPath = $savedPaths[1]
+                $script:UpdateSkippedLogPath = $savedPaths[2]
+            }
+        }
+    }
+
+    It 'scrubs persistent log content and emits UTC timestamps' {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Directory = $TestDrive } {
+            $savedPath = $script:LogFilePath
+            try {
+                $script:LogFilePath = Join-Path $Directory 'scrubbed.log'
+                Write-Log -Message 'az login -p FAKE_PASSWORD'
+                $text = Get-Content $script:LogFilePath -Raw
+                $text | Should -Match '\[\d{4}-\d{2}-\d{2}T[^\]]+Z\]'
+                $text | Should -Not -Match 'FAKE_PASSWORD'
+            }
+            finally { $script:LogFilePath = $savedPath }
+        }
+    }
+
+    It 'redacts credential values in <Text>' -ForEach @(
+        @{ Text = 'az login -p FAKE_PASSWORD --tenant contoso' }
+        @{ Text = 'az login --password "FAKE SECRET WITH SPACES" --tenant contoso' }
+        @{ Text = "az login -p 'FAKE SECRET WITH SPACES' --tenant contoso" }
+        @{ Text = 'az login --password="FAKE SECRET WITH SPACES" --tenant contoso' }
+        @{ Text = 'https://example.invalid/?sv=1&sig=FAKE_SIGNATURE&other=ok' }
+        @{ Text = 'https://example.invalid/?token=FAKE_TOKEN&api-key=FAKE_KEY' }
+        @{ Text = '{"password":"FAKE_SECRET_WITH_\"ESCAPED_QUOTE"}' }
+        @{ Text = 'password: "FAKE SECRET WITH SPACES"' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ InputText = $Text } {
+            $scrubbed = ConvertTo-ScrubbedCliOutput -Text $InputText
+            $scrubbed | Should -Not -Match 'FAKE|SECRET|SPACES|ESCAPED_QUOTE'
+            $scrubbed | Should -Match '<redacted>'
+            if ($InputText -match 'contoso') { $scrubbed | Should -Match '--tenant contoso' }
+            if ($InputText -match 'other=ok') { $scrubbed | Should -Match 'other=ok' }
+            (ConvertTo-ScrubbedCliOutput -Text $scrubbed) | Should -Be $scrubbed
+        }
+    }
+}
+
 Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
     It 'Preserves workload output and writes a successful timing report' {
         InModuleScope AzLocal.UpdateManagement {
@@ -6667,6 +6849,38 @@ Describe 'Pipeline diagnostics: Invoke-AzLocalPipelineTimedOperation' {
                 foreach ($entry in $savedEnvironment.GetEnumerator()) {
                     [Environment]::SetEnvironmentVariable([string]$entry.Key, $entry.Value, 'Process')
                 }
+            }
+        }
+    }
+
+    It 'does not carry failures across pipeline names, run IDs, or attempts' -ForEach @(
+        @{ ChangedField = 'pipeline' }
+        @{ ChangedField = 'run' }
+        @{ ChangedField = 'attempt' }
+    ) {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ ChangedField = $ChangedField } {
+            $saved = @($env:GITHUB_ACTIONS, $env:GITHUB_RUN_ID, $env:GITHUB_RUN_ATTEMPT)
+            try {
+                $env:GITHUB_ACTIONS = 'true'
+                $env:GITHUB_RUN_ID = '100'
+                $env:GITHUB_RUN_ATTEMPT = '1'
+                $path = Join-Path $TestDrive ("isolation-{0}.json" -f $ChangedField)
+                { Invoke-AzLocalPipelineTimedOperation -PipelineName first -StepNumber 10 -StepName old -Path $path -ScriptBlock { throw 'old failure' } } | Should -Throw
+                $pipelineName = 'first'
+                if ($ChangedField -eq 'pipeline') { $pipelineName = 'second' }
+                if ($ChangedField -eq 'run') { $env:GITHUB_RUN_ID = '101' }
+                if ($ChangedField -eq 'attempt') { $env:GITHUB_RUN_ATTEMPT = '2' }
+                Invoke-AzLocalPipelineTimedOperation -PipelineName $pipelineName -StepNumber 20 -StepName current -Path $path -ScriptBlock {}
+                Invoke-AzLocalPipelineTimedOperation -PipelineName $pipelineName -StepNumber 30 -StepName next -Path $path -ScriptBlock {}
+                $report = Get-Content $path -Raw | ConvertFrom-Json
+                $report.status | Should -Be 'Succeeded'
+                $report.operationCount | Should -Be 2
+                @($report.operations.stepName) | Should -Be @('current', 'next')
+            }
+            finally {
+                $env:GITHUB_ACTIONS = $saved[0]
+                $env:GITHUB_RUN_ID = $saved[1]
+                $env:GITHUB_RUN_ATTEMPT = $saved[2]
             }
         }
     }
@@ -7544,7 +7758,7 @@ Describe 'Internal Helper: Invoke-FleetOpClusterAction' {
 
         It 'Should mark state as Succeeded and record attempts for GetStatus' {
             InModuleScope AzLocal.UpdateManagement {
-                Mock Get-AzLocalUpdateSummary { return [PSCustomObject]@{ State = 'UpToDate' } }
+                Mock Get-AzLocalUpdateSummary { param([switch]$PassThru) if ($PassThru) { return [PSCustomObject]@{ State = 'UpToDate' } } }
                 $cs = [PSCustomObject]@{
                     ClusterName = 'c1'; ResourceId = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/c1'
                     Status = 'Pending'; Attempts = 0; LastAttempt = $null; LastError = $null; Result = $null
@@ -7631,9 +7845,9 @@ Describe 'Internal Helper: Invoke-FleetOpClusterAction' {
             InModuleScope AzLocal.UpdateManagement {
                 $script:CapturedIds = $null
                 Mock Get-AzLocalClusterUpdateReadiness {
-                    param($ClusterResourceIds)
+                    param($ClusterResourceIds, [switch]$PassThru)
                     $script:CapturedIds = $ClusterResourceIds
-                    return [PSCustomObject]@{ ReadyForUpdate = $true }
+                    if ($PassThru) { return [PSCustomObject]@{ ReadyForUpdate = $true } }
                 }
                 $cs = [PSCustomObject]@{
                     ClusterName = 'c1'; ResourceId = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/c1'
@@ -7643,6 +7857,7 @@ Describe 'Internal Helper: Invoke-FleetOpClusterAction' {
                 $cs.Status | Should -Be 'Succeeded'
                 $script:CapturedIds | Should -HaveCount 1
                 $script:CapturedIds[0] | Should -Be $cs.ResourceId
+                $cs.Result.ReadyForUpdate | Should -BeTrue
             }
         }
     }
@@ -8286,7 +8501,7 @@ Describe 'Start-AzLocalClusterUpdate (prefetched pass-through)' {
     }
 
     Context 'v0.8.77 strict-mode regression: missing UpdateStartWindow tag' {
-        # Production Step.07 (Azure/AzLocal.UpdateManagement) emitted: "Error
+        # Production Step.07 emitted: "Error
         # processing cluster 'Portland': The property 'UpdateStartWindow' cannot
         # be found on this object." for clusters whose tag bag did not include
         # UpdateStartWindow / UpdateExclusionsWindow. Bare $clusterTags.<Name>
@@ -11238,7 +11453,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
             $readmeDest = Join-Path $repoRoot 'README.md'
             $stale = @(
-                '<!-- AZLOCAL-README-VERSION: 0.0.1 -->'
+                '<!-- AZLOCAL-README-VERSION: 1.0.0 -->'
                 '# Stale managed README'
                 'OLD MANAGED BODY - should be replaced on refresh'
             ) -join "`r`n"
@@ -11249,6 +11464,9 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             $text = Get-Content -LiteralPath $readmeDest -Raw
             $text | Should -Not -Match 'OLD MANAGED BODY'
             $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+            $text | Should -Match 'not a separate Git branch'
+            $text | Should -Match 'Apply-ModuleDevelopmentChannel\.ps1 -RequiredVersion \S+ -NoPush'
+            $text | Should -Match 'The GitHub repository variable still changes'
         }
 
         It 'preserves an existing managed README with an EQUAL version marker' {
@@ -14085,7 +14303,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             try {
                 $readmeDest = Join-Path $repoRoot 'README.md'
                 $stale = @(
-                    '<!-- AZLOCAL-README-VERSION: 0.0.1 -->'
+                    '<!-- AZLOCAL-README-VERSION: 1.0.0 -->'
                     '# Stale managed README'
                     'OLD MANAGED BODY - should be replaced on refresh'
                 ) -join "`r`n"
@@ -14096,6 +14314,9 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $text = Get-Content -LiteralPath $readmeDest -Raw
                 $text | Should -Not -Match 'OLD MANAGED BODY'
                 $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+                $text | Should -Match 'not a separate Git branch'
+                $text | Should -Match 'Apply-ModuleDevelopmentChannel\.ps1 -RequiredVersion \S+ -NoPush'
+                $text | Should -Match 'The GitHub repository variable still changes'
             }
             finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }
@@ -18612,9 +18833,9 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
     It "PinnedVersion populated -> PinStatus says 'pinned to vX.Y.Z'" {
         $info = InModuleScope AzLocal.UpdateManagement {
             $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
-            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PinnedVersion '0.8.5' -SkipPSGalleryQuery -PassThru
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PinnedVersion $real -SkipPSGalleryQuery -PassThru
         }
-        $info.PinStatus | Should -Be 'pinned to v0.8.5'
+        $info.PinStatus | Should -Be ("pinned to v{0}" -f $info.InstalledVersion)
     }
 
     It "PinnedVersion empty string -> PinStatus says 'latest (fix-forward)'" {
@@ -21510,11 +21731,16 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
                 AllAvailableUpdates='Solution12.2608.1003.8'; ReadyUpdates='Solution12.2608.1003.8'; SBEDependency=''
                 RecommendedUpdate='Solution12.2608.1003.8'; CurrentVersion='12.2607.1003.7'; HealthCheckFailures=''
             })
-            Summary = @([pscustomobject]@{ ClusterName='alpha'; ActionableUpdatesCount=0 })
+            Summary = @(
+                [pscustomobject]@{ ClusterName='alpha'; SubscriptionId='s1'; ResourceGroup='rg1'; ActionableUpdatesCount=0; Note='=1+1' }
+                [pscustomobject]@{ ClusterName='alpha'; SubscriptionId='s2'; ResourceGroup='rg1'; ActionableUpdatesCount=0; Note='' }
+                [pscustomobject]@{ ClusterName='alpha'; SubscriptionId='s1'; ResourceGroup='rg2'; ActionableUpdatesCount=0; Note='' }
+            )
             Available = @(
-                [pscustomobject]@{ ClusterName='ALPHA'; UpdateState='Ready' }
-                [pscustomobject]@{ ClusterName='alpha'; UpdateState='ReadyToInstall' }
-                [pscustomobject]@{ ClusterName='alpha'; UpdateState='Installed' }
+                [pscustomobject]@{ ClusterName='ALPHA'; SubscriptionId='S1'; ResourceGroup='RG1'; UpdateState='Ready' }
+                [pscustomobject]@{ ClusterName='alpha'; SubscriptionId='s1'; ResourceGroup='rg1'; UpdateState='ReadyToInstall' }
+                [pscustomobject]@{ ClusterName='alpha'; SubscriptionId='s1'; ResourceGroup='rg1'; UpdateState='Installed' }
+                [pscustomobject]@{ ClusterName='alpha'; SubscriptionId='s2'; ResourceGroup='rg1'; UpdateState='NotReady' }
             )
             Manifest = [pscustomobject]@{ SupportedYYMMs=@('2608'); LatestYYMM='2608'; LatestVersion='12.2608.1003.8'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
             OutDir = $script:_s8_outDir; Now = $script:_s8_now
@@ -21531,9 +21757,13 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         }
 
         $summaryRows = @(Import-Csv -LiteralPath $result.SummariesCsvPath)
-        $summaryRows.Count | Should -Be 1
+        $summaryRows.Count | Should -Be 3
         $summaryRows[0].ActionableUpdatesCount | Should -Be '2'
         $summaryRows[0].ArmActionableUpdatesCount | Should -Be '0'
+        $summaryRows[1].ActionableUpdatesCount | Should -Be '1'
+        $summaryRows[2].ActionableUpdatesCount | Should -Be '0'
+        $summaryRows[0].Note | Should -Be "'=1+1"
+        $global:_s8_payload.Summary[0].Note | Should -Be '=1+1'
     }
 
     It 'Single healthy cluster produces 1 testcase per suite, criticalHealthPassed=1, no actions required' {
@@ -25419,14 +25649,14 @@ Describe 'v0.8.6 regression guard: GitHub Actions Node.js 20 deprecation' {
         foreach ($yml in $script:V086_GhaYamls) {
             $lines = Get-Content -LiteralPath $yml.FullName
             for ($i = 0; $i -lt $lines.Count; $i++) {
-                if ($lines[$i] -match 'actions/upload-artifact@v[1-5]\b') {
+                if ($lines[$i] -match 'actions/upload-artifact@(?:v[1-5]\b|[0-9a-f]{40}\s+#\s+v[1-5]\.)') {
                     $offenders.Add(("{0}:{1}: {2}" -f $yml.Name, ($i + 1), $lines[$i].Trim()))
                 }
             }
         }
         $offenders.Count | Should -Be 0 -Because (
             "actions/upload-artifact v1-v5 run on Node.js 20 which GitHub has deprecated. " +
-            "Bump to @v6 or later to avoid the deprecation warning in production runs. Found:`n$($offenders -join "`n")"
+            "Pin a verified v6 or later commit to avoid the deprecation warning in production runs. Found:`n$($offenders -join "`n")"
         )
     }
 
@@ -25435,13 +25665,13 @@ Describe 'v0.8.6 regression guard: GitHub Actions Node.js 20 deprecation' {
         foreach ($yml in $script:V086_GhaYamls) {
             $lines = Get-Content -LiteralPath $yml.FullName
             for ($i = 0; $i -lt $lines.Count; $i++) {
-                if ($lines[$i] -match 'actions/download-artifact@v[1-3]\b') {
+                if ($lines[$i] -match 'actions/download-artifact@(?:v[1-3]\b|[0-9a-f]{40}\s+#\s+v[1-3]\.)') {
                     $offenders.Add(("{0}:{1}: {2}" -f $yml.Name, ($i + 1), $lines[$i].Trim()))
                 }
             }
         }
         $offenders.Count | Should -Be 0 -Because (
-            "actions/download-artifact v1-v3 run on Node.js 20. Bump to @v4 or later. " +
+            "actions/download-artifact v1-v3 run on Node.js 20. Pin a verified v4 or later commit. " +
             "Found:`n$($offenders -join "`n")"
         )
     }

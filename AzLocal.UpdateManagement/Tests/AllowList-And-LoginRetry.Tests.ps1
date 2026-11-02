@@ -24,6 +24,498 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
+Describe 'v0.9.40: Exact runtime module selection' {
+    It 'persists and imports the exact resolved runtime throughout <Platform> templates' -ForEach @(
+        @{ Platform = 'github-actions' }
+        @{ Platform = 'azure-devops' }
+    ) {
+        $files = @(Get-ChildItem (Join-Path $script:PipelineRoot $Platform) -Filter '*.yml')
+        $files.Count | Should -Be 10
+        foreach ($file in $files) {
+            $text = Get-Content $file.FullName -Raw
+            $imports = [regex]::Matches($text, '(?m)^ +Import-Module AzLocal\.UpdateManagement[^\r\n]*')
+            $imports.Count | Should -BeGreaterThan 0
+            foreach ($moduleImport in $imports) {
+                $moduleImport.Value | Should -Match '-RequiredVersion \$env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop' -Because $file.Name
+            }
+            $installCount = [regex]::Matches($text, '(?m)^ +Install-Module @installArgs\r?$').Count
+            [regex]::Matches($text, '(?m)^ +\$env:AZLOCAL_RUN_MODULE_VERSION = \[string\]\$installArgs.RequiredVersion').Count | Should -Be $installCount
+            [regex]::Matches($text, 'Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction Stop').Count | Should -Be $installCount
+            if ($Platform -eq 'github-actions') {
+                [regex]::Matches($text, 'AZLOCAL_RUN_MODULE_VERSION=\$env:AZLOCAL_RUN_MODULE_VERSION" \| Out-File -FilePath \$env:GITHUB_ENV').Count | Should -Be $installCount
+            }
+            else {
+                [regex]::Matches($text, 'task.setvariable variable=AZLOCAL_RUN_MODULE_VERSION').Count | Should -Be $installCount
+            }
+        }
+    }
+
+    It 'Rejects a banner that claims a different pinned version' {
+        { Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.9.40' -PinnedVersion '0.0.1' -SkipPSGalleryQuery } |
+            Should -Throw '*does not match requested version*'
+    }
+}
+
+Describe 'v0.9.40: GitHub login failure classification' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+    }
+
+    It 'passes both login outcomes to every hard subscription gate' {
+        $guardCount = 0
+        foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml') {
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $file.FullName -Raw)
+            foreach ($job in $workflow.jobs.Values) {
+                foreach ($step in $job.steps) {
+                    if ($step.Contains('run') -and $step.run -match 'Assert-AzLocalAzureSubscriptionAccess') {
+                        $guardCount++
+                        $step.env.AZLOCAL_AZURE_LOGIN_FAILED | Should -BeExactly '${{ steps.azure_login.outcome == ''failure'' && steps.azure_login_retry.outcome == ''failure'' }}'
+                        $step.run | Should -Match '-LoginFailed:\(\$env:AZLOCAL_AZURE_LOGIN_FAILED -eq ''true''\)'
+                        $step.Contains('continue-on-error') | Should -BeFalse
+                    }
+                }
+            }
+        }
+        $guardCount | Should -Be 12
+    }
+}
+
+Describe 'v0.9.40: GitHub diagnostic failure handling' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $script:ApplyWorkflow = ConvertFrom-Yaml (Get-Content (Join-Path $script:PipelineRoot 'github-actions/apply-updates.yml') -Raw)
+        $script:ApplySteps = @($script:ApplyWorkflow.jobs.Values | ForEach-Object { $_.steps })
+    }
+
+    It 'makes each optional timing upload nonfatal and emits a warning on failure' {
+        $uploadCount = 0
+        foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml') {
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $file.FullName -Raw)
+            foreach ($job in $workflow.jobs.Values) {
+                $uploads = @($job.steps | Where-Object { $_.name -eq 'Upload pipeline performance diagnostics' })
+                foreach ($upload in $uploads) {
+                    $uploadCount++
+                    $upload.id | Should -Be 'upload-diagnostics'
+                    $upload['continue-on-error'] | Should -BeTrue
+                    $upload.if | Should -Be 'always()'
+                    $warning = @($job.steps | Where-Object { $_.name -eq 'Warn if optional diagnostics upload failed' })
+                    $warning.Count | Should -Be 1
+                    $warning[0].if | Should -BeExactly '${{ always() && steps.upload-diagnostics.outcome == ''failure'' }}'
+                    $warning[0].run | Should -Match '::warning title=Optional diagnostics upload failed::'
+                    $warning[0].run | Should -Not -Match 'Import-Module|throw|exit 1'
+                }
+            }
+        }
+        $uploadCount | Should -Be 10
+    }
+
+    It 'keeps workload and main-report artifact failures blocking' {
+        $monitor = ConvertFrom-Yaml (Get-Content (Join-Path $script:PipelineRoot 'github-actions/monitor-updates.yml') -Raw)
+        $steps = @($monitor.jobs.Values | ForEach-Object { $_.steps }) + $script:ApplySteps
+        foreach ($name in @('Snapshot in-flight update runs', 'Apply Updates', 'Upload artifacts', 'Upload Update Logs')) {
+            $step = @($steps | Where-Object { $_.name -eq $name })
+            $step.Count | Should -Be 1
+            $step[0].Contains('continue-on-error') | Should -BeFalse
+        }
+    }
+
+    It 'publishes existing apply JUnit even after failure but does not publish absent files' {
+        $publisher = @($script:ApplySteps | Where-Object { $_.name -eq 'Publish JUnit Diagnostic Results' })[0]
+        $publisher.if | Should -BeExactly '${{ always() && hashFiles(''./artifacts/update-results.xml'') != '''' }}'
+        $guard = @($script:ApplySteps | Where-Object { $_.name -eq 'Verify apply reports were produced' })[0]
+        $guard.if | Should -BeExactly '${{ always() && steps.apply-updates.outcome == ''success'' }}'
+        $guard.Contains('continue-on-error') | Should -BeFalse
+    }
+
+    It 'validates successful apply report contract: <Case>' -ForEach @(
+        @{ Case = 'missing JSON'; Json = $null; Xml = $false; Throws = $true }
+        @{ Case = 'no ready targets'; Json = '[]'; Xml = $false; Throws = $false }
+        @{ Case = 'results without JUnit'; Json = '[{"Status":"WhatIf"}]'; Xml = $false; Throws = $true }
+        @{ Case = 'results with JUnit'; Json = '[{"Status":"WhatIf"}]'; Xml = $true; Throws = $false }
+    ) {
+        $guard = @($script:ApplySteps | Where-Object { $_.name -eq 'Verify apply reports were produced' })[0]
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        $artifacts = Join-Path $root 'artifacts'
+        New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
+        if ($null -ne $Json) { Set-Content -LiteralPath (Join-Path $artifacts 'apply-results.json') -Value $Json -Encoding ASCII }
+        if ($Xml) { Set-Content -LiteralPath (Join-Path $artifacts 'update-results.xml') -Value '<testsuite />' -Encoding ASCII }
+        $previousVersion = $env:AZLOCAL_RUN_MODULE_VERSION
+        $previousModulePath = $env:PSModulePath
+        Push-Location $root
+        try {
+            $env:AZLOCAL_RUN_MODULE_VERSION = [string](Get-Module AzLocal.UpdateManagement).Version
+            $env:PSModulePath = (Split-Path (Get-Module AzLocal.UpdateManagement).ModuleBase -Parent) + [IO.Path]::PathSeparator + $previousModulePath
+            $action = [scriptblock]::Create($guard.run)
+            if ($Throws) { { & $action } | Should -Throw '*no report files produced*' }
+            else { { & $action } | Should -Not -Throw }
+        }
+        finally {
+            Pop-Location
+            $env:AZLOCAL_RUN_MODULE_VERSION = $previousVersion
+            $env:PSModulePath = $previousModulePath
+        }
+    }
+}
+
+Describe 'v0.9.40: Azure DevOps diagnostic failure handling' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $script:AdoSteps = @(foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'azure-devops') -Filter '*.yml') {
+            $pending = New-Object 'System.Collections.Generic.Queue[object]'
+            $pending.Enqueue((ConvertFrom-Yaml (Get-Content -LiteralPath $file.FullName -Raw)))
+            while ($pending.Count -gt 0) {
+                $node = $pending.Dequeue()
+                if ($node -is [System.Collections.IDictionary]) {
+                    if ($node.Contains('task')) { [pscustomobject]@{ File = $file.Name; Step = $node } }
+                    foreach ($value in $node.Values) { $pending.Enqueue($value) }
+                }
+                elseif ($node -is [System.Collections.IEnumerable] -and $node -isnot [string]) {
+                    foreach ($value in $node) { $pending.Enqueue($value) }
+                }
+            }
+        })
+    }
+
+    It 'makes all ten optional diagnostic uploads nonblocking' {
+        $uploads = @($script:AdoSteps | Where-Object { $_.Step.displayName -eq 'Publish pipeline performance diagnostics' })
+        $uploads.Count | Should -Be 10
+        foreach ($upload in $uploads) {
+            $upload.Step.task | Should -Be 'PublishPipelineArtifact@1'
+            $upload.Step.condition | Should -Be 'always()'
+            $upload.Step.continueOnError | Should -BeTrue
+        }
+    }
+
+    It 'keeps required apply and monitor report uploads blocking' {
+        $uploads = @($script:AdoSteps | Where-Object { $_.Step.displayName -in @('Publish Update Logs', 'Publish in-flight monitor reports') })
+        $uploads.Count | Should -Be 2
+        foreach ($upload in $uploads) { $upload.Step.Contains('continueOnError') | Should -BeFalse }
+    }
+
+    It 'keeps Azure CLI authentication and workload tasks blocking' {
+        $tasks = @($script:AdoSteps | Where-Object { $_.Step.task -eq 'AzureCLI@2' })
+        $tasks.Count | Should -BeGreaterThan 0
+        foreach ($task in $tasks) { $task.Step.Contains('continueOnError') | Should -BeFalse }
+    }
+
+    It 'publishes apply JUnit based on file availability and keeps successful-producer validation hard' {
+        $steps = @($script:AdoSteps | Where-Object { $_.File -eq 'apply-updates.yml' } | ForEach-Object { $_.Step })
+        $producer = @($steps | Where-Object { $_.name -eq 'applyUpdates' })[0]
+        $producer.inputs.inlineScript.TrimEnd() | Should -Match 'Write-Host ''##vso\[task.setvariable variable=ReportsExpected;isOutput=true\]true''$'
+        $guard = @($steps | Where-Object { $_.name -eq 'applyReports' })[0]
+        $guard.condition | Should -Be 'always()'
+        $guard.env.APPLY_REPORTS_EXPECTED | Should -BeExactly '$(applyUpdates.ReportsExpected)'
+        $guard.Contains('continueOnError') | Should -BeFalse
+        $publisher = @($steps | Where-Object { $_.displayName -eq 'Publish Update JUnit Diagnostics' })[0]
+        $publisher.condition | Should -BeExactly "and(always(), eq(variables['applyReports.JUnitPresent'], 'true'))"
+        $publisher.Contains('continueOnError') | Should -BeFalse
+    }
+
+    It 'handles ADO report availability: <Case>' -ForEach @(
+        @{ Case = 'failed producer without report'; Expected = 'false'; Json = $null; Xml = $false; Throws = $false }
+        @{ Case = 'failed producer with report'; Expected = 'false'; Json = $null; Xml = $true; Throws = $false }
+        @{ Case = 'successful producer without JSON'; Expected = 'true'; Json = $null; Xml = $false; Throws = $true }
+        @{ Case = 'successful no-target run'; Expected = 'true'; Json = '[]'; Xml = $false; Throws = $false }
+        @{ Case = 'successful results without JUnit'; Expected = 'true'; Json = '[{"Status":"WhatIf"}]'; Xml = $false; Throws = $true }
+        @{ Case = 'successful results with JUnit'; Expected = 'true'; Json = '[{"Status":"WhatIf"}]'; Xml = $true; Throws = $false }
+    ) {
+        $guard = @($script:AdoSteps | Where-Object { $_.File -eq 'apply-updates.yml' -and $_.Step.name -eq 'applyReports' })[0].Step
+        $artifacts = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
+        if ($null -ne $Json) { Set-Content -LiteralPath (Join-Path $artifacts 'apply-results.json') -Value $Json -Encoding ASCII }
+        if ($Xml) { Set-Content -LiteralPath (Join-Path $artifacts 'update-results.xml') -Value '<testsuite />' -Encoding ASCII }
+        $previousVersion = $env:AZLOCAL_RUN_MODULE_VERSION
+        $previousModulePath = $env:PSModulePath
+        $previousArtifacts = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        $previousExpected = $env:APPLY_REPORTS_EXPECTED
+        try {
+            $env:AZLOCAL_RUN_MODULE_VERSION = if ($Expected -eq 'true') { [string](Get-Module AzLocal.UpdateManagement).Version } else { $null }
+            $env:PSModulePath = (Split-Path (Get-Module AzLocal.UpdateManagement).ModuleBase -Parent) + [IO.Path]::PathSeparator + $previousModulePath
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $artifacts
+            $env:APPLY_REPORTS_EXPECTED = $Expected
+            $action = [scriptblock]::Create($guard.inputs.script)
+            if ($Throws) { { & $action } | Should -Throw '*no report files produced*' }
+            else {
+                $output = & $action 6>&1 | Out-String
+                $output | Should -Match ('JUnitPresent;isOutput=true\]' + $Xml.ToString().ToLowerInvariant())
+            }
+        }
+        finally {
+            $env:AZLOCAL_RUN_MODULE_VERSION = $previousVersion
+            $env:PSModulePath = $previousModulePath
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $previousArtifacts
+            $env:APPLY_REPORTS_EXPECTED = $previousExpected
+        }
+    }
+}
+
+Describe 'v0.9.40: GitHub action SHA pinning' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $script:GitHubTemplates = @(Get-ChildItem (Join-Path $script:PipelineRoot 'github-actions') -File -Recurse |
+            Where-Object Extension -in '.yml', '.yaml')
+        $script:GetActionReferences = {
+            param([string]$Text)
+            $workflow = ConvertFrom-Yaml $Text -ErrorAction Stop
+            foreach ($job in $workflow.jobs.Values) {
+                if ($job.Contains('uses')) { [string]$job.uses }
+                if ($job.Contains('steps')) {
+                    foreach ($step in $job.steps) {
+                        if ($step.Contains('uses')) { [string]$step.uses }
+                    }
+                }
+            }
+        }
+        $script:AssertActionPins = {
+            param([string[]]$References)
+            foreach ($reference in $References) {
+                if ($reference.StartsWith('./')) { continue }
+                $reference | Should -Match '^[^\s@]+/[^\s@]+@[0-9a-fA-F]{40}$'
+            }
+        }
+    }
+
+    It 'Rejects mutable tags, branches, and abbreviated SHAs' -ForEach @(
+        @{ Reference = 'actions/checkout@v5' }
+        @{ Reference = 'actions/checkout@main' }
+        @{ Reference = 'actions/checkout@0123456' }
+        @{ Reference = 'owner/repo/.github/workflows/build.yml@v1' }
+    ) {
+        { & $script:AssertActionPins @($Reference) } | Should -Throw
+    }
+
+    It 'Accepts full SHAs and distinguishes local actions and reusable workflows' {
+        $fixture = @'
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+      - uses: ./local-action
+      - run: 'echo uses: not-an-action@v1'
+  reuse:
+    uses: owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567
+  local:
+    uses: ./.github/workflows/local.yml
+'@
+        $references = @(& $script:GetActionReferences $fixture)
+        $references | Should -HaveCount 4
+        { & $script:AssertActionPins $references } | Should -Not -Throw
+        $references | Should -Contain 'owner/repo/.github/workflows/build.yml@0123456789abcdef0123456789abcdef01234567'
+    }
+
+    It 'Pins every bundled active remote action and keeps action lines outside customization regions' {
+        $script:GitHubTemplates.Count | Should -BeGreaterThan 0
+        foreach ($file in $script:GitHubTemplates) {
+            $text = Get-Content -LiteralPath $file.FullName -Raw
+            $references = @(& $script:GetActionReferences $text)
+            $references.Count | Should -BeGreaterThan 0 -Because $file.Name
+            & $script:AssertActionPins $references
+            $markers = & (Get-Module AzLocal.UpdateManagement) {
+                param($Text)
+                Get-AzLocalPipelineCustomiseMarkers -Text $Text
+            } $text
+            foreach ($marker in $markers.Values) {
+                $marker.Body | Should -Not -Match '(?m)^\s*(?:#\s*)?(?:-\s*)?uses:' -Because $file.Name
+            }
+        }
+    }
+
+    It 'Includes readable versions on active pins and commented alternatives' {
+        foreach ($file in $script:GitHubTemplates) {
+            foreach ($line in Get-Content -LiteralPath $file.FullName) {
+                if ($line -match '^\s*(?:#\s*)?(?:-\s*)?uses:\s*(?!\./)(\S+)') {
+                    & $script:AssertActionPins @($Matches[1])
+                    $line | Should -Match '@[0-9a-fA-F]{40}\s+#\s+v\d+\.\d+\.\d+' -Because $file.Name
+                }
+            }
+        }
+    }
+
+    It 'Copies pinned GitHub templates into an initial temporary repository' {
+        $destination = Join-Path $TestDrive 'initial/.github/workflows'
+        Copy-AzLocalPipelineExample -Destination $destination -Platform GitHub -Confirm:$false 6>$null
+        $copied = @(Get-ChildItem $destination -Filter '*.yml')
+        $copied.Count | Should -Be $script:GitHubTemplates.Count
+        foreach ($file in $copied) {
+            $text = Get-Content -LiteralPath $file.FullName -Raw
+            & $script:AssertActionPins @(& $script:GetActionReferences $text)
+            $text | Should -BeExactly (Get-Content (Join-Path $script:PipelineRoot "github-actions/$($file.Name)") -Raw)
+        }
+    }
+
+    It 'Refreshes tag-based workflows without Force, preserves every customization body, and is idempotent' {
+        $destination = Join-Path $TestDrive 'refresh/.github/workflows'
+        New-Item $destination -ItemType Directory -Force | Out-Null
+        $expectedBodies = @{}
+        foreach ($file in $script:GitHubTemplates) {
+            $text = Get-Content -LiteralPath $file.FullName -Raw
+            $text = [regex]::Replace($text, '(?m)(^\s*(?:#\s*)?(?:-\s*)?uses:\s*[^\s@]+/)\S+@[^\s#]+[^\r\n]*', {
+                param($match)
+                ($match.Value -replace '@[^\s#]+[^\r\n]*$', '@legacy-tag')
+            })
+            $markers = & (Get-Module AzLocal.UpdateManagement) {
+                param($Text)
+                Get-AzLocalPipelineCustomiseMarkers -Text $Text
+            } $text
+            $expectedBodies[$file.Name] = @{}
+            foreach ($entry in ($markers.GetEnumerator() | Sort-Object { $_.Value.Index } -Descending)) {
+                $marker = $entry.Value
+                $body = $marker.Body + "    # operator customization: $($entry.Key)`n"
+                $body = $body -replace 'runs-on: [^\r\n]+', 'runs-on: [self-hosted, operator-runner]'
+                $body = $body -replace "cron: '[^']+'", "cron: '17 3 * * 2'"
+                $expectedBodies[$file.Name][$entry.Key] = $body
+                $text = $text.Substring(0, $marker.Index) + $marker.BeginLine + $body + $marker.EndLine +
+                    $text.Substring($marker.Index + $marker.Length)
+            }
+            [IO.File]::WriteAllText((Join-Path $destination $file.Name), $text)
+        }
+        $results = @(Update-AzLocalPipelineExample -Destination $destination -Platform GitHub -PassThru -Confirm:$false 6>$null)
+        $workflowResults = @($results | Where-Object { $_.File -like '*.yml' -and (Split-Path $_.File -Parent) -eq $destination })
+        $workflowResults.Count | Should -Be $script:GitHubTemplates.Count
+        $snapshots = @{}
+        foreach ($result in $workflowResults) {
+            $result.Action | Should -Be 'Updated'
+            $name = Split-Path $result.File -Leaf
+            $text = Get-Content -LiteralPath $result.File -Raw
+            & $script:AssertActionPins @(& $script:GetActionReferences $text)
+            $markers = & (Get-Module AzLocal.UpdateManagement) {
+                param($Text)
+                Get-AzLocalPipelineCustomiseMarkers -Text $Text
+            } $text
+            foreach ($entry in $expectedBodies[$name].GetEnumerator()) {
+                $markers[$entry.Key].Body | Should -BeExactly $entry.Value
+                $result.PreservedMarkers | Should -Contain $entry.Key
+            }
+            $snapshots[$result.File] = [Convert]::ToBase64String([IO.File]::ReadAllBytes($result.File))
+        }
+        $second = @(Update-AzLocalPipelineExample -Destination $destination -Platform GitHub -PassThru -Confirm:$false 6>$null)
+        $secondWorkflows = @($second | Where-Object { $snapshots.ContainsKey($_.File) })
+        $secondWorkflows.Count | Should -Be $snapshots.Count
+        foreach ($result in $secondWorkflows) {
+            $result.Action | Should -Be 'Unchanged'
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($result.File)) | Should -BeExactly $snapshots[$result.File]
+        }
+    }
+
+    It 'Keeps copy-paste documentation action references pinned' {
+        $moduleRoot = Split-Path $script:PipelineRoot -Parent
+        foreach ($relativePath in @('README.md', 'Automation-Pipeline-Examples/README.md', 'ITSM/ITSM-Connector-Plan.md')) {
+            foreach ($line in Get-Content (Join-Path $moduleRoot $relativePath)) {
+                if ($line -match '^\s*(?:#\s*)?(?:-\s*)?uses:\s*(\S+)') {
+                    & $script:AssertActionPins @($Matches[1])
+                }
+            }
+        }
+    }
+}
+
+Describe 'v0.9.40: Azure DevOps approved task gate' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $script:ApprovedAdoTasks = @(
+            'PowerShell@2', 'AzureCLI@2', 'PublishPipelineArtifact@1',
+            'DownloadPipelineArtifact@2', 'PublishBuildArtifacts@1', 'PublishTestResults@2'
+        )
+        $script:AssertAdoSteps = {
+            param($Steps)
+            foreach ($step in $Steps) {
+                $step -is [System.Collections.IDictionary] | Should -BeTrue
+                if ($step.Contains('task')) {
+                    $script:ApprovedAdoTasks | Should -Contain ([string]$step.task)
+                    [string]$step.task
+                }
+                elseif ($step.Contains('pwsh')) { 'PowerShell@2' }
+                elseif ($step.Contains('checkout')) {
+                    @('self', 'none') | Should -Contain ([string]$step.checkout)
+                }
+                else {
+                    foreach ($key in $step.Keys) {
+                        [string]$key | Should -Match '^\$\{\{.+\}\}$'
+                        & $script:AssertAdoSteps $step[$key]
+                    }
+                    $step.Count | Should -BeGreaterThan 0
+                }
+            }
+        }
+        $script:GetApprovedAdoTasks = {
+            param($Node)
+            if ($Node -is [System.Collections.IDictionary]) {
+                foreach ($key in $Node.Keys) {
+                    [string]$key | Should -Not -BeIn @('template', 'extends')
+                    if ($key -eq 'steps') { & $script:AssertAdoSteps $Node[$key] }
+                    else { & $script:GetApprovedAdoTasks $Node[$key] }
+                }
+            }
+            elseif ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) {
+                foreach ($child in $Node) { & $script:GetApprovedAdoTasks $child }
+            }
+        }
+    }
+
+    It 'Accepts approved tasks and pwsh in jobs, stages, deployment hooks and conditional steps' {
+        $fixture = @'
+stages:
+- stage: verify
+  jobs:
+  - job: build
+    steps:
+    - checkout: self
+    - task: AzureCLI@2
+    - pwsh: |
+        Write-Output 'task: Unapproved@1'
+  - deployment: deploy
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - ${{ if true }}:
+            - task: PublishTestResults@2
+'@
+        $references = @(& $script:GetApprovedAdoTasks (ConvertFrom-Yaml $fixture))
+        $references | Should -HaveCount 3
+        $references | Should -Contain 'PowerShell@2'
+        $references | Should -Contain 'PublishTestResults@2'
+    }
+
+    It 'Rejects unreviewed task identities, versions and step shortcuts: <Step>' -ForEach @(
+        @{ Step = 'task: Marketplace.Task@1' }
+        @{ Step = 'task: PowerShell@3' }
+        @{ Step = 'task: PowerShell@2.999.0' }
+        @{ Step = 'task: 00000000-0000-0000-0000-000000000000@2' }
+        @{ Step = 'task: "${{ parameters.task }}"' }
+        @{ Step = 'bash: echo unreviewed' }
+        @{ Step = 'powershell: Write-Output unreviewed' }
+        @{ Step = 'script: echo unreviewed' }
+        @{ Step = 'template: external.yml@otherRepo' }
+        @{ Step = 'publish: artifact' }
+        @{ Step = 'download: current' }
+    ) {
+        $workflow = ConvertFrom-Yaml "steps:`n- $Step"
+        { & $script:GetApprovedAdoTasks $workflow } | Should -Throw
+    }
+
+    It 'Rejects template dependencies outside steps: <Pipeline>' -ForEach @(
+        @{ Pipeline = "extends:`n  template: external.yml@otherRepo" }
+        @{ Pipeline = "stages:`n- stage: test`n  jobs:`n  - template: jobs.yml" }
+    ) {
+        $workflow = ConvertFrom-Yaml $Pipeline
+        { & $script:GetApprovedAdoTasks $workflow } | Should -Throw
+    }
+
+    It 'Checks every bundled Azure DevOps template against the approved task set' {
+        $templates = @(Get-ChildItem (Join-Path $script:PipelineRoot 'azure-devops') -File -Recurse |
+            Where-Object Extension -in '.yml', '.yaml')
+        $templates.Count | Should -Be 10
+        $references = foreach ($file in $templates) {
+            $workflow = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Yaml -ErrorAction Stop
+            $tasks = @(& $script:GetApprovedAdoTasks $workflow)
+            $tasks.Count | Should -BeGreaterThan 0 -Because $file.Name
+            $tasks
+        }
+        @($references | Sort-Object -Unique).Count | Should -Be $script:ApprovedAdoTasks.Count
+    }
+}
+
 Describe 'v0.9.38: Collapsed GitHub JUnit report details' {
     It 'Keeps all 17 publishers collapsed with explanatory titles and XML inputs' {
         Import-Module powershell-yaml -ErrorAction Stop
@@ -491,7 +983,7 @@ Describe 'v0.9.1 pipeline login-retry wiring' {
         $total = 0
         foreach ($f in $ghaFiles) {
             $content = Get-Content -Raw -LiteralPath $f.FullName
-            $total += ([regex]::Matches($content, "outcome == 'failure'")).Count
+            $total += ([regex]::Matches($content, "(?m)^ +if: steps\.azure_login\.outcome == 'failure'\r?$" )).Count
         }
         $total | Should -Be 12
     }
@@ -500,7 +992,7 @@ Describe 'v0.9.1 pipeline login-retry wiring' {
         $ghaFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml' -File
         foreach ($f in $ghaFiles) {
             $content = Get-Content -Raw -LiteralPath $f.FullName
-            $retryCount = ([regex]::Matches($content, "steps\.azure_login\.outcome == 'failure'")).Count
+            $retryCount = ([regex]::Matches($content, "(?m)^ +if: steps\.azure_login\.outcome == 'failure'\r?$" )).Count
             if ($retryCount -gt 0) {
                 $content | Should -Match 'id:\s*azure_login' -Because "$($f.Name) references steps.azure_login but never defines that id"
                 $content | Should -Match 'continue-on-error:\s*true' -Because "$($f.Name) primary login must continue-on-error so the retry can run"

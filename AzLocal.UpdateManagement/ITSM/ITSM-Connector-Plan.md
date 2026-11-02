@@ -54,7 +54,7 @@
               tickets for lifecycle
 ```
 
-Every box is a function inside the existing `AzLocal.UpdateManagement` module - no new module is created. After the refactor (see [Section 9](#9-pre-requisite-module-refactor)), each box is a `.ps1` under `Private/` or `Public/`.
+Every box is a function inside the existing `AzLocal.UpdateManagement` module - no new module is created. After the refactor (see [Section 9](#9-pre-requisite-module-refactor-historical---completed-prior-to-v074)), each box is a `.ps1` under `Private/` or `Public/`.
 
 ---
 
@@ -494,12 +494,12 @@ New step **after** `Publish Test Results` and **before** `Summary`:
 
 - name: Upload ITSM artefacts
   if: ${{ inputs.raise_itsm_ticket == true }}
-  uses: actions/upload-artifact@v4
+  uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
   with: { name: itsm-results, path: ./artifacts/itsm-*.* }
 
 - name: Publish ITSM test results
   if: ${{ inputs.raise_itsm_ticket == true }}
-  uses: dorny/test-reporter@v1
+  uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1 (resolved 2026-11-02; no exact release tag)
   with:
     name: ITSM Tickets
     path: ./artifacts/itsm-*.xml

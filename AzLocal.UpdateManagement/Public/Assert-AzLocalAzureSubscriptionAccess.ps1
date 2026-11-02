@@ -34,6 +34,10 @@ function Assert-AzLocalAzureSubscriptionAccess {
         Host detection (GitHub / AzureDevOps / Local) flows through the existing
         Private helpers - no per-host branching here.
 
+        Failed login attempts, CLI errors, and invalid account-list responses
+        fail separately from a successfully enumerated empty subscription list.
+        These failures do not imply missing RBAC and do not emit a zero count.
+
     .PARAMETER MinimumCount
         Minimum number of ENABLED subscriptions that must be visible for the
         step to pass. Defaults to 1.
@@ -49,6 +53,10 @@ function Assert-AzLocalAzureSubscriptionAccess {
         Forwarded to Add-AzLocalPipelineStepSummary. Defaults to
         'azlocal-subscription-access.md'. Ignored on GitHub Actions (which uses
         a single $env:GITHUB_STEP_SUMMARY file managed by the runner).
+
+    .PARAMETER LoginFailed
+        The pipeline's Azure login attempts failed. Stops before enumerating
+        cached accounts and reports authentication failure instead of RBAC advice.
 
     .PARAMETER PassThru
         When set, returns the count of enabled subscriptions on success.
@@ -85,30 +93,66 @@ function Assert-AzLocalAzureSubscriptionAccess {
         [string]$SummaryFileName = 'azlocal-subscription-access.md',
 
         [Parameter()]
+        [switch]$LoginFailed,
+
+        [Parameter()]
         [switch]$PassThru
     )
 
     # 1. Obtain the account list (inject for tests, else shell out to az).
     $rawJson = $SubscriptionListJson
-    if (-not $PSBoundParameters.ContainsKey('SubscriptionListJson')) {
+    $failureReason = ''
+    $failureStatus = 'EnumerationFailed'
+    if ($LoginFailed) {
+        $failureStatus = 'LoginFailed'
+        $failureReason = 'The pipeline Azure login attempts failed. Review their errors for network timeouts, service failures, or federated-identity configuration problems, then retry after resolving the cause.'
+    }
+    elseif (-not $PSBoundParameters.ContainsKey('SubscriptionListJson')) {
         try {
-            $rawJson = (& az account list --output json 2>$null | Out-String)
+            $rawJson = (& az account list --output json --only-show-errors 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0) {
+                $failureReason = "Azure CLI subscription enumeration failed (exit code $LASTEXITCODE). " + (ConvertTo-ScrubbedCliOutput -Text $rawJson.Trim())
+            }
         } catch {
-            $rawJson = ''
-            Write-Verbose "Assert-AzLocalAzureSubscriptionAccess: 'az account list' threw - $($_.Exception.Message)"
+            $failureReason = 'Azure CLI subscription enumeration failed. ' + (ConvertTo-ScrubbedCliOutput -Text $_.Exception.Message)
         }
     }
 
-    # 2. Parse. A missing / empty / non-array payload is treated as zero subscriptions.
+    # 2. Only a valid JSON account array can establish the subscription count.
     $accounts = @()
-    if (-not [string]::IsNullOrWhiteSpace($rawJson)) {
-        try {
-            $parsed = $rawJson | ConvertFrom-Json -ErrorAction Stop
-            if ($null -ne $parsed) { $accounts = @($parsed) }
-        } catch {
-            Write-Verbose "Assert-AzLocalAzureSubscriptionAccess: could not parse 'az account list' JSON - $($_.Exception.Message)"
-            $accounts = @()
+    if (-not $failureReason) {
+        if ([string]::IsNullOrWhiteSpace($rawJson) -or -not $rawJson.TrimStart().StartsWith('[')) {
+            $failureReason = 'Azure CLI subscription enumeration returned an empty or non-array response instead of a JSON account array.'
         }
+        else {
+            try {
+                $parsedAccounts = $rawJson | ConvertFrom-Json -ErrorAction Stop
+                $accounts = @($parsedAccounts)
+                if (@($accounts | Where-Object { $_ -isnot [System.Management.Automation.PSCustomObject] }).Count -gt 0) {
+                    $failureReason = 'Azure CLI subscription enumeration returned an invalid account array.'
+                }
+            } catch {
+                $failureReason = 'Azure CLI subscription enumeration returned invalid JSON.'
+            }
+        }
+    }
+
+    if ($failureReason) {
+        $title = if ($LoginFailed) { 'Azure login failed' } else { 'Azure subscription enumeration failed' }
+        $summary = @"
+## $title
+
+$failureReason
+
+Subscription access could not be verified. This is not evidence that the identity
+has zero subscriptions or needs a new role assignment. Check the Azure login
+steps and CLI errors, connectivity to Azure, and the tenant/identity configuration.
+Retry after resolving the original failure. No subscription count was established.
+"@
+        Write-AzLocalPipelineError -Title $title -Message $failureReason
+        [void](Add-AzLocalPipelineStepSummary -Markdown $summary -SummaryFileName $SummaryFileName)
+        Set-AzLocalPipelineOutput -Name 'subscription_access_status' -Value $failureStatus
+        throw "Assert-AzLocalAzureSubscriptionAccess: $title. See the run summary for remediation."
     }
 
     $totalCount = $accounts.Count

@@ -597,7 +597,7 @@ function Export-AzLocalFleetUpdateStatusReport {
     if ($runHistoryCount -gt 0) {
         $runFailures |
             Select-Object ClusterName, UpdateName, State, Status, CurrentStep, Duration, StartTime, LastUpdated, DeepestStepName, DeepestStepDescription, ErrorCategory, DeepestErrMsg, UpdateRunPortalUrl, ClusterResourceId, RunId |
-            Export-Csv -Path $runHistoryCsv -NoTypeInformation -Force
+            ConvertTo-SafeCsvCollection | Export-Csv -Path $runHistoryCsv -NoTypeInformation -Force
         $runFailures | ConvertTo-Json -Depth 4 | Out-File -FilePath $runHistoryJson -Encoding utf8
     }
     else {
@@ -881,18 +881,27 @@ function Export-AzLocalFleetUpdateStatusReport {
     # the child update resources collected in this same run are actionable.
     # Reconcile the operator-facing count to those authoritative child rows and
     # retain the raw ARM value for diagnostics.
+    $getClusterIdentity = {
+        param($Row)
+        foreach ($identityProperty in @('SubscriptionId', 'ResourceGroup', 'ClusterName')) {
+            if (-not ($Row.PSObject.Properties[$identityProperty] -and $Row.$identityProperty)) { return $null }
+        }
+        return ('/subscriptions/{0}/resourceGroups/{1}/providers/Microsoft.AzureStackHCI/clusters/{2}' -f $Row.SubscriptionId, $Row.ResourceGroup, $Row.ClusterName)
+    }
     $actionableCountByCluster = @{}
     foreach ($update in @($available)) {
         if (-not ($update.PSObject.Properties['ClusterName'] -and $update.ClusterName)) { continue }
         if (-not ($update.PSObject.Properties['UpdateState'] -and $update.UpdateState -in (@($script:ReadyStates) + 'NotReady'))) { continue }
-        $clusterKey = ([string]$update.ClusterName).ToLowerInvariant()
+        $clusterKey = & $getClusterIdentity $update
+        if (-not $clusterKey) { continue }
         if (-not $actionableCountByCluster.ContainsKey($clusterKey)) { $actionableCountByCluster[$clusterKey] = 0 }
         $actionableCountByCluster[$clusterKey]++
     }
     $actionableCountMismatches = 0
     foreach ($summary in @($summaries)) {
         if (-not ($summary.PSObject.Properties['ClusterName'] -and $summary.ClusterName)) { continue }
-        $clusterKey = ([string]$summary.ClusterName).ToLowerInvariant()
+        $clusterKey = & $getClusterIdentity $summary
+        if (-not $clusterKey) { continue }
         $reconciledCount = if ($actionableCountByCluster.ContainsKey($clusterKey)) { [int]$actionableCountByCluster[$clusterKey] } else { 0 }
         $armCount = if ($summary.PSObject.Properties['ActionableUpdatesCount'] -and $null -ne $summary.ActionableUpdatesCount) { [int]$summary.ActionableUpdatesCount } else { 0 }
         $summary | Add-Member -NotePropertyName ArmActionableUpdatesCount -NotePropertyValue $armCount -Force
@@ -900,7 +909,7 @@ function Export-AzLocalFleetUpdateStatusReport {
         if ($armCount -ne $reconciledCount) { $actionableCountMismatches++ }
     }
     if (@($summaries).Count -gt 0) {
-        @($summaries) | Export-Csv -Path $summariesCsv -NoTypeInformation -Encoding utf8
+        @($summaries) | ConvertTo-SafeCsvCollection | Export-Csv -Path $summariesCsv -NoTypeInformation -Encoding utf8
     }
     if ($actionableCountMismatches -gt 0) {
         Write-Warning ("Reconciled ActionableUpdatesCount from child update states for {0} cluster(s); see ArmActionableUpdatesCount for the raw updateSummary value." -f $actionableCountMismatches)

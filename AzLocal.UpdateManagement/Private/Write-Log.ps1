@@ -4,6 +4,7 @@ function Write-Log {
         Writes a timestamped log entry to console and optionally to file.
     #>
     [CmdletBinding()]
+    [OutputType([void])]
     param(
         [Parameter(Mandatory = $false)]
         [AllowEmptyString()]
@@ -17,7 +18,8 @@ function Write-Log {
         [string]$ForegroundColor
     )
 
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $Message = ConvertTo-ScrubbedCliOutput -Text $Message
+    $timestamp = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
     $logEntry = "[$timestamp] [$Level] $Message"
 
     # Determine color based on level if not specified
@@ -41,22 +43,20 @@ function Write-Log {
         try {
             # -WhatIf:$false -- log writes are internal side effects, must run
             # even when the caller invokes a cmdlet with -WhatIf.
-            Add-Content -Path $script:LogFilePath -Value $logEntry -ErrorAction SilentlyContinue -WhatIf:$false
+            Add-Content -LiteralPath $script:LogFilePath -Value $logEntry -ErrorAction Stop -WhatIf:$false
         }
         catch {
-            # Log file write failure is non-critical - continue silently to not disrupt main operation
-            Write-Verbose "Failed to write to log file: $($_.Exception.Message)"
+            Write-Warning ("Failed to write to log file ({0}); console logging remains available." -f $_.Exception.GetType().Name) -WarningAction Continue
         }
     }
 
     # Write errors to separate error log
     if ($Level -eq 'Error' -and $script:ErrorLogPath) {
         try {
-            Add-Content -Path $script:ErrorLogPath -Value $logEntry -ErrorAction SilentlyContinue -WhatIf:$false
+            Add-Content -LiteralPath $script:ErrorLogPath -Value $logEntry -ErrorAction Stop -WhatIf:$false
         }
         catch {
-            # Error log write failure is non-critical - continue silently
-            Write-Verbose "Failed to write to error log file: $($_.Exception.Message)"
+            Write-Warning ("Failed to write to error log file ({0}); console logging remains available." -f $_.Exception.GetType().Name) -WarningAction Continue
         }
     }
 }

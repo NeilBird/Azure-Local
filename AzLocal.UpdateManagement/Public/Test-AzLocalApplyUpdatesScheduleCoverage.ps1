@@ -1405,7 +1405,7 @@ $globalTagFilter
                     Write-Utf8NoBomFile -Path $ExportPath -Content $md.ToString()
                 }
                 default {
-                    $output | Export-Csv -Path $ExportPath -NoTypeInformation -Force
+                    $output | ConvertTo-SafeCsvCollection | Export-Csv -Path $ExportPath -NoTypeInformation -Force
                 }
             }
             Write-Log -Message "Schedule coverage ($View) exported to: $ExportPath" -Level Success

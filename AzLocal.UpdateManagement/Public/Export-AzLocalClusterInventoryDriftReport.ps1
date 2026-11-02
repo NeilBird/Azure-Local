@@ -199,7 +199,7 @@ function Export-AzLocalClusterInventoryDriftReport {
     }
 
     if ($rows.Count -gt 0) {
-        $rows | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8 -WhatIf:$false
+        $rows | ConvertTo-SafeCsvCollection | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8 -WhatIf:$false
     }
     else {
         Set-Content -LiteralPath $csvPath -Value 'Status,ClusterName,ResourceId,Field,SourceValue,LiveValue,Detail' -Encoding UTF8 -WhatIf:$false

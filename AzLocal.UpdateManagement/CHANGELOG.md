@@ -5,6 +5,39 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.40] - Unreleased
+
+### Security
+
+- All 82 active remote action references across the ten bundled GitHub workflows, plus three commented login alternatives, use verified full commit SHAs with exact-version comments. Pins resolve the existing moving tags without upgrading majors: checkout v5.1.0, Azure Login v3.1.0, upload-artifact v6.0.0, download-artifact v7.0.0, and test-reporter v3.2.0. Executable documentation snippets are pinned within their existing majors too.
+- This is supply-chain security hardening: reviewed action revisions cannot change merely because an upstream version tag moves. It is not a claim of a specific vulnerability fix, complete dependency immutability, or organization-policy acceptance. Runtime downloads remain outside the pin, and fixes require deliberate reviewed pin updates.
+- Initial copy and ordinary marker-aware refresh distribute the pins without runtime GitHub lookups. Pins remain outside customization regions; supported schedules, runner choices, and secret bindings survive refresh. Markerless legacy workflows retain their documented Force requirement.
+- Azure DevOps gains an upstream approved-task regression gate, mandatory per-release task/runtime PowerShell dependency review, and an administrator security checklist. These are review guardrails, not runtime task enforcement or content pinning; organization settings and task versions are unchanged.
+- Credential scrubbing now covers quoted and short password arguments, secret URL query values, and escaped JSON strings. Verbose traces omit full KQL and URI query parameters. Public CSV export boundaries consistently sanitize spreadsheet formulas without mutating raw records.
+
+### Fixed
+
+- Subscription access checks distinguish failed login attempts, CLI errors, and invalid responses from a valid empty subscription list. GitHub templates pass both login outcomes to the hard gate; failures no longer invent a zero count or recommend RBAC changes without enumeration evidence.
+- Optional pipeline timing/transcript upload failures no longer fail a successful workload. GitHub emits a visible warning; Azure DevOps uses `continueOnError`, retaining a visible `SucceededWithIssues` result. Required report uploads and workload failures remain blocking.
+- Apply JUnit publication requires an existing report, avoiding secondary missing-report errors after an earlier failure. Successful Apply steps must produce results JSON and, for nonempty results, JUnit; legitimate no-target runs remain successful.
+- All twenty templates resolve the explicit pin or latest listed module once per job and use exact-version imports in subsequent tasks. Version banners reject pin mismatches, including on persistent agents with newer versions installed.
+- Fleet read operations request structured results. Resume preserves the full original checkpoint, run identity, prior successful results, and cumulative attempts; cancellation and WhatIf do not mutate state. Checkpoint replacement is atomic and UTC-labelled timestamps now use UTC.
+- Actionable-update counts use subscription, resource group, and cluster name together, avoiding same-name collisions.
+- Timing reports no longer inherit failures from another pipeline, run, attempt, or local module session. Same-run and nested operations continue to accumulate.
+- Log-write failures emit nonfatal warnings even under Stop preferences. Sideload diagnostic manifests include actual runtime context, completeness status, and omission reasons; partial collection is visible without changing copy results.
+- Corrected command examples, command count, navigation, archive labels, diagnostic capture limits, and publish-then-unlist visibility guidance.
+
+### Changed
+
+- Module and all pipeline generation versions are 0.9.40. Azure DevOps task identities/majors, action inputs, authentication configuration, permissions, and the 73 exported functions are unchanged. The subscription guard adds an optional `LoginFailed` switch; both platforms' diagnostic publishing conditions change as described above.
+- Documented central pin review, consumer refresh requirements, verified provenance, and separate publication/live policy acceptance gates. Consumer rollout evidence remains separate from upstream implementation.
+
+### Tests
+
+- Regression coverage exercises CLI exit codes and redaction, login recovery, all twelve GitHub subscription gates, twenty optional diagnostic uploads, and both platforms' Apply report contracts including failed producers and empty-target runs. Focused checks cover PowerShell 5.1 and 7 JSON-array behavior.
+- Offline YAML-aware guards reject mutable remote action and reusable-workflow references while distinguishing local references and run-script text. Coverage includes commented alternatives, executable documentation examples, initial copy, customization preservation during tag-to-SHA refresh without Force, and byte-identical repeated refresh.
+- ADO YAML tests cover all ten templates, approved task identities and majors, PowerShell shorthand, stages/jobs/deployment hooks/conditional steps, and rejection of unreviewed task versions and step shortcuts without treating script text as task references.
+
 ## [0.9.39] - 2026-09-22
 
 ### Added

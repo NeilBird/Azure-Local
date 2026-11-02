@@ -444,7 +444,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         $suppressionActions.Add($suppressionRow)
     }
     if ($suppressionActions.Count -gt 0) {
-        $suppressionActions | Export-Csv -LiteralPath $suppressionCsv -NoTypeInformation -Encoding utf8 -WhatIf:$false
+        $suppressionActions | ConvertTo-SafeCsvCollection | Export-Csv -LiteralPath $suppressionCsv -NoTypeInformation -Encoding utf8 -WhatIf:$false
         ConvertTo-Json -InputObject $suppressionActions.ToArray() -Depth 5 | Set-Content -LiteralPath $suppressionJson -Encoding utf8 -WhatIf:$false
     }
 
@@ -794,7 +794,7 @@ function Export-AzLocalUpdateRunMonitorReport {
 
     # ---- CSV (always emit, even if empty) ---------------------------------
     if ($rows.Count -gt 0) {
-        $rows | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName | Export-Csv -Path $monitorCsv -NoTypeInformation -Encoding utf8
+        $rows | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName | ConvertTo-SafeCsvCollection | Export-Csv -Path $monitorCsv -NoTypeInformation -Encoding utf8
     }
     else {
         '' | Set-Content -LiteralPath $monitorCsv -Encoding utf8
