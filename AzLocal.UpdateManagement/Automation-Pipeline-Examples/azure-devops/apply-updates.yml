@@ -147,7 +147,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.39'
+    value: '0.9.40'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -243,6 +243,9 @@ stages:
                 while ($true) {
                     $installAttempt++
                     try {
+                        if (-not $installArgs.ContainsKey('RequiredVersion')) {
+                            $installArgs.RequiredVersion = [string](Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction Stop).Version
+                        }
                         Install-Module @installArgs
                         break
                     } catch {
@@ -255,7 +258,10 @@ stages:
                         Start-Sleep -Seconds $installRetryDelay
                     }
                 }
-                Import-Module AzLocal.UpdateManagement -Force
+                $env:AZLOCAL_RUN_MODULE_VERSION = [string]$installArgs.RequiredVersion
+                Write-Host "##vso[task.setvariable variable=AZLOCAL_RUN_MODULE_VERSION]$env:AZLOCAL_RUN_MODULE_VERSION"
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION
 
           # v0.9.12: fail with a run-summary-visible message when the service
@@ -276,7 +282,8 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 $ErrorActionPreference = 'Stop'
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Assert-AzLocalAzureSubscriptionAccess
 
           # v0.8.5 thin-YAML - Resolve UpdateRing (+ AllowedUpdateVersions) from
@@ -303,7 +310,8 @@ stages:
               targetType: 'inline'
               pwsh: true
               script: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 $params = @{ ManualUpdateRing = $env:MANUAL_UPDATE_RING; ResolveForDateUtc = $env:RESOLVE_FOR_DATE_UTC }
                 if ($env:USE_SCHEDULE_FILE -eq 'True' -or $env:USE_SCHEDULE_FILE -eq 'true') { $params['UseScheduleFile'] = $true }
                 if (($env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'True' -or $env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'true') -and $env:BUILD_REASON -eq 'Manual') { $params['ForceImmediateUpdate'] = $true }
@@ -333,7 +341,8 @@ stages:
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Export-AzLocalClusterReadinessGateReport -UpdateRing $env:RESOLVED_UPDATE_RING -OutputDirectory "$(Build.ArtifactStagingDirectory)"
 
           # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
@@ -454,6 +463,9 @@ stages:
                 while ($true) {
                     $installAttempt++
                     try {
+                        if (-not $installArgs.ContainsKey('RequiredVersion')) {
+                            $installArgs.RequiredVersion = [string](Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction Stop).Version
+                        }
                         Install-Module @installArgs
                         break
                     } catch {
@@ -466,7 +478,10 @@ stages:
                         Start-Sleep -Seconds $installRetryDelay
                     }
                 }
-                Import-Module AzLocal.UpdateManagement -Force
+                $env:AZLOCAL_RUN_MODULE_VERSION = [string]$installArgs.RequiredVersion
+                Write-Host "##vso[task.setvariable variable=AZLOCAL_RUN_MODULE_VERSION]$env:AZLOCAL_RUN_MODULE_VERSION"
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
                 Write-Host "Installed AzLocal.UpdateManagement v$installed on ApplyUpdates stage agent."
 
@@ -486,7 +501,8 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 $ErrorActionPreference = 'Stop'
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Assert-AzLocalAzureSubscriptionAccess
 
           # Download the readiness CSV produced by the CheckReadiness stage
@@ -547,7 +563,8 @@ stages:
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
                     $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
                 )
@@ -632,7 +649,8 @@ stages:
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
                     $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
                 )
@@ -681,7 +699,8 @@ stages:
               targetType: 'inline'
               pwsh: true
               script: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Add-AzLocalFailedUpdateRetryHintSummary
 
           # v0.8.90: event-driven trigger. As soon as Apply has STARTED >=1
@@ -795,7 +814,8 @@ stages:
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 $params = @{
                     ConfigPath        = $env:ITSM_CONFIG_PATH
                     InputArtifactPath = "$(Build.ArtifactStagingDirectory)/update-results.xml"
@@ -836,7 +856,8 @@ stages:
               targetType: 'inline'
               pwsh: true
               script: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 $params = @{
                     UpdateRing           = $env:RESOLVED_UPDATE_RING
                     TotalCount           = "$(totalCount)"
@@ -870,7 +891,8 @@ stages:
               targetType: 'inline'
               pwsh: true
               script: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Add-AzLocalPipelineSupportFooter
 
   # Stage 3: Handle no ready clusters
@@ -922,6 +944,9 @@ stages:
                 while ($true) {
                     $installAttempt++
                     try {
+                        if (-not $installArgs.ContainsKey('RequiredVersion')) {
+                            $installArgs.RequiredVersion = [string](Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction Stop).Version
+                        }
                         Install-Module @installArgs
                         break
                     } catch {
@@ -934,7 +959,10 @@ stages:
                         Start-Sleep -Seconds $installRetryDelay
                     }
                 }
-                Import-Module AzLocal.UpdateManagement -Force
+                $env:AZLOCAL_RUN_MODULE_VERSION = [string]$installArgs.RequiredVersion
+                Write-Host "##vso[task.setvariable variable=AZLOCAL_RUN_MODULE_VERSION]$env:AZLOCAL_RUN_MODULE_VERSION"
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
 
           # v0.8.5 thin-YAML - No-clusters-ready summary via shared helper.
           # continueOnError: if the module could not be installed above, skip the
@@ -948,7 +976,8 @@ stages:
               targetType: 'inline'
               pwsh: true
               script: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Add-AzLocalNoReadyClustersStepSummary -UpdateRing $env:RESOLVED_UPDATE_RING -TotalCount "$(totalCount)" -UpToDateCount "$(upToDateCount)" -NotReadyCount "$(notReadyCount)"
 
           # v0.9.18: render the support disclaimer at the very bottom of the run summary.
@@ -960,5 +989,6 @@ stages:
               targetType: 'inline'
               pwsh: true
               script: |
-                Import-Module AzLocal.UpdateManagement -Force
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
                 Add-AzLocalPipelineSupportFooter

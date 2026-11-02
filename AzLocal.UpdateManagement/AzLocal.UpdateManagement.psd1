@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.39'
+    ModuleVersion = '0.9.40'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -392,6 +392,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.40 - Security and reliability: reviewed action SHA pins, ADO task review gates, exact per-job runtime imports, and pin mismatch checks. Fix fleet read results, full-state resume, atomic checkpoints and UTC timestamps, cluster-identity counts, CSV formula safety, credential scrubbing, nonfatal log warnings, and timing run isolation. Sideload ZIPs record runtime context and partial collection. Refresh committed templates. Public APIs remain unchanged (73 exports). Runtime downloads are not frozen; publication and live acceptance remain separate gates.
+
 ## Version 0.9.39 - Opt-in maintenance notification suppression defaults off; bounded cluster-only rules, propagation deferral, terminal/expiry cleanup, optional companion RBAC role and full runbook. Existing rules and AzureEdgeAlerts unchanged. Sideload pilots require an exact cluster and Ready update, default to preview, preserve next-ring version policy, and never install. Restaging checks identity, lead time, capacity, and active updates; apply enforces staged identity even with Force. Worker-local ARM token reuse reduces Config: 2 CLI overhead with safe fallback. Live suppression and remote sideload acceptance remain required. Exports: 73. Pipeline pins: 0.9.39.
 
 ## Version 0.9.38 - Reporting accuracy: schedule recommendations distinguish optional windows from ring-scoped opt-in; readiness labels reflect actual scope and cached evidence. Connectivity summaries expose observed NIC coverage and qualify unmatched ARBs. Health counts describe occurrences and JUnit messages avoid duplicate severity. Failed-run links include encoded update/run selectors; monitor JUnit distinguishes recent from older unresolved failures. Fleet summaries count distinct SBE values and overlapping health failures correctly and restore the generated timestamp. Reporting pipeline exit policy, raw records, and 73 exports are unchanged. Bundled pipeline pins: 0.9.38.

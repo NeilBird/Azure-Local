@@ -59,6 +59,18 @@ Describe 'v0.9.29 Export-AzLocalClusterInventoryDriftReport' {
         $summary | Should -Match 'Clusters with managed-tag drift \| 1'
     }
 
+    It 'sanitizes spreadsheet formulas only in the CSV export' {
+        $sourcePath = Join-Path $script:driftOutputDirectory 'formula.csv'
+        $resourceId = '/subscriptions/s/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+        [pscustomobject]@{ ClusterName = 'alpha'; ResourceId = $resourceId; UpdateRing = '=1+1' } |
+            Export-Csv -LiteralPath $sourcePath -NoTypeInformation
+        $live = @([pscustomobject]@{ ClusterName = 'alpha'; ResourceId = $resourceId; UpdateRing = 'Pilot' })
+        $result = Export-AzLocalClusterInventoryDriftReport -LiveInventory $live -SourceCsvPath $sourcePath -OutputDirectory $script:driftOutputDirectory -SummaryFileName $script:driftSummaryName -PassThru 3>$null
+        @($result.Rows | Where-Object Field -eq 'UpdateRing')[0].SourceValue | Should -Be '=1+1'
+        @((Import-Csv $result.CsvPath) | Where-Object Field -eq 'UpdateRing')[0].SourceValue | Should -Be "'=1+1"
+        (Get-Content $result.JsonPath -Raw) | Should -Match '"SourceValue":\s*"=1\+1"'
+    }
+
     It 'reports a missing source CSV as a successful onboarding state' {
         $missingPath = Join-Path $script:driftOutputDirectory 'missing.csv'
         $live = @(
@@ -181,7 +193,7 @@ Describe 'v0.9.29 Config: 1 weekly inventory drift pipeline wiring' {
     }
 
     It 'adds a direct inventory artifact download link to the GitHub run summary' {
-        $githubYaml | Should -Match "id:\s*upload-inventory[\s\S]*uses:\s*actions/upload-artifact@v6"
+        $githubYaml | Should -Match "id:\s*upload-inventory[\s\S]*uses:\s*actions/upload-artifact@[0-9a-f]{40}\s+# v6\."
         $githubYaml | Should -Match 'steps\.upload-inventory\.outputs\.artifact-url'
         $githubYaml | Should -Match '\[Download Inventory Artifact\]\(\$env:INVENTORY_ARTIFACT_URL\)'
     }

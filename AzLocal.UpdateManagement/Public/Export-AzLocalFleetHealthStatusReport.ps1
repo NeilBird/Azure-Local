@@ -332,7 +332,7 @@ function Export-AzLocalFleetHealthStatusReport {
                             @{Expression={$_.FailureCount};Descending=$true}
         )
     }
-    $summary | Export-Csv -Path $summaryCsv -NoTypeInformation -Force
+    $summary | ConvertTo-SafeCsvCollection | Export-Csv -Path $summaryCsv -NoTypeInformation -Force
     $summaryJsonContent = if ($summary.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject @($summary) -Depth 6 }
     $summaryJsonContent | Out-File -FilePath $summaryJson -Encoding utf8
 

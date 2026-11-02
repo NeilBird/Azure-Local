@@ -73,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.39'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.40'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -109,7 +109,7 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v5
+      uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
     
     # OPTION 1: OpenID Connect (OIDC) - RECOMMENDED
     # No client secret required - uses federated credentials
@@ -120,7 +120,7 @@ jobs:
       # attempt fail soft so the retry step below can try once more before the
       # job fails.
       continue-on-error: true
-      uses: azure/login@v3
+      uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -145,7 +145,7 @@ jobs:
       id: azure_login_retry
       if: steps.azure_login.outcome == 'failure'
       continue-on-error: true
-      uses: azure/login@v3
+      uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ vars.AZURE_TENANT_ID }}
@@ -153,7 +153,7 @@ jobs:
     
     # OPTION 2: Client Secret - LEGACY (uncomment if OIDC not available)
     # - name: Azure CLI Login (Client Secret)
-    #   uses: azure/login@v3
+    #   uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
     #   with:
     #     creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ vars.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ vars.AZURE_TENANT_ID }}"}'
     
@@ -208,6 +208,9 @@ jobs:
         while ($true) {
             $installAttempt++
             try {
+                if (-not $installArgs.ContainsKey('RequiredVersion')) {
+                    $installArgs.RequiredVersion = [string](Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction Stop).Version
+                }
                 Install-Module @installArgs
                 break
             } catch {
@@ -220,7 +223,10 @@ jobs:
                 Start-Sleep -Seconds $installRetryDelay
             }
         }
-        Import-Module AzLocal.UpdateManagement -Force
+        $env:AZLOCAL_RUN_MODULE_VERSION = [string]$installArgs.RequiredVersion
+        "AZLOCAL_RUN_MODULE_VERSION=$env:AZLOCAL_RUN_MODULE_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+        Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
@@ -233,7 +239,8 @@ jobs:
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        Import-Module AzLocal.UpdateManagement -Force
+        if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+        Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
         Assert-AzLocalAzureSubscriptionAccess
 
     - name: Apply UpdateRing Tags
@@ -262,7 +269,8 @@ jobs:
       # results_json_path).
       run: |
         $ErrorActionPreference = 'Stop'
-        Import-Module AzLocal.UpdateManagement -Force
+        if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+        Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
         $transcriptStarted = $false
         if ($env:DEBUG_VERBOSE -eq 'true') {
             $VerbosePreference = 'Continue'
@@ -294,7 +302,7 @@ jobs:
     - name: Upload pipeline performance diagnostics
       id: upload-diagnostics
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: azlocal-manage-updatering-tags-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
         path: |
@@ -327,7 +335,7 @@ jobs:
         Write-Host "Artifact timestamp: $stamp"
 
     - name: Upload Log Artifacts
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: azlocal-updatering-tag-logs_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/*
@@ -352,6 +360,7 @@ jobs:
       continue-on-error: true
       shell: pwsh
       run: |
-        Import-Module AzLocal.UpdateManagement -Force
+        if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+        Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
         Add-AzLocalPipelineSupportFooter
 

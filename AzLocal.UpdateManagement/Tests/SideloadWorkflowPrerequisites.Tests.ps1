@@ -18,13 +18,18 @@ Describe 'Sideload diagnostics snapshots' {
         }
         $writer = [IO.File]::Open($log, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
         try {
-            $zipPath = & $collector -StateRoot $root -ClusterName alpha,beta,gamma,missing -DestinationPath (Join-Path $TestDrive 'bundle.zip') -MaxLogBytes 4 -MaxTotalLogBytes 6
+            $zipPath = & $collector -StateRoot $root -ClusterName alpha,beta,gamma,missing -DestinationPath (Join-Path $TestDrive 'bundle.zip') -MaxLogBytes 4 -MaxTotalLogBytes 6 -WarningVariable collectionWarnings -WarningAction Stop
+            ($collectionWarnings -join ' ') | Should -Match 'collection is partial'
             $zip = [IO.Compression.ZipFile]::OpenRead($zipPath)
             try {
                 $reader = [IO.StreamReader]::new($zip.GetEntry('manifest.json').Open())
                 try { $json = $reader.ReadToEnd() } finally { $reader.Dispose() }
                 $manifest = $json | ConvertFrom-Json
                 $manifest.CapturedLogBytes | Should -Be 6
+                $manifest.CollectionStatus | Should -Be 'Partial'
+                $manifest.CollectionId | Should -Match '^[0-9a-f-]{36}$'
+                $manifest.Context.PowerShellVersion | Should -Be ([string]$PSVersionTable.PSVersion)
+                $manifest.Context.RobocopyVersion | Should -Not -BeNullOrEmpty
                 $manifest.Records[0].Offset | Should -Be 6
                 $manifest.Records[0].Truncated | Should -BeTrue
                 $manifest.Records[1].CapturedBytes | Should -Be 2
@@ -194,7 +199,9 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
     It 'installs Az.Accounts before GitHub Azure Login enables an Az PowerShell session' {
         $workflow = Get-Content -LiteralPath $script:WorkflowPaths[0] -Raw
         $accountsInstallIndex = $workflow.IndexOf('Install-Module Az.Accounts')
-        $azureLoginIndex = $workflow.IndexOf('uses: azure/login@v3')
+        $azureLogin = [regex]::Match($workflow, 'uses: azure/login@[0-9a-f]{40}\s+# v3\.')
+        $azureLogin.Success | Should -BeTrue
+        $azureLoginIndex = $azureLogin.Index
 
         $accountsInstallIndex | Should -BeGreaterThan -1
         $azureLoginIndex | Should -BeGreaterThan $accountsInstallIndex

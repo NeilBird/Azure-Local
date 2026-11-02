@@ -190,7 +190,7 @@ function Invoke-AzLocalFleetOperation {
     $state = [PSCustomObject]@{
         RunId = $runId
         Operation = $Operation
-        StartTime = $startTime.ToString("yyyy-MM-ddTHH:mm:ssZ")
+        StartTime = $startTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         EndTime = $null
         TotalClusters = $totalClusters
         CompletedCount = 0
@@ -323,7 +323,7 @@ function Invoke-AzLocalFleetOperation {
                             $orig.Status = 'Failed'
                             $orig.LastError = "Batch job failed: $($jr.Error)"
                             if (-not $orig.Attempts -or $orig.Attempts -lt 1) { $orig.Attempts = 1 }
-                            $orig.LastAttempt = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+                            $orig.LastAttempt = [datetime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
                         }
                     }
                 }
@@ -377,7 +377,7 @@ function Invoke-AzLocalFleetOperation {
     }
     
     # Final state update
-    $state.EndTime = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $state.EndTime = [datetime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
     
     # Final save
     if ($StateFilePath) {

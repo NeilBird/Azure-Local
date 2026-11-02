@@ -412,11 +412,11 @@ schedule:
 Preview the calculated cycle before enabling scheduled runs:
 
 ```powershell
-Get-AzLocalApplyUpdatesScheduleCycleCalendar `
-    -SchedulePath .\config\apply-updates-schedule.yml
+$schedule = Get-AzLocalApplyUpdatesScheduleConfig -Path .\config\apply-updates-schedule.yml
+Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $schedule
 ```
 
-The default preview covers one complete cycle. Use `-StartDateUtc` and
+The default preview covers one complete cycle. Use `-StartDate` and
 `-Days` to inspect a particular period or more than one cycle.
 
 ### Activate the schedule and create the apply cron

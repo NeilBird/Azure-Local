@@ -64,11 +64,24 @@ function Export-AzLocalFleetState {
     }
     
     # Update state metadata
-    $stateToExport.LastSaved = Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ"
+    $stateToExport.LastSaved = [datetime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     $stateToExport.StateFilePath = $Path
     
     # Export to JSON
-    Write-Utf8NoBomFile -Path $Path -Content ($stateToExport | ConvertTo-Json -Depth 10)
+    $targetPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $temporaryPath = Join-Path (Split-Path $targetPath -Parent) (([guid]::NewGuid().ToString('N')) + '.partial')
+    try {
+        Write-Utf8NoBomFile -Path $temporaryPath -Content ($stateToExport | ConvertTo-Json -Depth 10)
+        if ([IO.File]::Exists($targetPath)) {
+            [IO.File]::Replace($temporaryPath, $targetPath, [System.Management.Automation.Language.NullString]::Value)
+        }
+        else {
+            [IO.File]::Move($temporaryPath, $targetPath)
+        }
+    }
+    finally {
+        if ([IO.File]::Exists($temporaryPath)) { [IO.File]::Delete($temporaryPath) }
+    }
     Write-Log -Message "Fleet state exported to: $Path" -Level Success
     return $Path
 }

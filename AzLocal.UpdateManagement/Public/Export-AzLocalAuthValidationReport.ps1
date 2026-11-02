@@ -246,7 +246,7 @@ function Export-AzLocalAuthValidationReport {
     $subsCsvPath  = Join-Path -Path $ReportDirectory -ChildPath $SubscriptionsCsvFileName
     $subsJsonContent = if ($subs.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject $subs -Depth 4 }
     $subsJsonContent | Out-File -FilePath $subsJsonPath -Encoding utf8
-    $subs | Select-Object name, subscriptionId, tenantId, state |
+    $subs | Select-Object name, subscriptionId, tenantId, state | ConvertTo-SafeCsvCollection |
         Export-Csv -Path $subsCsvPath -NoTypeInformation -Encoding utf8
 
     Write-Host ''

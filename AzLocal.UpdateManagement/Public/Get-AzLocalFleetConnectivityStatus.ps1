@@ -511,7 +511,7 @@ extensibilityresources
                 $csvHeader | Set-Content -LiteralPath $csvPath -Encoding utf8 -Force
             }
             else {
-                $export.Rows | Export-Csv -Path $csvPath -NoTypeInformation -Force
+                $export.Rows | ConvertTo-SafeCsvCollection | Export-Csv -Path $csvPath -NoTypeInformation -Force
             }
             $jsonContent = if ($export.Rows.Count -eq 0) { '[]' } else { $export.Rows | ConvertTo-Json -Depth 20 }
             $jsonContent | Out-File -FilePath (Join-Path $ExportPath "$($export.Name).json") -Encoding utf8

@@ -55,6 +55,8 @@ function Invoke-FleetOpClusterAction {
     $lastError = $null
     $result = $null
     $succeeded = $false
+    $readParameters = $OperationParameters.Clone()
+    $readParameters['PassThru'] = $true
 
     while ($attempts -lt $maxAttempts) {
         $attempts++
@@ -63,12 +65,12 @@ function Invoke-FleetOpClusterAction {
         try {
             switch ($Operation) {
                 'GetStatus' {
-                    $result = Get-AzLocalUpdateSummary -ClusterResourceId $ClusterState.ResourceId @OperationParameters
+                    $result = Get-AzLocalUpdateSummary -ClusterResourceId $ClusterState.ResourceId @readParameters
                 }
                 'CheckReadiness' {
                     # Note: Get-AzLocalClusterUpdateReadiness only exposes the plural
                     # -ClusterResourceIds parameter, so wrap the single ID in an array.
-                    $result = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($ClusterState.ResourceId) @OperationParameters
+                    $result = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($ClusterState.ResourceId) @readParameters
                 }
                 'ApplyUpdate' {
                     # Start-AzLocalClusterUpdate also only exposes -ClusterResourceIds.
