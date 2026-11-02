@@ -256,6 +256,7 @@ stages:
           - task: PublishPipelineArtifact@1
             displayName: 'Publish pipeline performance diagnostics'
             condition: always()
+            continueOnError: true
             inputs:
               targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
               artifact: 'azlocal-manage-updatering-tags-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'

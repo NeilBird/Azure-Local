@@ -221,11 +221,13 @@ jobs:
       # ***" case shown in the screenshots.
       - name: Verify Azure subscription access
         shell: pwsh
+        env:
+          AZLOCAL_AZURE_LOGIN_FAILED: ${{ steps.azure_login.outcome == 'failure' && steps.azure_login_retry.outcome == 'failure' }}
         run: |
           $ErrorActionPreference = 'Stop'
           if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
           Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
-          Assert-AzLocalAzureSubscriptionAccess
+          Assert-AzLocalAzureSubscriptionAccess -LoginFailed:($env:AZLOCAL_AZURE_LOGIN_FAILED -eq 'true')
 
       - name: Run readiness + blocking health checks
         # v0.8.5 thin-YAML: the inline run block (inventory + scope param
@@ -285,7 +287,9 @@ jobs:
           }
 
       - name: Upload pipeline performance diagnostics
+        id: upload-diagnostics
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: azlocal-assess-update-readiness-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
@@ -294,6 +298,12 @@ jobs:
             ./diagnostics/pipeline-timings.json
           if-no-files-found: warn
           retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
+
+      - name: Warn if optional diagnostics upload failed
+        if: ${{ always() && steps.upload-diagnostics.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          Write-Host '::warning title=Optional diagnostics upload failed::Pipeline timings/transcript could not be uploaded. Inspect the upload step; workload and required-report checks remain authoritative.'
 
       # v0.9.12: fail with a clear, run-summary-visible message (instead of the
       # downstream publish steps' misleading "No test report files were found")

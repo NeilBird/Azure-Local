@@ -342,11 +342,13 @@ jobs:
     # (readiness discovery reads the fleet via Resource Graph).
     - name: Verify Azure subscription access
       shell: pwsh
+      env:
+        AZLOCAL_AZURE_LOGIN_FAILED: ${{ steps.azure_login.outcome == 'failure' && steps.azure_login_retry.outcome == 'failure' }}
       run: |
         $ErrorActionPreference = 'Stop'
         if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
         Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
-        Assert-AzLocalAzureSubscriptionAccess
+        Assert-AzLocalAzureSubscriptionAccess -LoginFailed:($env:AZLOCAL_AZURE_LOGIN_FAILED -eq 'true')
 
     # v0.8.5 thin-YAML - Resolve UpdateRing (+ AllowedUpdateVersions) from
     # schedule file (or pass manual input through verbatim).
@@ -518,11 +520,13 @@ jobs:
     # attempts above are now soft, this is the job's hard authentication gate.
     - name: Verify Azure subscription access
       shell: pwsh
+      env:
+        AZLOCAL_AZURE_LOGIN_FAILED: ${{ steps.azure_login.outcome == 'failure' && steps.azure_login_retry.outcome == 'failure' }}
       run: |
         $ErrorActionPreference = 'Stop'
         if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
         Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
-        Assert-AzLocalAzureSubscriptionAccess
+        Assert-AzLocalAzureSubscriptionAccess -LoginFailed:($env:AZLOCAL_AZURE_LOGIN_FAILED -eq 'true')
 
     # Consume the readiness CSV produced by check-readiness instead of
     # re-discovering clusters by tag. Apply Updates now operates ONLY on the
@@ -664,7 +668,9 @@ jobs:
         }
 
     - name: Upload pipeline performance diagnostics
+      id: upload-diagnostics
       if: always()
+      continue-on-error: true
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
       with:
         name: azlocal-apply-updates-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
@@ -673,6 +679,25 @@ jobs:
           ./diagnostics/pipeline-timings.json
         if-no-files-found: warn
         retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
+
+    - name: Warn if optional diagnostics upload failed
+      if: ${{ always() && steps.upload-diagnostics.outcome == 'failure' }}
+      shell: pwsh
+      run: |
+        Write-Host '::warning title=Optional diagnostics upload failed::Pipeline timings/transcript could not be uploaded. Inspect the upload step; workload and required-report checks remain authoritative.'
+
+    - name: Verify apply reports were produced
+      if: ${{ always() && steps.apply-updates.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+        Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
+        Assert-AzLocalPipelineReport -Path './artifacts/apply-results.json' -ProducingStepName 'Apply Updates'
+        $applyResults = Get-Content -LiteralPath './artifacts/apply-results.json' -Raw | ConvertFrom-Json -ErrorAction Stop
+        if (@($applyResults).Count -gt 0) {
+          Assert-AzLocalPipelineReport -Path './artifacts/update-results.xml' -ProducingStepName 'Apply Updates'
+        }
 
     # v0.8.95: discoverability notice. When FAILED_UPDATES_SINGLE_RETRY is NOT
     # enabled (unset / false / 0), append a short opt-in awareness section to the
@@ -735,7 +760,7 @@ jobs:
 
     - name: Publish JUnit Diagnostic Results
       uses: dorny/test-reporter@d1b5dff021aa968b288b02285a8bf47471c5928a # v3.2.0
-      if: always()
+      if: ${{ always() && hashFiles('./artifacts/update-results.xml') != '' }}
       with:
         name: '[JUnit Debug] Azure Local Update Results'
         path: ./artifacts/update-results.xml

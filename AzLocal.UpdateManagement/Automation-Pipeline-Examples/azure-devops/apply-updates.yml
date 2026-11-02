@@ -619,6 +619,7 @@ stages:
                 finally {
                   if ($transcriptStarted) { Stop-Transcript | Out-Null }
                 }
+                Write-Host '##vso[task.setvariable variable=ReportsExpected;isOutput=true]true'
 
           # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
           # default; enable by setting the pipeline variable (or variable-group
@@ -682,6 +683,7 @@ stages:
           - task: PublishPipelineArtifact@1
             displayName: 'Publish pipeline performance diagnostics'
             condition: always()
+            continueOnError: true
             inputs:
               targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
               artifact: 'azlocal-apply-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
@@ -761,9 +763,33 @@ stages:
               ArtifactName: 'azlocal-apply-updates-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
+          - task: PowerShell@2
+            displayName: 'Verify apply reports and detect JUnit'
+            name: applyReports
+            condition: always()
+            env:
+              APPLY_REPORTS_EXPECTED: $(applyUpdates.ReportsExpected)
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                $junitPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'update-results.xml'
+                $junitPresent = Test-Path -LiteralPath $junitPath -PathType Leaf
+                Write-Host ('##vso[task.setvariable variable=JUnitPresent;isOutput=true]{0}' -f $junitPresent.ToString().ToLowerInvariant())
+                if ($env:APPLY_REPORTS_EXPECTED -ne 'true') { return }
+                if (-not $env:AZLOCAL_RUN_MODULE_VERSION) { throw 'Runtime module version was not resolved by the install step.' }
+                Import-Module AzLocal.UpdateManagement -Force -RequiredVersion $env:AZLOCAL_RUN_MODULE_VERSION -ErrorAction Stop
+                $jsonPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'apply-results.json'
+                Assert-AzLocalPipelineReport -Path $jsonPath -ProducingStepName 'Apply Updates'
+                $applyResults = Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json -ErrorAction Stop
+                if (@($applyResults).Count -gt 0) {
+                  Assert-AzLocalPipelineReport -Path $junitPath -ProducingStepName 'Apply Updates'
+                }
+
           - task: PublishTestResults@2
             displayName: 'Publish Update JUnit Diagnostics'
-            condition: always()
+            condition: and(always(), eq(variables['applyReports.JUnitPresent'], 'true'))
             inputs:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(Build.ArtifactStagingDirectory)/update-results.xml'

@@ -10,7 +10,7 @@
 
 ### What's New in v0.9.40
 
-**Security hardening - GitHub action pinning:** bundled GitHub Actions workflows use verified full commit SHAs with readable release comments, including commented authentication alternatives. This prevents moving upstream tags from silently changing the selected action code. The selected commits match the existing action tags; no action major, input, permission, condition, or authentication behavior changes. This is not a claim of a specific vulnerability fix; runtime downloads remain outside the pin.
+**Security hardening - GitHub action pinning:** bundled GitHub Actions workflows use verified full commit SHAs with readable release comments, including commented authentication alternatives. This prevents moving upstream tags from silently changing the selected action code. The selected commits match the existing action tags; pinning does not change action majors, inputs, permissions, or authentication configuration. This is not a claim of a specific vulnerability fix; runtime downloads remain outside the pin.
 
 **Azure DevOps review guardrails:** YAML-aware regression tests restrict bundled templates to the six approved built-in task references and reviewed step shortcuts. Every release now requires task and runtime PowerShell dependency review; an [administrator checklist](../Automation-Pipeline-Examples/README.md#58-azure-devops-dependency-governance) covers organization restrictions and access controls. This is repository regression coverage, not runtime task enforcement or SHA pinning. Task references, authentication, and organization settings are unchanged.
 
@@ -20,7 +20,9 @@
 
 **Refresh is required:** initial copies receive the pins, and normal marker-aware refresh replaces tag references while preserving supported operator customization blocks. A second refresh leaves workflow bytes unchanged. Installing a newer module alone does not update workflows already committed in a consumer repository. Markerless legacy files retain the documented `-Force` migration requirement.
 
-See the [action pin maintenance guide](../Automation-Pipeline-Examples/README.md#57-github-action-pin-maintenance) for central revision review and consumer rollout. No public API or export-count change (73); pipeline generation stamps are `0.9.40`. Live action execution and organization-policy acceptance are separate rollout gates.
+**Actionable pipeline failures:** failed Azure login attempts and CLI enumeration errors no longer masquerade as zero-subscription RBAC failures. Optional timing/transcript upload failures are nonfatal on both platforms: GitHub warns, while Azure DevOps retains a visible `SucceededWithIssues` result. Required reports remain blocking. Both Apply templates publish JUnit only when the file exists, while successful producers must still generate results JSON and JUnit for nonempty results. No-target runs remain valid.
+
+See the [action pin maintenance guide](../Automation-Pipeline-Examples/README.md#57-github-action-pin-maintenance) for central revision review and consumer rollout. Export count remains 73; the subscription guard adds an optional `LoginFailed` switch. Pipeline generation stamps are `0.9.40`. Live action execution and organization-policy acceptance are separate rollout gates.
 
 ### What's New in v0.9.39
 

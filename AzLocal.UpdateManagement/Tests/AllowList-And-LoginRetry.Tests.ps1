@@ -56,6 +56,199 @@ Describe 'v0.9.40: Exact runtime module selection' {
     }
 }
 
+Describe 'v0.9.40: GitHub login failure classification' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+    }
+
+    It 'passes both login outcomes to every hard subscription gate' {
+        $guardCount = 0
+        foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml') {
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $file.FullName -Raw)
+            foreach ($job in $workflow.jobs.Values) {
+                foreach ($step in $job.steps) {
+                    if ($step.Contains('run') -and $step.run -match 'Assert-AzLocalAzureSubscriptionAccess') {
+                        $guardCount++
+                        $step.env.AZLOCAL_AZURE_LOGIN_FAILED | Should -BeExactly '${{ steps.azure_login.outcome == ''failure'' && steps.azure_login_retry.outcome == ''failure'' }}'
+                        $step.run | Should -Match '-LoginFailed:\(\$env:AZLOCAL_AZURE_LOGIN_FAILED -eq ''true''\)'
+                        $step.Contains('continue-on-error') | Should -BeFalse
+                    }
+                }
+            }
+        }
+        $guardCount | Should -Be 12
+    }
+}
+
+Describe 'v0.9.40: GitHub diagnostic failure handling' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $script:ApplyWorkflow = ConvertFrom-Yaml (Get-Content (Join-Path $script:PipelineRoot 'github-actions/apply-updates.yml') -Raw)
+        $script:ApplySteps = @($script:ApplyWorkflow.jobs.Values | ForEach-Object { $_.steps })
+    }
+
+    It 'makes each optional timing upload nonfatal and emits a warning on failure' {
+        $uploadCount = 0
+        foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml') {
+            $workflow = ConvertFrom-Yaml (Get-Content -LiteralPath $file.FullName -Raw)
+            foreach ($job in $workflow.jobs.Values) {
+                $uploads = @($job.steps | Where-Object { $_.name -eq 'Upload pipeline performance diagnostics' })
+                foreach ($upload in $uploads) {
+                    $uploadCount++
+                    $upload.id | Should -Be 'upload-diagnostics'
+                    $upload['continue-on-error'] | Should -BeTrue
+                    $upload.if | Should -Be 'always()'
+                    $warning = @($job.steps | Where-Object { $_.name -eq 'Warn if optional diagnostics upload failed' })
+                    $warning.Count | Should -Be 1
+                    $warning[0].if | Should -BeExactly '${{ always() && steps.upload-diagnostics.outcome == ''failure'' }}'
+                    $warning[0].run | Should -Match '::warning title=Optional diagnostics upload failed::'
+                    $warning[0].run | Should -Not -Match 'Import-Module|throw|exit 1'
+                }
+            }
+        }
+        $uploadCount | Should -Be 10
+    }
+
+    It 'keeps workload and main-report artifact failures blocking' {
+        $monitor = ConvertFrom-Yaml (Get-Content (Join-Path $script:PipelineRoot 'github-actions/monitor-updates.yml') -Raw)
+        $steps = @($monitor.jobs.Values | ForEach-Object { $_.steps }) + $script:ApplySteps
+        foreach ($name in @('Snapshot in-flight update runs', 'Apply Updates', 'Upload artifacts', 'Upload Update Logs')) {
+            $step = @($steps | Where-Object { $_.name -eq $name })
+            $step.Count | Should -Be 1
+            $step[0].Contains('continue-on-error') | Should -BeFalse
+        }
+    }
+
+    It 'publishes existing apply JUnit even after failure but does not publish absent files' {
+        $publisher = @($script:ApplySteps | Where-Object { $_.name -eq 'Publish JUnit Diagnostic Results' })[0]
+        $publisher.if | Should -BeExactly '${{ always() && hashFiles(''./artifacts/update-results.xml'') != '''' }}'
+        $guard = @($script:ApplySteps | Where-Object { $_.name -eq 'Verify apply reports were produced' })[0]
+        $guard.if | Should -BeExactly '${{ always() && steps.apply-updates.outcome == ''success'' }}'
+        $guard.Contains('continue-on-error') | Should -BeFalse
+    }
+
+    It 'validates successful apply report contract: <Case>' -ForEach @(
+        @{ Case = 'missing JSON'; Json = $null; Xml = $false; Throws = $true }
+        @{ Case = 'no ready targets'; Json = '[]'; Xml = $false; Throws = $false }
+        @{ Case = 'results without JUnit'; Json = '[{"Status":"WhatIf"}]'; Xml = $false; Throws = $true }
+        @{ Case = 'results with JUnit'; Json = '[{"Status":"WhatIf"}]'; Xml = $true; Throws = $false }
+    ) {
+        $guard = @($script:ApplySteps | Where-Object { $_.name -eq 'Verify apply reports were produced' })[0]
+        $root = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        $artifacts = Join-Path $root 'artifacts'
+        New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
+        if ($null -ne $Json) { Set-Content -LiteralPath (Join-Path $artifacts 'apply-results.json') -Value $Json -Encoding ASCII }
+        if ($Xml) { Set-Content -LiteralPath (Join-Path $artifacts 'update-results.xml') -Value '<testsuite />' -Encoding ASCII }
+        $previousVersion = $env:AZLOCAL_RUN_MODULE_VERSION
+        $previousModulePath = $env:PSModulePath
+        Push-Location $root
+        try {
+            $env:AZLOCAL_RUN_MODULE_VERSION = [string](Get-Module AzLocal.UpdateManagement).Version
+            $env:PSModulePath = (Split-Path (Get-Module AzLocal.UpdateManagement).ModuleBase -Parent) + [IO.Path]::PathSeparator + $previousModulePath
+            $action = [scriptblock]::Create($guard.run)
+            if ($Throws) { { & $action } | Should -Throw '*no report files produced*' }
+            else { { & $action } | Should -Not -Throw }
+        }
+        finally {
+            Pop-Location
+            $env:AZLOCAL_RUN_MODULE_VERSION = $previousVersion
+            $env:PSModulePath = $previousModulePath
+        }
+    }
+}
+
+Describe 'v0.9.40: Azure DevOps diagnostic failure handling' {
+    BeforeAll {
+        Import-Module powershell-yaml -ErrorAction Stop
+        $script:AdoSteps = @(foreach ($file in Get-ChildItem (Join-Path $script:PipelineRoot 'azure-devops') -Filter '*.yml') {
+            $pending = New-Object 'System.Collections.Generic.Queue[object]'
+            $pending.Enqueue((ConvertFrom-Yaml (Get-Content -LiteralPath $file.FullName -Raw)))
+            while ($pending.Count -gt 0) {
+                $node = $pending.Dequeue()
+                if ($node -is [System.Collections.IDictionary]) {
+                    if ($node.Contains('task')) { [pscustomobject]@{ File = $file.Name; Step = $node } }
+                    foreach ($value in $node.Values) { $pending.Enqueue($value) }
+                }
+                elseif ($node -is [System.Collections.IEnumerable] -and $node -isnot [string]) {
+                    foreach ($value in $node) { $pending.Enqueue($value) }
+                }
+            }
+        })
+    }
+
+    It 'makes all ten optional diagnostic uploads nonblocking' {
+        $uploads = @($script:AdoSteps | Where-Object { $_.Step.displayName -eq 'Publish pipeline performance diagnostics' })
+        $uploads.Count | Should -Be 10
+        foreach ($upload in $uploads) {
+            $upload.Step.task | Should -Be 'PublishPipelineArtifact@1'
+            $upload.Step.condition | Should -Be 'always()'
+            $upload.Step.continueOnError | Should -BeTrue
+        }
+    }
+
+    It 'keeps required apply and monitor report uploads blocking' {
+        $uploads = @($script:AdoSteps | Where-Object { $_.Step.displayName -in @('Publish Update Logs', 'Publish in-flight monitor reports') })
+        $uploads.Count | Should -Be 2
+        foreach ($upload in $uploads) { $upload.Step.Contains('continueOnError') | Should -BeFalse }
+    }
+
+    It 'keeps Azure CLI authentication and workload tasks blocking' {
+        $tasks = @($script:AdoSteps | Where-Object { $_.Step.task -eq 'AzureCLI@2' })
+        $tasks.Count | Should -BeGreaterThan 0
+        foreach ($task in $tasks) { $task.Step.Contains('continueOnError') | Should -BeFalse }
+    }
+
+    It 'publishes apply JUnit based on file availability and keeps successful-producer validation hard' {
+        $steps = @($script:AdoSteps | Where-Object { $_.File -eq 'apply-updates.yml' } | ForEach-Object { $_.Step })
+        $producer = @($steps | Where-Object { $_.name -eq 'applyUpdates' })[0]
+        $producer.inputs.inlineScript.TrimEnd() | Should -Match 'Write-Host ''##vso\[task.setvariable variable=ReportsExpected;isOutput=true\]true''$'
+        $guard = @($steps | Where-Object { $_.name -eq 'applyReports' })[0]
+        $guard.condition | Should -Be 'always()'
+        $guard.env.APPLY_REPORTS_EXPECTED | Should -BeExactly '$(applyUpdates.ReportsExpected)'
+        $guard.Contains('continueOnError') | Should -BeFalse
+        $publisher = @($steps | Where-Object { $_.displayName -eq 'Publish Update JUnit Diagnostics' })[0]
+        $publisher.condition | Should -BeExactly "and(always(), eq(variables['applyReports.JUnitPresent'], 'true'))"
+        $publisher.Contains('continueOnError') | Should -BeFalse
+    }
+
+    It 'handles ADO report availability: <Case>' -ForEach @(
+        @{ Case = 'failed producer without report'; Expected = 'false'; Json = $null; Xml = $false; Throws = $false }
+        @{ Case = 'failed producer with report'; Expected = 'false'; Json = $null; Xml = $true; Throws = $false }
+        @{ Case = 'successful producer without JSON'; Expected = 'true'; Json = $null; Xml = $false; Throws = $true }
+        @{ Case = 'successful no-target run'; Expected = 'true'; Json = '[]'; Xml = $false; Throws = $false }
+        @{ Case = 'successful results without JUnit'; Expected = 'true'; Json = '[{"Status":"WhatIf"}]'; Xml = $false; Throws = $true }
+        @{ Case = 'successful results with JUnit'; Expected = 'true'; Json = '[{"Status":"WhatIf"}]'; Xml = $true; Throws = $false }
+    ) {
+        $guard = @($script:AdoSteps | Where-Object { $_.File -eq 'apply-updates.yml' -and $_.Step.name -eq 'applyReports' })[0].Step
+        $artifacts = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        New-Item -ItemType Directory -Path $artifacts -Force | Out-Null
+        if ($null -ne $Json) { Set-Content -LiteralPath (Join-Path $artifacts 'apply-results.json') -Value $Json -Encoding ASCII }
+        if ($Xml) { Set-Content -LiteralPath (Join-Path $artifacts 'update-results.xml') -Value '<testsuite />' -Encoding ASCII }
+        $previousVersion = $env:AZLOCAL_RUN_MODULE_VERSION
+        $previousModulePath = $env:PSModulePath
+        $previousArtifacts = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        $previousExpected = $env:APPLY_REPORTS_EXPECTED
+        try {
+            $env:AZLOCAL_RUN_MODULE_VERSION = if ($Expected -eq 'true') { [string](Get-Module AzLocal.UpdateManagement).Version } else { $null }
+            $env:PSModulePath = (Split-Path (Get-Module AzLocal.UpdateManagement).ModuleBase -Parent) + [IO.Path]::PathSeparator + $previousModulePath
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $artifacts
+            $env:APPLY_REPORTS_EXPECTED = $Expected
+            $action = [scriptblock]::Create($guard.inputs.script)
+            if ($Throws) { { & $action } | Should -Throw '*no report files produced*' }
+            else {
+                $output = & $action 6>&1 | Out-String
+                $output | Should -Match ('JUnitPresent;isOutput=true\]' + $Xml.ToString().ToLowerInvariant())
+            }
+        }
+        finally {
+            $env:AZLOCAL_RUN_MODULE_VERSION = $previousVersion
+            $env:PSModulePath = $previousModulePath
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $previousArtifacts
+            $env:APPLY_REPORTS_EXPECTED = $previousExpected
+        }
+    }
+}
+
 Describe 'v0.9.40: GitHub action SHA pinning' {
     BeforeAll {
         Import-Module powershell-yaml -ErrorAction Stop
@@ -790,7 +983,7 @@ Describe 'v0.9.1 pipeline login-retry wiring' {
         $total = 0
         foreach ($f in $ghaFiles) {
             $content = Get-Content -Raw -LiteralPath $f.FullName
-            $total += ([regex]::Matches($content, "outcome == 'failure'")).Count
+            $total += ([regex]::Matches($content, "(?m)^ +if: steps\.azure_login\.outcome == 'failure'\r?$" )).Count
         }
         $total | Should -Be 12
     }
@@ -799,7 +992,7 @@ Describe 'v0.9.1 pipeline login-retry wiring' {
         $ghaFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml' -File
         foreach ($f in $ghaFiles) {
             $content = Get-Content -Raw -LiteralPath $f.FullName
-            $retryCount = ([regex]::Matches($content, "steps\.azure_login\.outcome == 'failure'")).Count
+            $retryCount = ([regex]::Matches($content, "(?m)^ +if: steps\.azure_login\.outcome == 'failure'\r?$" )).Count
             if ($retryCount -gt 0) {
                 $content | Should -Match 'id:\s*azure_login' -Because "$($f.Name) references steps.azure_login but never defines that id"
                 $content | Should -Match 'continue-on-error:\s*true' -Because "$($f.Name) primary login must continue-on-error so the retry can run"
