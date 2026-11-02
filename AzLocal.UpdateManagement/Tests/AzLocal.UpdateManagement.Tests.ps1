@@ -11453,7 +11453,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
             $readmeDest = Join-Path $repoRoot 'README.md'
             $stale = @(
-                '<!-- AZLOCAL-README-VERSION: 0.0.1 -->'
+                '<!-- AZLOCAL-README-VERSION: 1.0.0 -->'
                 '# Stale managed README'
                 'OLD MANAGED BODY - should be replaced on refresh'
             ) -join "`r`n"
@@ -11464,6 +11464,9 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             $text = Get-Content -LiteralPath $readmeDest -Raw
             $text | Should -Not -Match 'OLD MANAGED BODY'
             $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+            $text | Should -Match 'not a separate Git branch'
+            $text | Should -Match 'Apply-ModuleDevelopmentChannel\.ps1 -RequiredVersion \S+ -NoPush'
+            $text | Should -Match 'The GitHub repository variable still changes'
         }
 
         It 'preserves an existing managed README with an EQUAL version marker' {
@@ -14300,7 +14303,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             try {
                 $readmeDest = Join-Path $repoRoot 'README.md'
                 $stale = @(
-                    '<!-- AZLOCAL-README-VERSION: 0.0.1 -->'
+                    '<!-- AZLOCAL-README-VERSION: 1.0.0 -->'
                     '# Stale managed README'
                     'OLD MANAGED BODY - should be replaced on refresh'
                 ) -join "`r`n"
@@ -14311,6 +14314,9 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $text = Get-Content -LiteralPath $readmeDest -Raw
                 $text | Should -Not -Match 'OLD MANAGED BODY'
                 $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+                $text | Should -Match 'not a separate Git branch'
+                $text | Should -Match 'Apply-ModuleDevelopmentChannel\.ps1 -RequiredVersion \S+ -NoPush'
+                $text | Should -Match 'The GitHub repository variable still changes'
             }
             finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }

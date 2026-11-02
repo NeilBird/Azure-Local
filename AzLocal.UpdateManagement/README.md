@@ -52,6 +52,8 @@ This module supports **two main paths**. Pick the one that matches your scenario
 
 **Example pipelines, operator-owned deployment:** these are versioned examples shipped with the module, not a managed automation service. Installing a module update does not refresh committed workflows, and refreshing workflows does not change an existing runner runtime-version pin. Treat module selection, template refresh, and rollout as a coordinated change. See [pipeline ownership and upgrade lifecycle](Automation-Pipeline-Examples/README.md#59-pipeline-ownership-and-upgrade-lifecycle) for review, validation, and recovery guidance.
 
+**Candidate testing (DevChannel):** the development-channel helper calls the normal updater in the **same consumer repository**, then manages the pipeline runtime pin. It does not create a separate branch, repository, or package feed; normally run it instead of running both helpers. `-NoPush` leaves refreshed files for review but still changes the GitHub repository-wide pin. See [which helper to use and how to isolate testing](Automation-Pipeline-Examples/README.md#56-test-an-exact-module-candidate).
+
 ### Getting started interactively
 
 If you are new to this module, work through these in order from a regular PowerShell session. Each step links to the dedicated reference section further down the README.

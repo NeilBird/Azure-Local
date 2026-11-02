@@ -1297,9 +1297,11 @@ Once your repo is wired (sections 5.1-5.4), `Update-Module-And-Pipelines.ps1` co
 
 The helper performs the following operations; the recommended `-NoPush` invocation skips step 3:
 
-1. **Upgrades the module on your workstation** - queries PSGallery and runs `Install-Module` **only if** the published version is newer than what you have installed (then imports it). If you are already current, it skips the install.
+1. **Selects the module on your workstation** - normally resolves the latest listed PSGallery version, or the exact `-RequiredVersion` when specified. It installs that selected version if absent, even when a higher version is already installed, then imports the selected version explicitly.
 2. **Refreshes the pipeline YAMLs and supported configuration schemas** via the marker-aware `Update-AzLocalPipelineExample` - it replaces everything **outside** the `AZLOCAL-CUSTOMIZE` marker regions while **preserving your customisations inside them** (schedule crons, service-connection names, runner labels, ITSM secret bindings, the exclusion/schedule paths, etc.). It also refreshes the managed `config\` starters and the dropped `README.md` when the module ships newer templates. When `config\apply-updates-schedule.yml` uses an older supported schema, the refresh saves the exact original as `apply-updates-schedule.v<old>.old.yml`, performs only registered additive migrations, preserves the operator-owned `schedule:` section and newline style byte-for-byte, validates the migrated canonical file, and restores the original automatically on failure.
-3. **Commits and pushes** - stages the workflow folder, the repo-root `config\` folder, the managed `README.md`, and the updater script itself (which may self-refresh), then commits and pushes **only if** the refresh produced a diff.
+3. **Commits and pushes** - stages the workflow folder, the repo-root `config\` folder, the managed `README.md`, the `DevChannel\` helper, and the updater script itself (which may self-refresh), then commits and pushes **only if** the refresh produced a diff. This operates on the currently checked-out consumer-repository branch; it does not create or switch branches.
+
+This updater does **not** create, change, or remove `REQUIRED_MODULE_VERSION`. An existing runtime pin remains in effect even after a local refresh. For coordinated candidate selection and pinning, use the development-channel helper in section 5.6 instead.
 
 **Useful options:**
 
@@ -1321,15 +1323,31 @@ The helper performs the following operations; the recommended `-NoPush` invocati
 
 `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` drop a managed `Apply-ModuleDevelopmentChannel.ps1` into the repo-root `DevChannel\` folder for both platforms. Pass `-SkipDevelopmentChannelHelper` to suppress it.
 
-```powershell
-# Pin every bundled pipeline to an exact PSGallery version.
-.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion 0.9.29
+**What "DevChannel" means:** temporary candidate-version selection in your existing consumer pipeline repository. It is not a separate Git branch, repository, package feed, or copy of the module's source code. `DevChannel\` is only the helper's folder. The helper is **the normal updater plus runtime-pin management**: it calls `Update-Module-And-Pipelines.ps1`, so both helpers refresh the same managed files on the same checked-out branch. Neither modifies the upstream module-development repository.
 
-# Restore latest-listed templates, then remove the pin.
-.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+| Purpose | Normal updater | Development-channel helper |
+|---|---|---|
+| Select local module and templates | Latest listed by default, or `-RequiredVersion` | Exact candidate, or latest listed with `-Disable` |
+| Refresh managed repository files | Yes | Yes, by calling the normal updater |
+| Manage runtime pin | No; existing pin is unchanged | Sets/removes the GitHub variable; prints required ADO commands |
+| Commit and push refreshed files | By default; `-NoPush` skips Git staging, commit, and push | Same behavior, through the updater |
+
+Publish the candidate to Gallery first; an unlisted version is sufficient if exact lookup resolves it. **Normally run only the development-channel helper, not both scripts:**
+
+```powershell
+# Refresh the candidate's templates and set the pin; leave files for review.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion 0.9.40 -NoPush
+
+# After acceptance/listing, or to stop testing: refresh latest-listed templates,
+# then remove the pin; leave files for review.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable -NoPush
 ```
 
-The helper refreshes local templates before changing the runtime pin. Disable preflights the rollback before cleanup and stops when an older template would remove a candidate-only `AZLOCAL-CUSTOMIZE` section. The [development-channel testing runbook](docs/development-channel-testing.md) covers the full enable, validation, disable, approval, and recovery flow.
+**`-NoPush` does not prevent remote pin changes.** On GitHub, the repository variable is still changed after a successful local refresh. Review, commit, and push the resulting files before starting validation. Without `-NoPush`, the updater commits and pushes changed managed files before the helper changes the pin.
+
+**A branch alone does not isolate this pin.** `REQUIRED_MODULE_VERSION` is repository-wide for workflows that read it, including scheduled runs; a supported manual version input can override it. Use a separate test consumer repository for isolation and keep scheduled/state-changing workflows disabled until deliberately approved. In ADO, a shared variable group can affect multiple linked pipelines. The helper creates neither a test repository nor a test environment.
+
+The helper validates the candidate and refreshes local templates before changing the runtime pin. `-Disable` calls the updater's latest-listed selection and rollback preflight before cleanup; it stops when an older template would remove a candidate-only `AZLOCAL-CUSTOMIZE` section. This is a template refresh, not a Git history rollback. The [development-channel testing runbook](docs/development-channel-testing.md) covers the full enable, validation, disable, approval, and recovery flow.
 
 - **GitHub:** validates the exact Gallery version, then uses authenticated `gh` to set or delete the non-secret `REQUIRED_MODULE_VERSION` repository variable.
 - **Azure DevOps:** validates the exact Gallery version, then prints the variable-group create/update command with that version. With `-Disable`, it prints the delete command. Replace `<group-id>` and run the displayed command.
