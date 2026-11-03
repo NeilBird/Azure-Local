@@ -157,18 +157,19 @@ Describe 'Publish-Module package allow-list' -Tag 'ReleaseGate' {
         @($script:StagedManifest.ExportedFunctions.Keys).Count | Should -Be @($sourceManifest.FunctionsToExport).Count
     }
 
-    It 'copies complete bundled customer and ITSM trees byte-for-byte' -TestCases @(
+    It 'copies approved bundled assets byte-for-byte' -TestCases @(
         @{ RelativePath = 'Automation-Pipeline-Examples' }
         @{ RelativePath = 'ITSM' }
+        @{ RelativePath = 'docs/images' }
     ) {
         param($RelativePath)
 
         $sourceRoot = Join-Path $script:ModuleRoot $RelativePath
         $stagedRoot = Join-Path $script:StagingDir $RelativePath
-        $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | ForEach-Object {
+        $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -Force -File | ForEach-Object {
             $_.FullName.Substring($sourceRoot.Length + 1)
         } | Sort-Object)
-        $stagedFiles = @(Get-ChildItem -LiteralPath $stagedRoot -Recurse -File | ForEach-Object {
+        $stagedFiles = @(Get-ChildItem -LiteralPath $stagedRoot -Recurse -Force -File | ForEach-Object {
             $_.FullName.Substring($stagedRoot.Length + 1)
         } | Sort-Object)
 
@@ -204,6 +205,139 @@ Describe 'Publish-Module package allow-list' -Tag 'ReleaseGate' {
         Join-Path $script:StagingDir 'Publish-Module.ps1' | Should -Not -Exist
         Join-Path $script:StagingDir 'Tests' | Should -Not -Exist
         Join-Path $script:StagingDir 'CHANGELOG.md' | Should -Not -Exist
+    }
+
+    It 'publishes only approved module files from a shared repository and clears old staging content' {
+        $expectedPaths = @(Get-ChildItem -LiteralPath $script:StagingDir -Recurse -Force -File | ForEach-Object {
+            $_.FullName.Substring($script:StagingDir.Length + 1)
+        } | Sort-Object)
+        $fixtureRepository = Join-Path $TestDrive 'shared repository'
+        New-Item -Path $fixtureRepository -ItemType Directory -Force | Out-Null
+        $fixtureModule = Join-Path $fixtureRepository 'AzLocal.UpdateManagement'
+        Copy-Item -LiteralPath $script:StagingDir -Destination $fixtureModule -Recurse -Force
+        Copy-Item -LiteralPath (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Destination $fixtureModule
+        foreach ($relativePath in @('README.md', '.github/workflows/unrelated.yml', 'AzLocal.DeploymentAutomation/unrelated.ps1', 'AzureLocalVM/unrelated.psm1', 'AzLocal.UpdateManagement/unapproved-root.env')) {
+            $fixturePath = Join-Path $fixtureRepository $relativePath
+            New-Item -Path (Split-Path $fixturePath -Parent) -ItemType Directory -Force | Out-Null
+            'synthetic unrelated repository content' | Set-Content -LiteralPath $fixturePath
+        }
+        'synthetic old package content' | Set-Content -LiteralPath (Join-Path $script:StagingDir 'stale-file.env')
+        Mock Publish-Module { }
+        Mock Read-Host { throw 'Automation must not prompt.' }
+        $automationKey = ConvertTo-SecureString 'test-isolation-key' -AsPlainText -Force
+        Push-Location $fixtureRepository
+        try {
+            & (Join-Path $fixtureModule 'Publish-Module.ps1') -List -NuGetApiKey $automationKey -Confirm:$false *> $null
+            $actualPaths = @(Get-ChildItem -LiteralPath $script:StagingDir -Recurse -Force -File | ForEach-Object {
+                $_.FullName.Substring($script:StagingDir.Length + 1)
+            } | Sort-Object)
+            @(Compare-Object -ReferenceObject $expectedPaths -DifferenceObject $actualPaths).Count | Should -Be 0
+            (Get-FileHash -LiteralPath (Join-Path $script:StagingDir 'README.md')).Hash |
+                Should -BeExactly (Get-FileHash -LiteralPath (Join-Path $fixtureModule 'README.md')).Hash
+            Join-Path $script:StagingDir 'stale-file.env' | Should -Not -Exist
+            Join-Path $script:StagingDir 'unapproved-root.env' | Should -Not -Exist
+            Should -Invoke Publish-Module -Times 1 -Exactly -ParameterFilter {
+                $Path -eq 'C:\Temp\AzLocal.UpdateManagement' -and $Repository -eq 'PSGallery'
+            }
+        }
+        finally {
+            Pop-Location
+            $automationKey.Dispose()
+            & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -StageOnly *> $null
+        }
+    }
+
+    It 'rejects unexpected asset <RelativePath> before clearing staging' -TestCases @(
+        @{ RelativePath = 'Automation-Pipeline-Examples/unapproved.env'; Hidden = $false }
+        @{ RelativePath = 'ITSM/unapproved.env'; Hidden = $false }
+        @{ RelativePath = 'docs/images/unapproved.env'; Hidden = $false }
+        @{ RelativePath = 'Automation-Pipeline-Examples/.itsm/.unapproved'; Hidden = $true }
+    ) {
+        param($RelativePath, $Hidden)
+        $fixtureRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        Copy-Item -LiteralPath $script:StagingDir -Destination $fixtureRoot -Recurse -Force
+        Copy-Item -LiteralPath (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Destination $fixtureRoot
+        $unexpectedPath = Join-Path $fixtureRoot $RelativePath
+        'not-a-real-secret' | Set-Content -LiteralPath $unexpectedPath
+        if ($Hidden) { (Get-Item -LiteralPath $unexpectedPath -Force).Attributes = [IO.FileAttributes]::Hidden }
+        $sentinel = Join-Path $script:StagingDir 'previous-stage.txt'
+        'previous stage' | Set-Content -LiteralPath $sentinel
+        Mock Read-Host { throw 'Validation must not request credentials.' }
+        Mock Publish-Module { throw 'Validation must not publish.' }
+        try {
+            { & (Join-Path $fixtureRoot 'Publish-Module.ps1') -Confirm:$false *> $null } |
+                Should -Throw -ExpectedMessage '*Unexpected publish asset*'
+            $sentinel | Should -Exist
+            Should -Invoke Read-Host -Times 0 -Exactly
+            Should -Invoke Publish-Module -Times 0 -Exactly
+        }
+        finally {
+            & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -StageOnly *> $null
+        }
+    }
+
+    It 'rejects unsafe manifest path <RelativePath>' -TestCases @(
+        @{ RelativePath = '../outside.psm1' }
+        @{ RelativePath = '../AzLocal.DeploymentAutomation/Publish-Module.ps1' }
+        @{ RelativePath = 'C:\outside.psm1' }
+        @{ RelativePath = 'Private/*.ps1' }
+        @{ RelativePath = 'Private/file.ps1:stream' }
+    ) {
+        param($RelativePath)
+        Mock Import-PowerShellDataFile -MockWith ([scriptblock]::Create("@{ RootModule = '$RelativePath'; NestedModules = @() }"))
+        { & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -StageOnly *> $null } |
+            Should -Throw -ExpectedMessage '*publish path*'
+    }
+
+    It 'rejects an approved asset replaced by <Replacement>' -TestCases @(
+        @{ Replacement = 'nothing' }
+        @{ Replacement = 'a directory' }
+    ) {
+        param($Replacement)
+        $fixtureRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString())
+        Copy-Item -LiteralPath $script:StagingDir -Destination $fixtureRoot -Recurse -Force
+        Copy-Item -LiteralPath (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Destination $fixtureRoot
+        $assetPath = Join-Path $fixtureRoot 'ITSM/README.md'
+        Remove-Item -LiteralPath $assetPath -Force
+        if ($Replacement -eq 'a directory') { New-Item -Path $assetPath -ItemType Directory | Out-Null }
+        { & (Join-Path $fixtureRoot 'Publish-Module.ps1') -StageOnly *> $null } |
+            Should -Throw -ExpectedMessage '*Required publish file is missing or is not a file*'
+    }
+
+    It 'rejects a linked asset directory without following it' {
+        $fixtureRoot = Join-Path $TestDrive 'linked-source'
+        Copy-Item -LiteralPath $script:StagingDir -Destination $fixtureRoot -Recurse -Force
+        Copy-Item -LiteralPath (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Destination $fixtureRoot
+        $linkPath = Join-Path $fixtureRoot 'ITSM'
+        $externalPath = Join-Path $TestDrive 'external-assets'
+        Move-Item -LiteralPath $linkPath -Destination $externalPath
+        New-Item -Path $linkPath -ItemType Junction -Target $externalPath | Out-Null
+        try {
+            { & (Join-Path $fixtureRoot 'Publish-Module.ps1') -StageOnly *> $null } |
+                Should -Throw -ExpectedMessage '*Linked publish paths are not allowed*'
+            Join-Path $externalPath 'README.md' | Should -Exist
+        }
+        finally {
+            [IO.Directory]::Delete($linkPath)
+        }
+    }
+
+    It 'rejects staged content that differs from its approved source' {
+        Mock Copy-Item {
+            [IO.File]::Copy($LiteralPath, (Join-Path $Destination 'README.md'), $true)
+            Add-Content -LiteralPath (Join-Path $Destination 'README.md') -Value 'synthetic staging alteration'
+        } -ParameterFilter { $LiteralPath -match '[\\/]AzLocal\.UpdateManagement[\\/]README\.md$' }
+        Mock Read-Host { throw 'Validation must not request credentials.' }
+        Mock Publish-Module { throw 'Validation must not publish.' }
+        try {
+            { & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Confirm:$false *> $null } |
+                Should -Throw -ExpectedMessage '*Staged package does not match approved source*'
+            Should -Invoke Read-Host -Times 0 -Exactly
+            Should -Invoke Publish-Module -Times 0 -Exactly
+        }
+        finally {
+            [IO.File]::Copy((Join-Path $script:ModuleRoot 'README.md'), (Join-Path $script:StagingDir 'README.md'), $true)
+        }
     }
 }
 
@@ -296,6 +430,7 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
         Mock Invoke-RestMethod { }
         Mock Read-Host { throw 'Workflow must not prompt.' }
         if ($FailPublish) { Mock Publish-Module { throw 'simulated publish failure' } }
+        Push-Location $TestDrive
         try {
             $env:GITHUB_WORKSPACE = $script:RepositoryRoot
             $env:GITHUB_STEP_SUMMARY = Join-Path $TestDrive 'publish-summary.md'
@@ -313,6 +448,7 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
             Should -Invoke Read-Host -Times 0 -Exactly
         }
         finally {
+            Pop-Location
             foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name]) }
         }
     }
@@ -321,7 +457,7 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
         $upload = $script:PublishWorkflow.jobs.package.steps | Where-Object { $_.uses -like 'actions/upload-artifact@*' }
         $upload.with.path | Should -BeExactly '${{ runner.temp }}/azlocal-package/'
         $upload.with.'if-no-files-found' | Should -Be 'error'
-        $upload.with.'include-hidden-files' | Should -BeFalse
+        $upload.with.'include-hidden-files' | Should -BeTrue
         $upload.with.'retention-days' | Should -Be 7
     }
 
@@ -330,9 +466,15 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
         $savedEnvironment = @{}
         foreach ($name in $names) { $savedEnvironment[$name] = [Environment]::GetEnvironmentVariable($name) }
         Mock Publish-Module { throw 'Stage only must never publish.' }
+        $runnerTemp = Join-Path $TestDrive 'runner temp with spaces'
+        New-Item -Path $runnerTemp -ItemType Directory -Force | Out-Null
+        $stalePackageRoot = Join-Path $runnerTemp 'azlocal-package'
+        New-Item -Path $stalePackageRoot -ItemType Directory -Force | Out-Null
+        'synthetic old artifact content' | Set-Content -LiteralPath (Join-Path $stalePackageRoot 'unapproved.env')
+        Push-Location $runnerTemp
         try {
             $env:GITHUB_WORKSPACE = $script:RepositoryRoot
-            $env:RUNNER_TEMP = $TestDrive
+            $env:RUNNER_TEMP = $runnerTemp
             $env:GITHUB_OUTPUT = Join-Path $TestDrive 'outputs.txt'
             $env:GITHUB_STEP_SUMMARY = Join-Path $TestDrive 'summary.md'
             $env:GITHUB_SHA = '0123456789012345678901234567890123456789'
@@ -341,12 +483,15 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
             $env:RELEASE_OPERATION = 'Stage only'
             $env:RELEASE_LISTING = 'Unlisted'
             & ([scriptblock]::Create($script:StageStep.run)) *> $null
-            $packageRoot = Join-Path $TestDrive 'azlocal-package'
+            $packageRoot = Join-Path $runnerTemp 'azlocal-package'
             $downloadManifest = Join-Path $packageRoot "AzLocal.UpdateManagement/$env:EXPECTED_VERSION/AzLocal.UpdateManagement.psd1"
             (Test-ModuleManifest $downloadManifest -ErrorAction Stop).Version.ToString() | Should -Be $env:EXPECTED_VERSION
-            $sourceFiles = @(Get-ChildItem 'C:/Temp/AzLocal.UpdateManagement' -Recurse -File)
-            $downloadFiles = @(Get-ChildItem $packageRoot -Recurse -File)
+            $sourceFiles = @(Get-ChildItem 'C:/Temp/AzLocal.UpdateManagement' -Recurse -Force -File)
+            $downloadFiles = @(Get-ChildItem $packageRoot -Recurse -Force -File)
             $downloadFiles.Count | Should -Be $sourceFiles.Count
+            foreach ($assetPath in @('Automation-Pipeline-Examples/.itsm/azurelocal-itsm.yml', 'Automation-Pipeline-Examples/.itsm/templates/incident-body.md')) {
+                Join-Path (Split-Path $downloadManifest -Parent) $assetPath | Should -Exist
+            }
             foreach ($file in $sourceFiles) {
                 $relativePath = $file.FullName.Substring('C:\Temp\AzLocal.UpdateManagement\'.Length)
                 $downloadFile = Join-Path (Split-Path $downloadManifest -Parent) $relativePath
@@ -358,6 +503,7 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
             { & ([scriptblock]::Create($script:StageStep.run)) *> $null } | Should -Throw '*does not match expected version*'
         }
         finally {
+            Pop-Location
             foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $savedEnvironment[$name]) }
         }
     }

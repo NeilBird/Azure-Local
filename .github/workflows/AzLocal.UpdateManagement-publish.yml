@@ -74,10 +74,13 @@ jobs:
           }
           & (Join-Path $env:GITHUB_WORKSPACE 'AzLocal.UpdateManagement/Publish-Module.ps1') -StageOnly
           $packageRoot = Join-Path $env:RUNNER_TEMP 'azlocal-package'
+            if (Test-Path -LiteralPath $packageRoot) {
+              Remove-Item -LiteralPath $packageRoot -Recurse -Force
+            }
           $moduleRoot = Join-Path $packageRoot 'AzLocal.UpdateManagement'
           New-Item -Path $moduleRoot -ItemType Directory -Force | Out-Null
-          Copy-Item -LiteralPath 'C:/Temp/AzLocal.UpdateManagement' -Destination (Join-Path $moduleRoot $version) -Recurse
-          $fileCount = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -File).Count
+            Copy-Item -LiteralPath 'C:/Temp/AzLocal.UpdateManagement' -Destination (Join-Path $moduleRoot $version) -Recurse -Force
+            $fileCount = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -Force -File).Count
           "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
           @(
               '## Module package'
@@ -86,7 +89,7 @@ jobs:
               "Operation: $env:RELEASE_OPERATION"
               "Requested Gallery listing: $env:RELEASE_LISTING (applies only to Publish)"
               "Packaged files: $fileCount"
-              'Download the module ZIP from this run''s Artifacts section. No credentials are included.'
+              'Download the module ZIP from this run''s Artifacts section. Only allow-listed source files are included.'
           ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
       - name: Upload downloadable module ZIP
@@ -95,7 +98,7 @@ jobs:
           name: AzLocal.UpdateManagement-${{ steps.package.outputs.version }}-${{ github.sha }}
           path: ${{ runner.temp }}/azlocal-package/
           if-no-files-found: error
-          include-hidden-files: false
+          include-hidden-files: true
           retention-days: 7
 
   publish:

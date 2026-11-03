@@ -217,8 +217,21 @@ AzLocal.UpdateManagement/
 Extract it to a PowerShell module search path, or import the extracted manifest by
 path. It is an installable source tree, not a NuGet `.nupkg`. Artifacts expire after
 seven days. Stage-only runs do not require the `psgallery` environment or its secret.
-The packaging allow-list includes complete approved asset directories; keep those
-directories free of credentials, private configuration, and unrelated files.
+Packaging is confined to `AzLocal.UpdateManagement`, resolved from the publishing
+script's own location, not the current working directory. The repository root and
+sibling modules are never copied. Executable files come from the module manifest;
+customer assets are individually declared in the publishing script. Rooted paths,
+parent traversal, wildcard paths, and linked source paths are rejected. Adding an
+unexpected file under `Automation-Pipeline-Examples`, `ITSM`, or `docs/images`
+stops packaging before the existing stage is cleared or credentials are requested.
+
+Each run rebuilds a clean stage and verifies the exact staged file set and SHA256
+hashes against the approved source. The workflow also clears its temporary upload
+directory before copying that stage. Artifact uploads retain the explicitly
+approved `.itsm` files; hidden paths are not a substitute for an allow-list.
+New bundled files require an explicit allow-list change. Review changes to existing
+approved files too: path and hash validation do not detect credentials or private
+data deliberately or accidentally added to an approved file.
 
 For `Publish`, the protected job checks out the same immutable commit and rebuilds
 the package from source; it does not execute or publish downloaded artifacts. It
