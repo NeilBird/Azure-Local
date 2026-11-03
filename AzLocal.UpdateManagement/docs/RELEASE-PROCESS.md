@@ -87,7 +87,8 @@ in the setup documentation; release notes should describe the actual changes.
     containing the exact commit, module version, UTC timestamp, and counts.
     Do not create an AzLocal.UpdateManagement release PR directly with
     `gh pr create`, the GitHub UI, or another client.
- 7. After the PR is approved and merged, publish to PowerShell Gallery:
+ 7. After the PR is approved and merged, use the manual GitHub publishing
+   workflow described below, or publish locally to PowerShell Gallery:
         .\Publish-Module.ps1
    The script immediately unlists the exact published version by default.
    Use -List only when intentionally publishing a version that must become
@@ -152,6 +153,104 @@ in the setup documentation; release notes should describe the actual changes.
   customer names, resource names, email addresses, or other PII. Confirm the
   release targets the same merged commit that was tagged in step 15.
 ```
+
+## Manual GitHub packaging and publishing
+
+The [Package and Publish workflow](../../.github/workflows/AzLocal.UpdateManagement-publish.yml)
+runs only on manual dispatch from `main` in `NeilBird/Azure-Local`. It builds from
+the exact dispatch commit, not a moving branch tip. Forks, pull requests, and
+other branches cannot run its jobs. No API key is accepted as a workflow input:
+dispatch inputs are not secret storage, and this repository's logs and artifacts
+must be treated as public.
+
+### One-time publishing setup
+
+Before enabling publishing, a repository administrator must:
+
+1. Create a GitHub environment named `psgallery` under **Settings > Environments**.
+2. Restrict its deployment branches to the selected branch `main`. Configure
+  environment protections appropriate to the repository's release policy.
+  Do not rely only on the YAML branch condition: someone with
+  workflow-editing rights could change that condition on another branch.
+3. Add `PSGALLERY_API_KEY` as an **environment secret**, not a repository variable,
+  workflow input, committed file, or command-line literal. Create a short-lived
+  Gallery key restricted to `AzLocal.UpdateManagement`, with only the permissions
+  needed to push new versions and unlist that package. Rotate or revoke it when
+  no longer required. Never paste the key into chat or logs.
+4. Protect `main` according to the repository's release policy. Before dispatching
+  a publication, verify the workflow, publishing script, packaged source, requested
+  version, dispatch SHA, release certification, and listing choice. Configure
+  environment protection rules in GitHub settings; the workflow YAML does not
+  create or enforce settings that have not been configured there.
+
+GitHub encrypts the stored secret and releases it to the publishing job when the
+configured environment rules are satisfied. Only the final publish step receives it as an environment
+variable. The script takes a `SecureString`, avoids writing the key to disk, and
+clears its references afterward. The Gallery client still needs plaintext in
+process memory to authenticate; neither masking nor `SecureString` makes executing
+untrusted code with the key safe. Keep Actions debug logging disabled for releases.
+
+### Run and download
+
+Open **Actions > AzLocal.UpdateManagement - Package and Publish > Run workflow**,
+select `main`, and supply:
+
+| Input | Default | Behaviour |
+| --- | --- | --- |
+| Operation | `Stage only` | Build and validate the downloadable package without Gallery credentials or publishing. `Publish` also starts the protected publishing job. |
+| Expected version | Required | Must exactly match the module manifest; does not change or bump it. |
+| Listing | `Unlisted` | Immediately unlist after publishing. `Listed` intentionally leaves the new version public. Ignored for stage-only runs. |
+
+The packaging job uses the existing allow-list in `Publish-Module.ps1`, validates
+the staged manifest, and uploads only the staged module tree. Download the artifact
+named `AzLocal.UpdateManagement-<version>-<commit>` from the run's **Artifacts**
+section. GitHub provides a **single ZIP**, not a ZIP nested inside another ZIP:
+
+```text
+AzLocal.UpdateManagement/
+  <version>/
+   AzLocal.UpdateManagement.psd1
+   AzLocal.UpdateManagement.psm1
+   ...allow-listed module content...
+```
+
+Extract it to a PowerShell module search path, or import the extracted manifest by
+path. It is an installable source tree, not a NuGet `.nupkg`. Artifacts expire after
+seven days. Stage-only runs do not require the `psgallery` environment or its secret.
+Packaging is confined to `AzLocal.UpdateManagement`, resolved from the publishing
+script's own location, not the current working directory. The repository root and
+sibling modules are never copied. Executable files come from the module manifest;
+customer assets are individually declared in the publishing script. Rooted paths,
+parent traversal, wildcard paths, and linked source paths are rejected. Adding an
+unexpected file under `Automation-Pipeline-Examples`, `ITSM`, or `docs/images`
+stops packaging before the existing stage is cleared or credentials are requested.
+
+Each run rebuilds a clean stage and verifies the exact staged file set and SHA256
+hashes against the approved source. The workflow also clears its temporary upload
+directory before copying that stage. Artifact uploads retain the explicitly
+approved `.itsm` files; hidden paths are not a substitute for an allow-list.
+New bundled files require an explicit allow-list change. Review changes to existing
+approved files too: path and hash validation do not detect credentials or private
+data deliberately or accidentally added to an approved file.
+
+For `Publish`, the protected job checks out the same immutable commit and rebuilds
+the package from source; it does not execute or publish downloaded artifacts. It
+verifies official Gallery repository endpoints before exposing the API key. The
+workflow uses read-only repository permissions, SHA-pinned actions, ephemeral
+GitHub-hosted Windows runners, and no persisted checkout credentials. Concurrent
+runs are serialized without automatically cancelling an active publication.
+
+This is intended to take a few minutes, excluding runner queues and environment-policy waits;
+each job has a ten-minute timeout. It does **not** rerun or replace the mandatory
+pre-PR hermetic/live certification or the post-publish consumer validation matrix.
+Stage-only success verifies packaging, not runtime acceptance.
+
+Unlisted publishing still briefly creates a listed package before unlisting it.
+Cancellation, timeout, or unlisting failure can leave it listed: inspect the Gallery
+and unlist manually before continuing. Never blindly retry a partially successful
+publish: Gallery versions cannot be overwritten. After consumer acceptance, relist
+the existing version through **Manage Package**; do not rerun publishing with
+`Listed` to promote an already published version.
 
 ## Azure DevOps dependency review
 

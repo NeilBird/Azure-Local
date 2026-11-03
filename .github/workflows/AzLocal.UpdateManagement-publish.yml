@@ -1,0 +1,164 @@
+name: AzLocal.UpdateManagement - Package and Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Build a downloadable package only, or also publish to PSGallery
+        type: choice
+        required: true
+        default: Stage only
+        options:
+          - Stage only
+          - Publish
+      expected_version:
+        description: Exact module version expected in the source manifest (for example 0.9.40)
+        type: string
+        required: true
+      listing:
+        description: Gallery visibility after publishing (ignored for Stage only)
+        type: choice
+        required: true
+        default: Unlisted
+        options:
+          - Unlisted
+          - Listed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: azlocal-updatemanagement-gallery-release
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Validate and package
+    if: github.repository == 'NeilBird/Azure-Local' && github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout dispatch commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate inputs and stage package
+        id: package
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          RELEASE_LISTING: ${{ inputs.listing }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_OPERATION -notin @('Stage only', 'Publish')) {
+              throw 'Unsupported operation.'
+          }
+          if ($env:RELEASE_LISTING -notin @('Unlisted', 'Listed')) {
+              throw 'Unsupported listing choice.'
+          }
+          if ($env:EXPECTED_VERSION -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$') {
+              throw 'Expected version must be a numeric module version.'
+          }
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE 'AzLocal.UpdateManagement/AzLocal.UpdateManagement.psd1'
+          $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath
+          $version = [string]$manifest.ModuleVersion
+          if ($version -cne $env:EXPECTED_VERSION) {
+              throw "Source version $version does not match expected version $env:EXPECTED_VERSION."
+          }
+          & (Join-Path $env:GITHUB_WORKSPACE 'AzLocal.UpdateManagement/Publish-Module.ps1') -StageOnly
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'azlocal-package'
+            if (Test-Path -LiteralPath $packageRoot) {
+              Remove-Item -LiteralPath $packageRoot -Recurse -Force
+            }
+          $moduleRoot = Join-Path $packageRoot 'AzLocal.UpdateManagement'
+          New-Item -Path $moduleRoot -ItemType Directory -Force | Out-Null
+            Copy-Item -LiteralPath 'C:/Temp/AzLocal.UpdateManagement' -Destination (Join-Path $moduleRoot $version) -Recurse -Force
+            $fileCount = @(Get-ChildItem -LiteralPath $packageRoot -Recurse -Force -File).Count
+          "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+          @(
+              '## Module package'
+              "Version: $version"
+              "Source commit: $env:GITHUB_SHA"
+              "Operation: $env:RELEASE_OPERATION"
+              "Requested Gallery listing: $env:RELEASE_LISTING (applies only to Publish)"
+              "Packaged files: $fileCount"
+              'Download the module ZIP from this run''s Artifacts section. Only allow-listed source files are included.'
+          ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload downloadable module ZIP
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: AzLocal.UpdateManagement-${{ steps.package.outputs.version }}-${{ github.sha }}
+          path: ${{ runner.temp }}/azlocal-package/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  publish:
+    name: Publish release candidate
+    needs: package
+    if: github.repository == 'NeilBird/Azure-Local' && github.ref == 'refs/heads/main' && inputs.operation == 'Publish'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    environment: psgallery
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout dispatch commit
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare Gallery publishing prerequisites
+        env:
+          EXPECTED_VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = Import-PowerShellDataFile -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'AzLocal.UpdateManagement/AzLocal.UpdateManagement.psd1')
+          if ([string]$manifest.ModuleVersion -cne $env:EXPECTED_VERSION) {
+              throw 'Publishing checkout differs from the validated package version.'
+          }
+          if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+              Register-PSRepository -Default -ErrorAction Stop
+          }
+          $repository = Get-PSRepository -Name PSGallery -ErrorAction Stop
+          if ($repository.SourceLocation.TrimEnd('/') -ne 'https://www.powershellgallery.com/api/v2' -or
+              $repository.PublishLocation.TrimEnd('/') -ne 'https://www.powershellgallery.com/api/v2/package') {
+              throw 'PSGallery repository endpoints do not match the official Gallery.'
+          }
+          if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction Stop | Out-Null
+          }
+
+      - name: Publish with protected environment secret
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+          RELEASE_LISTING: ${{ inputs.listing }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $secureKey = $null
+          try {
+              if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+                  throw 'Configure PSGALLERY_API_KEY in the protected psgallery environment before publishing.'
+              }
+              if ($env:RELEASE_LISTING -notin @('Unlisted', 'Listed')) {
+                  throw 'Unsupported listing choice.'
+              }
+              $secureKey = ConvertTo-SecureString $env:PSGALLERY_API_KEY -AsPlainText -Force
+              Remove-Item Env:PSGALLERY_API_KEY
+              & (Join-Path $env:GITHUB_WORKSPACE 'AzLocal.UpdateManagement/Publish-Module.ps1') -NuGetApiKey $secureKey -List:($env:RELEASE_LISTING -eq 'Listed') -Confirm:$false
+              "Published successfully. Requested Gallery listing: $env:RELEASE_LISTING." | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          }
+          finally {
+              Remove-Item Env:PSGALLERY_API_KEY -ErrorAction SilentlyContinue
+              if ($null -ne $secureKey) { $secureKey.Dispose() }
+          }
