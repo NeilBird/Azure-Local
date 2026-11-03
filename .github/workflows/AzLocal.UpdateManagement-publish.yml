@@ -99,7 +99,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish approved candidate
+    name: Publish release candidate
     needs: package
     if: github.repository == 'NeilBird/Azure-Local' && github.ref == 'refs/heads/main' && inputs.operation == 'Publish'
     runs-on: windows-latest

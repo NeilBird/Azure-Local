@@ -253,7 +253,7 @@ Describe 'Manual Gallery publishing workflow' -Tag 'ReleaseGate' {
         }
     }
 
-    It 'requires package success and protected approval before exposing the key only to the publish step' {
+    It 'requires package success and environment scoping before exposing the key only to the publish step' {
         $publish = $script:PublishWorkflow.jobs.publish
         $publish.needs | Should -Be 'package'
         $publish.environment | Should -Be 'psgallery'

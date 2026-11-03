@@ -169,22 +169,22 @@ Before enabling publishing, a repository administrator must:
 
 1. Create a GitHub environment named `psgallery` under **Settings > Environments**.
 2. Restrict its deployment branches to the selected branch `main`. Configure
-  required reviewers, prevent self-review, and disable administrator bypass
-  where available. Do not rely only on the YAML branch condition: someone with
+  environment protections appropriate to the repository's release policy.
+  Do not rely only on the YAML branch condition: someone with
   workflow-editing rights could change that condition on another branch.
 3. Add `PSGALLERY_API_KEY` as an **environment secret**, not a repository variable,
   workflow input, committed file, or command-line literal. Create a short-lived
   Gallery key restricted to `AzLocal.UpdateManagement`, with only the permissions
   needed to push new versions and unlist that package. Rotate or revoke it when
   no longer required. Never paste the key into chat or logs.
-4. Protect `main` with required review, including review of workflow, publishing
-  script, and packaged source changes. Reviewers approving the environment must
-  verify the requested version, dispatch SHA, release certification, and listing
-  choice. YAML cannot configure these GitHub protection rules; creating an
-  environment without them does not establish an approval gate.
+4. Protect `main` according to the repository's release policy. Before dispatching
+  a publication, verify the workflow, publishing script, packaged source, requested
+  version, dispatch SHA, release certification, and listing choice. Configure
+  environment protection rules in GitHub settings; the workflow YAML does not
+  create or enforce settings that have not been configured there.
 
-GitHub encrypts the stored secret and releases it to the publishing job after
-environment approval. Only the final publish step receives it as an environment
+GitHub encrypts the stored secret and releases it to the publishing job when the
+configured environment rules are satisfied. Only the final publish step receives it as an environment
 variable. The script takes a `SecureString`, avoids writing the key to disk, and
 clears its references afterward. The Gallery client still needs plaintext in
 process memory to authenticate; neither masking nor `SecureString` makes executing
@@ -227,7 +227,7 @@ workflow uses read-only repository permissions, SHA-pinned actions, ephemeral
 GitHub-hosted Windows runners, and no persisted checkout credentials. Concurrent
 runs are serialized without automatically cancelling an active publication.
 
-This is intended to take a few minutes, excluding runner queues and approval time;
+This is intended to take a few minutes, excluding runner queues and environment-policy waits;
 each job has a ten-minute timeout. It does **not** rerun or replace the mandatory
 pre-PR hermetic/live certification or the post-publish consumer validation matrix.
 Stage-only success verifies packaging, not runtime acceptance.
