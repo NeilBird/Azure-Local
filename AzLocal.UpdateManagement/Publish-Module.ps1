@@ -8,7 +8,8 @@
     Publish-Module, then immediately unlists that exact version through the
     PowerShell Gallery NuGet API for staged release validation.
 
-    The NuGet API key is prompted interactively and is never stored on disk.
+    The NuGet API key is supplied as a SecureString or prompted interactively
+    and is never stored on disk by this script.
 .PARAMETER StageOnly
     Builds and validates the allow-listed staging package, then exits without
     prompting for an API key or publishing.
@@ -16,6 +17,9 @@
     Leaves the published version listed in PowerShell Gallery. By default, a
     successful publish is immediately unlisted so the exact version remains
     available for staged validation without becoming the default install.
+.PARAMETER NuGetApiKey
+    Optional SecureString supplied by a protected automation secret. When omitted,
+    the script prompts interactively. Never pass a literal key in source control.
 .EXAMPLE
     .\Publish-Module.ps1
 
@@ -31,16 +35,18 @@
     Build and validate the package without publishing or requesting an API key.
 .NOTES
     Author  : Neil Bird, MSFT
-    Version : 1.1
+    Version : 1.2
     Created : 2026-03-16
-    Updated : 2026-07-30
+    Updated : 2026-11-03
 #>
 ########################################
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [switch]$StageOnly,
 
-    [switch]$List
+    [switch]$List,
+
+    [System.Security.SecureString]$NuGetApiKey
 )
 
 Set-StrictMode -Version Latest
@@ -133,8 +139,16 @@ if (-not $PSCmdlet.ShouldProcess("$ModuleName v$($manifest.Version)", $publishAc
 }
 
 Write-Host ""
-Write-Host "Paste your PowerShell Gallery NuGet API key (input is masked, nothing will echo):" -ForegroundColor Yellow
-$secureApiKey = Read-Host -Prompt "API key" -AsSecureString
+if ($PSBoundParameters.ContainsKey('NuGetApiKey')) {
+    if ($null -eq $NuGetApiKey -or $NuGetApiKey.Length -eq 0) {
+        throw 'API key cannot be empty. Publish cancelled.'
+    }
+    $secureApiKey = $NuGetApiKey.Copy()
+}
+else {
+    Write-Host "Paste your PowerShell Gallery NuGet API key (input is masked, nothing will echo):" -ForegroundColor Yellow
+    $secureApiKey = Read-Host -Prompt "API key" -AsSecureString
+}
 if ($null -eq $secureApiKey -or $secureApiKey.Length -eq 0) {
     throw 'API key cannot be empty. Publish cancelled.'
 }
