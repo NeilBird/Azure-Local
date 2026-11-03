@@ -6,6 +6,33 @@ The module ships through a **staged unlisted-release flow** that allows end-to-e
 
 In the steps below, `<candidate>` is the version being released (for example `1.2.3`). Release pull requests must be created through `Tools\New-AzLocalReleasePullRequest.ps1`. That command runs the complete hermetic suite and every live-Azure shard before it invokes `gh pr create`; there is no supported release path that creates the PR first.
 
+## Short-lived branch workflow
+
+Use a fresh, short-lived branch for each change or release candidate, including
+documentation and release-tooling work. Do not reuse a long-lived development
+branch across squash-merged PRs: squash merges create new commits on `main`, leaving
+the original branch history apparently unmerged even when its changes have landed.
+
+1. Check the worktree before switching branches. Preserve unrelated edits and
+  existing stashes; do not discard or restore them as part of routine cleanup.
+2. Fetch remote references with `git fetch --prune origin`, switch to `main`, and
+  synchronize it with `git merge --ff-only origin/main`. If local and remote
+  `main` differ afterward, investigate rather than resetting or force-pushing.
+3. Create a new topic branch from synchronized `main` with
+  `git switch -c <topic-branch>`, then complete the change on that branch.
+4. Commit and push the complete candidate before certification. Release PRs still
+  require the mandatory wrapper and all existing validation gates below; branch
+  cleanup does not replace release acceptance or authorize publication.
+5. After the PR merges, verify its source branch has no additional local or remote
+  work before deleting those branches. For a squash merge, check the PR's merged
+  head and compare the branch content with that PR's merge commit, not merely
+  commit ancestry or the latest `main`. Investigate any differences before deletion.
+  Sync `main`, remove only the verified merged branch locally and remotely, and
+  prune stale remote-tracking references. Preserve unrelated branches and stashes.
+
+Create the next branch from the newly synchronized `main`. Do not routinely reset
+and force-push an old development branch to reuse it.
+
 ## Staged unlisted-release flow
 
 The module is also the distribution unit for the example pipelines and refresh
@@ -24,7 +51,8 @@ pre-PR certification gate or the validation matrix below. Keep platform guidance
 in the setup documentation; release notes should describe the actual changes.
 
 ```text
- 1. Complete all work for the candidate version on a release branch.
+ 1. Complete all work for the candidate version on a fresh, short-lived release
+   branch created from synchronized main as described above.
  1a. REVIEW EVERY GITHUB ACTION BEFORE EACH MODULE RELEASE. Read each action's
   official release notes, security advisories, and vulnerability notices since
   its currently pinned revision. Consider whether a security fix, relevant bug
@@ -548,7 +576,8 @@ consumer documentation to the repository URL for intentionally excluded files.
 
 - Tag and push the release commit (step 15 above).
 - Create and review the GitHub Release from that tag (step 16 above).
-- Open the tracking issue / feature branch for the next release.
+- Open the tracking issue for the next release. When work starts, create a fresh
+  short-lived branch from synchronized `main`; do not reuse the merged branch.
 - Confirm the listed version on PSGallery matches `<candidate>` and that
   `Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery`
   resolves to it on a clean runner.
