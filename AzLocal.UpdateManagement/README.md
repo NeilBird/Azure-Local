@@ -275,6 +275,11 @@ Get-AzLocalUpdateRuns -ClusterName "MyCluster01" -ResourceGroupName "MyRG"
 
 ### 7. Set Up Update Management Tags for Staged Rollouts
 
+For the complete inventory, including sideload identity, attempt/retry state, and
+notification-suppression tags, see the
+[Azure resource tags appendix](Automation-Pipeline-Examples/docs/appendix-resource-tags.md).
+The table below is a core-tag overview; the appendix documents ownership and lifecycle.
+
 The module reads (and in some cases writes) the following Azure resource tags to control how clusters are grouped, when updates are allowed to start, and which clusters are excluded from automation:
 
 | Tag | Purpose | Required? | Set By |
