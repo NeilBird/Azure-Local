@@ -92,6 +92,7 @@ $IncludePaths = @(@(
     'Automation-Pipeline-Examples/docs/appendix-github-environments.md'
     'Automation-Pipeline-Examples/docs/appendix-module-version-pinning.md'
     'Automation-Pipeline-Examples/docs/appendix-pipelines.md'
+    'Automation-Pipeline-Examples/docs/appendix-resource-tags.md'
     'Automation-Pipeline-Examples/docs/appendix-release-history.md'
     'Automation-Pipeline-Examples/docs/apply-updates-schedule.md'
     'Automation-Pipeline-Examples/docs/development-channel-testing.md'

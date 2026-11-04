@@ -1823,6 +1823,10 @@ Run `Get-AzLocalFleetSettings | Format-List` from the repo root to verify the ef
 
 ### 6.2 Plan update rings, windows, and exclusions
 
+For every cluster and notification-suppression rule tag, including module-managed
+state, see the [Azure resource tags appendix](docs/appendix-resource-tags.md).
+It documents purpose, values, ownership, creation, and cleanup lifecycle.
+
 Open `config/ClusterUpdateRings.csv` and review the four managed columns:
 
 | Column | Required | Values | Purpose |
@@ -2871,6 +2875,7 @@ Moved to [docs/appendix-release-history.md](docs/appendix-release-history.md) to
 ## 17. Related documentation
 
 - [Azure Local Update Management module README](../README.md)
+- [Appendix: Azure resource tags](docs/appendix-resource-tags.md) - all module-defined cluster and suppression-rule tags, customer-defined admission tags, and their purpose, ownership, and lifecycle.
 - [Appendix: GitHub environments (`docs/appendix-github-environments.md`)](docs/appendix-github-environments.md) - optional governance wrapper for section 4.1: approval gates, per-ring identities, and the environment-scoped federated credentials + `gh` CLI to set them up.
 - [Appendix: Pinning the module version (`docs/appendix-module-version-pinning.md`)](docs/appendix-module-version-pinning.md) - optional deep-dive for section 5.3: `REQUIRED_MODULE_VERSION`, drift notices, and the `Copy-`/`Update-AzLocalPipelineExample` YAML-refresh commands.
 - [Concepts and terminology (`docs/concepts.md`)](../docs/concepts.md) - one-page glossary covering update states, deep-link columns, and the JUnit testsuites the pipelines emit.

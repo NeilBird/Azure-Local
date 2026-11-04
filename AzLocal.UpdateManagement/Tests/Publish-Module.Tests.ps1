@@ -185,6 +185,7 @@ Describe 'Publish-Module package allow-list' -Tag 'ReleaseGate' {
         $requiredPaths = @(
             'README.md'
             'example-update-request.json'
+            'Automation-Pipeline-Examples\docs\appendix-resource-tags.md'
             'docs\cmdlet-reference.md'
             'docs\concepts.md'
             'docs\rbac.md'
