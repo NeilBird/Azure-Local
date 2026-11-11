@@ -55,12 +55,16 @@ $report.Volumes | Export-Csv -Path .\volume-storage.csv -NoTypeInformation
 
 In structured output, `Pool.ThinProvisioningAlertThresholdsPercent` is a numeric array, empty when not reported. The default console view renders it as comma-separated values or `Not reported`. JSON preserves nested arrays; CSV examples export the pool and volumes separately. Array-valued fields need flattening if individual threshold values are required in CSV cells.
 
+For CSV-driven collection across multiple clusters, see [Automation](#automation).
+
 You can also download and run it directly:
 
 ```powershell
 Invoke-WebRequest -UseBasicParsing `
     -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/S2D-Show-Used-Available-Storage/S2D-Show-Used-Available-Storage.ps1' `
     -OutFile .\S2D-Show-Used-Available-Storage.ps1
+
+Unblock-File .\S2D-Show-Used-Available-Storage.ps1
 
 .\S2D-Show-Used-Available-Storage.ps1
 ```
@@ -208,6 +212,52 @@ Azure Local LENS uses Azure Resource Graph against the ARM-projected properties,
 - **Mixed resiliency is best-effort.** When the cluster contains volumes at more than one resiliency tier (e.g. some 2-way and some 3-way mirror), the script flags this as `MIXED` and reports `EstimatedAdditionalLogicalDataTiB` against the dominant factor. Treat that bottom-line number as a planning estimate rather than precise in mixed clusters.
 - **Recommended repair reserve is an approximation, not an enforced limit.** The script uses "largest capacity drive size x min(node count, 4)". Review the allowance for heterogeneous drives or media tiers; Microsoft's guidance for NVMe + SSD + HDD clusters calls for separate SSD and HDD allowances. No drives or capacity are reserved by this script.
 - **`LogicalWrittenTiB` is approximate.** Deduplication, ReFS block cloning, and Storage Spaces metadata mean `FootprintOnPool / DataCopies` is a close estimate, not an exact byte count of application data.
+
+## Automation
+
+### Remote collection from a CSV inventory
+
+Use one reachable **cluster node per cluster**, not every node, to avoid duplicate reports. For example, an inventory named `clusters.csv`:
+
+```csv
+ComputerName
+cluster-a-node01.contoso.com
+cluster-b-node01.contoso.com
+```
+
+Before running this example, place the reviewed script at `C:\Tools\S2D-Show-Used-Available-Storage.ps1` on each target node. PowerShell remoting (WinRM) must already be configured and permitted by your firewall and authentication policy. Run from a trusted management host using an account with administrative rights on every target; the remote process must pass the script's administrator check. The example uses your current credentials and does not change remoting, TrustedHosts, or authentication settings.
+
+```powershell
+$targets = Import-Csv -LiteralPath .\clusters.csv -ErrorAction Stop
+$reports = @(
+    foreach ($target in $targets) {
+        try {
+            Invoke-Command -ComputerName $target.ComputerName -ScriptBlock {
+                & 'C:\Tools\S2D-Show-Used-Available-Storage.ps1' -PassThru
+            } -ErrorAction Stop
+        }
+        catch {
+            Write-Warning ("Storage collection failed on {0}: {1}" -f
+                $target.ComputerName, $_.Exception.Message)
+        }
+    }
+)
+
+ConvertTo-Json -InputObject $reports -Depth 6 |
+    Set-Content -Path .\fleet-storage.json
+
+$reports | Select-Object ClusterName, CollectedAtUtc,
+    @{Name='PoolName'; Expression={$_.Pool.PoolName}},
+    @{Name='PoolUsedPercent'; Expression={$_.Pool.PoolUsedPercent}},
+    @{Name='PoolFreeRawTiB'; Expression={$_.Pool.PoolFreeRawTiB}},
+    @{Name='EstimatedAdditionalLogicalDataTiB'; Expression={$_.Pool.EstimatedAdditionalLogicalDataTiB}} |
+    Export-Csv -Path .\fleet-pool-summary.csv -NoTypeInformation
+
+$reports | Select-Object ClusterName, PSComputerName
+$reports | ForEach-Object { $_.Volumes }
+```
+
+`ClusterName` is discovered on the remote cluster; `PSComputerName` identifies the node contacted by remoting. Returned reports are deserialized data objects, with nested `Pool` and `Volumes` properties preserved. Each failed target produces a warning and collection continues; failed targets are absent from `$reports`, so review warnings and reconcile successful reports with the inventory. Genuine capacity warnings may also appear for successful targets. The JSON file retains pool and per-volume data; the summary CSV selects scalar pool fields and keeps cluster identity.
 
 ## License
 
