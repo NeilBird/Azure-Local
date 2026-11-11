@@ -209,6 +209,10 @@ Example commands to download the module, import it and confirm that an Azure Loc
 Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/ad-effective-permissions/Get-ADEffectiveAccess.psm1' -OutFile .\Get-ADEffectiveAccess.psm1
 Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/ad-effective-permissions/Get-ADEffectiveAccess.psd1' -OutFile .\Get-ADEffectiveAccess.psd1
 
+# After reviewing the downloaded files and trusting their source
+Unblock-File -LiteralPath .\Get-ADEffectiveAccess.psm1
+Unblock-File -LiteralPath .\Get-ADEffectiveAccess.psd1
+
 # Import the module
 Import-Module .\Get-ADEffectiveAccess.psd1 -Force
 
