@@ -12,10 +12,12 @@ A read-only PowerShell script that surfaces physical pool usage and estimates ad
 
 [`S2D-Show-Used-Available-Storage.ps1`](S2D-Show-Used-Available-Storage.ps1) is **read-only** - it does not modify any storage objects. Run from any node in an Azure Local / S2D cluster. It auto-detects the resiliency factor from your existing volumes rather than assuming 2-way or 3-way mirror, and flags if the cluster has volumes at multiple resiliency tiers.
 
-It produces two outputs:
+By default, it produces two console views:
 
 1. **Step 1 - Per-volume table** showing each virtual disk's `ThinMaxTiB`, `FootprintOnPoolTiB` (Real Used), and `LogicalWrittenTiB`.
 2. **Step 2 - Pool-wide summary** showing the selected non-primordial pool's name, size, allocated/free capacity and percentages, configured thin-provisioning alert thresholds, recommended repair reserve, and `EstimatedAdditionalLogicalDataTiB` (a planning estimate, not a write limit).
+
+With `-PassThru`, it returns one structured cluster report instead, without formatted tables or explanatory console text. Genuine warnings are still emitted.
 
 ## Requirements
 
@@ -30,6 +32,28 @@ It produces two outputs:
 # From any node in the cluster, in an elevated PowerShell session:
 .\S2D-Show-Used-Available-Storage.ps1
 ```
+
+### Structured output
+
+```powershell
+$report = .\S2D-Show-Used-Available-Storage.ps1 -PassThru
+$report.ClusterName
+$report.Pool
+$report.Volumes
+
+$report | ConvertTo-Json -Depth 5 | Set-Content -Path .\cluster-storage.json
+$report.Pool | Export-Csv -Path .\pool-storage.csv -NoTypeInformation
+$report.Volumes | Export-Csv -Path .\volume-storage.csv -NoTypeInformation
+```
+
+| Property | Type and meaning |
+|---|---|
+| `ClusterName` | Cluster name discovered using `Get-Cluster`, not the executing node's name. Null with a warning if discovery fails. |
+| `CollectedAtUtc` | UTC `DateTime` recorded when report collection completes. |
+| `Pool` | Object containing the pool-summary fields documented below. Numeric values remain numeric; `RepairReserveDriveEquivalents` is an integer rather than a display label. |
+| `Volumes` | Array of per-volume objects, including for zero or one volume. |
+
+In structured output, `Pool.ThinProvisioningAlertThresholdsPercent` is a numeric array, empty when not reported. The default console view renders it as comma-separated values or `Not reported`. JSON preserves nested arrays; CSV examples export the pool and volumes separately. Array-valued fields need flattening if individual threshold values are required in CSV cells.
 
 You can also download and run it directly:
 

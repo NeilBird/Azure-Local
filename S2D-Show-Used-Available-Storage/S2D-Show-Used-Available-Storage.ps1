@@ -23,10 +23,20 @@
 
     Run from any node in the cluster. Read-only - the script does not modify any storage objects.
 
+.PARAMETER PassThru
+    Returns one object containing ClusterName, CollectedAtUtc, Pool, and a Volumes array instead
+    of formatted console output. Numeric values remain numeric; genuine warnings are retained.
+
 .EXAMPLE
     .\S2D-Show-Used-Available-Storage.ps1
 
     Runs both steps against the local cluster's storage pool and prints two tables.
+
+.EXAMPLE
+    $report = .\S2D-Show-Used-Available-Storage.ps1 -PassThru
+    $report | ConvertTo-Json -Depth 5
+
+    Collects one structured cluster report and serializes its pool and volume properties.
 
 .NOTES
     Author : Neil Bird, Microsoft
@@ -52,7 +62,10 @@
 #>
 
 [CmdletBinding()]
-param()
+[OutputType([pscustomobject])]
+param(
+    [switch]$PassThru
+)
 
 # Requires elevation - Get-StoragePool / Get-VirtualDisk / Get-PhysicalDisk return limited or no data
 # without administrator privileges.
@@ -64,9 +77,6 @@ if (-not ([Security.Principal.WindowsPrincipal] `
 
 # Step 1
 # ---------- Per-volume real footprint on the pool (post-resiliency) ----------
-Write-Host ""
-Write-Host "Per-volume footprint on the storage pool:" -ForegroundColor Cyan
-
 try {
     $virtualDisks = @(Get-VirtualDisk -ErrorAction Stop)
 }
@@ -77,7 +87,7 @@ catch {
 if ($virtualDisks.Count -eq 0) {
     Write-Warning "No virtual disks were found on this host."
 }
-else {
+$volumeReports = @(
     $virtualDisks | ForEach-Object {
         $vd = $_
         $resFactor = if ($vd.NumberOfDataCopies) { $vd.NumberOfDataCopies } else { 1 }
@@ -90,13 +100,11 @@ else {
             FootprintOnPoolTiB = [math]::Round($vd.FootprintOnPool/1TB, 2)
             LogicalWrittenTiB  = [math]::Round($vd.FootprintOnPool/$resFactor/1TB, 2)
         }
-    } | Format-Table -AutoSize
-}
+    }
+)
 
 # Step 2
 # ---------- Pool-wide "Real Available" ----------
-Write-Host "Pool-wide capacity summary:" -ForegroundColor Cyan
-
 $pool = Get-StoragePool -ErrorAction SilentlyContinue |
     Where-Object { -not $_.IsPrimordial } |
     Select-Object -First 1
@@ -114,10 +122,6 @@ $poolFreeRawPercent = if ($poolSize -gt 0) { [math]::Round($poolFreeRaw / $poolS
 $thinProvisioningThresholds = @(if ($pool.PSObject.Properties['ThinProvisioningAlertThresholds']) {
     $pool.ThinProvisioningAlertThresholds
 })
-$thresholdsDisplay = if ($thinProvisioningThresholds.Count -gt 0) {
-    $thinProvisioningThresholds -join ', '
-} else { 'Not reported' }
-
 # Detect the dominant resiliency factor from existing virtual disks.
 # If the cluster mixes resiliency tiers, the dominant one is used and flagged.
 [int[]]$copiesObserved = @($virtualDisks |
@@ -157,22 +161,59 @@ if (-not $largestCapDrive) { $largestCapDrive = 0 }
 $capacityReserve = $largestCapDrive * $reserveDrives
 $poolFreeUsable  = $poolFreeRaw - $capacityReserve
 
-[pscustomobject]@{
+$poolSummary = [pscustomobject]@{
     PoolName                                      = $pool.FriendlyName
     PoolSizeTiB                                   = [math]::Round($poolSize/1TB, 2)
     PoolAllocatedTiB                              = [math]::Round($poolAllocated/1TB, 2)
     PoolUsedPercent                               = $poolUsedPercent
     PoolFreeRawTiB                                = [math]::Round($poolFreeRaw/1TB, 2)
     PoolFreeRawPercent                            = $poolFreeRawPercent
-    ThinProvisioningAlertThresholdsPercent         = $thresholdsDisplay
+    ThinProvisioningAlertThresholdsPercent         = [uint16[]]$thinProvisioningThresholds
     RecommendedRepairReserveTiB                    = [math]::Round($capacityReserve/1TB, 2)
-    RepairReserveDriveEquivalents                  = "$reserveDrives (one per node, capped at 4; not dedicated drives)"
+    RepairReserveDriveEquivalents                  = [int]$reserveDrives
     PhysicalHeadroomAfterRecommendedReserveTiB     = [math]::Round($poolFreeUsable/1TB, 2)
     ResiliencyFactorAssumed                        = $resFactor
     ResiliencySource                               = $resSource
     EstimatedAdditionalLogicalDataTiB              = [math]::Round([math]::Max([double]0, [double]$poolFreeUsable)/$resFactor/1TB, 2)
-} | Format-List
+}
 
+if ($poolSize -le 0) {
+    Write-Warning "Pool size is zero or invalid; used/free percentages are unavailable."
+}
+if ($poolFreeUsable -lt 0) {
+    Write-Warning "Physical free space is below the recommended repair reserve; the negative headroom is a planning shortfall, not an enforced limit."
+}
+
+$clusterName = $null
+try {
+    $clusterName = (Get-Cluster -ErrorAction Stop).Name
+}
+catch {
+    Write-Warning "Get-Cluster failed; cluster name is unavailable. Error: $($_.Exception.Message)"
+}
+
+if ($PassThru) {
+    [pscustomobject]@{
+        ClusterName    = $clusterName
+        CollectedAtUtc = [datetime]::UtcNow
+        Pool           = $poolSummary
+        Volumes        = $volumeReports
+    }
+    return
+}
+
+Write-Host ""
+Write-Host "Per-volume footprint on the storage pool:" -ForegroundColor Cyan
+$volumeReports | Format-Table -AutoSize
+Write-Host "Pool-wide capacity summary:" -ForegroundColor Cyan
+$poolDisplay = $poolSummary.PSObject.Copy()
+$poolDisplay.ThinProvisioningAlertThresholdsPercent = if ($thinProvisioningThresholds.Count -gt 0) {
+    $thinProvisioningThresholds -join ', '
+} else { 'Not reported' }
+$poolDisplay.RepairReserveDriveEquivalents = "$reserveDrives (one per node, capped at 4; not dedicated drives)"
+$poolDisplay | Format-List
+
+Write-Host "Notes:" -ForegroundColor Cyan
 Write-Host "Used/free percentages describe physical pool allocation before the recommended repair allowance."
 Write-Host "Repair reserve is recommended unallocated capacity, not dedicated drives or an enforced write limit."
 Write-Host "Thin volumes can consume this headroom, leaving less capacity for repair after a drive failure."
@@ -180,9 +221,3 @@ Write-Host "Additional logical capacity is a planning estimate after the repair 
 Write-Host "Resiliency overhead is consumed as data is written; it is not pre-deducted from pool free space."
 Write-Host "Thin-provisioning thresholds are capacity alerts, not write limits or reserved space."
 Write-Host "Related capacity health failures may block update readiness; review the actual preupdate check results."
-if ($poolSize -le 0) {
-    Write-Warning "Pool size is zero or invalid; used/free percentages are unavailable."
-}
-if ($poolFreeUsable -lt 0) {
-    Write-Warning "Physical free space is below the recommended repair reserve; the negative headroom is a planning shortfall, not an enforced limit."
-}
