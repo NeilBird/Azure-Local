@@ -4,7 +4,9 @@
 
 ## TL;DR
 
-A read-only PowerShell script that surfaces the **real** used and available storage on an Azure Local / Storage Spaces Direct (S2D) cluster - the numbers behind what the Azure portal, Windows Admin Center, and the Azure Local LENS workbook show. Use `PoolAllocatedTiB` as your "real used" and `NewLogicalDataYouCanWriteTiB` as your "real available". Run from any node, in an elevated PowerShell session.
+A read-only PowerShell script that surfaces physical pool usage and estimates additional logical storage capacity on an Azure Local / Storage Spaces Direct (S2D) cluster. Use `PoolAllocatedTiB` and `PoolUsedPercent` for physical allocation, `PoolFreeRawTiB` and `PoolFreeRawPercent` for measured physical free space, and `EstimatedAdditionalLogicalDataTiB` for a planning estimate after allowing for recommended repair headroom and resiliency overhead. Primordial pools are excluded. Run from any node, in an elevated PowerShell session.
+
+**The repair reserve is a recommendation, not an enforced deduction from the pool.** No drives are dedicated or marked as used by this calculation. Thin volumes can consume this headroom, leaving less capacity for repair after a drive failure. Resiliency overhead, unlike the recommended reserve, is a real physical cost incurred as data is written.
 
 ## What this script does
 
@@ -13,7 +15,7 @@ A read-only PowerShell script that surfaces the **real** used and available stor
 It produces two outputs:
 
 1. **Step 1 - Per-volume table** showing each virtual disk's `ThinMaxTiB`, `FootprintOnPoolTiB` (Real Used), and `LogicalWrittenTiB`.
-2. **Step 2 - Pool-wide summary** showing pool size, pool allocated, capacity reserve, and `NewLogicalDataYouCanWriteTiB` (Real Available).
+2. **Step 2 - Pool-wide summary** showing the selected non-primordial pool's name, size, allocated/free capacity and percentages, configured thin-provisioning alert thresholds, recommended repair reserve, and `EstimatedAdditionalLogicalDataTiB` (a planning estimate, not a write limit).
 
 ## Requirements
 
@@ -57,15 +59,27 @@ UserStorage_2      Mirror              3 Thin                  15.50            
 
 Pool-wide capacity summary:
 
-PoolSizeTiB                  : 60.00
-PoolAllocatedTiB             : 13.80
-PoolFreeRawTiB               : 46.20
-CapacityReserveTiB           : 6.40
-ReserveDrivesUsed            : 4 (one per node, capped at 4)
-PoolFreeAfterReserveTiB      : 39.80
-ResiliencyFactorAssumed      : 3
-ResiliencySource             : detected from 4 volume(s); dominant = 3-copy
-NewLogicalDataYouCanWriteTiB : 13.27
+PoolName                                  : SU1_Pool
+PoolSizeTiB                               : 60.00
+PoolAllocatedTiB                          : 13.80
+PoolUsedPercent                           : 23.00
+PoolFreeRawTiB                            : 46.20
+PoolFreeRawPercent                        : 77.00
+ThinProvisioningAlertThresholdsPercent     : 70
+RecommendedRepairReserveTiB                : 6.40
+RepairReserveDriveEquivalents              : 4 (one per node, capped at 4; not dedicated drives)
+PhysicalHeadroomAfterRecommendedReserveTiB : 39.80
+ResiliencyFactorAssumed                    : 3
+ResiliencySource                           : detected from 4 volume(s); dominant = 3-copy
+EstimatedAdditionalLogicalDataTiB          : 13.27
+
+Used/free percentages describe physical pool allocation before the recommended repair allowance.
+Repair reserve is recommended unallocated capacity, not dedicated drives or an enforced write limit.
+Thin volumes can consume this headroom, leaving less capacity for repair after a drive failure.
+Additional logical capacity is a planning estimate after the repair allowance and resiliency overhead.
+Resiliency overhead is consumed as data is written; it is not pre-deducted from pool free space.
+Thin-provisioning thresholds are capacity alerts, not write limits or reserved space.
+Related capacity health failures may block update readiness; review the actual preupdate check results.
 ```
 
 ### Per-volume table - one row per virtual disk
@@ -84,15 +98,39 @@ NewLogicalDataYouCanWriteTiB : 13.27
 
 | Field | What it tells you |
 |---|---|
+| `PoolName` | Friendly name of the selected non-primordial pool. Primordial entries are not additional workload pools and are excluded. |
 | `PoolSizeTiB` | Total usable pool size before any volumes. |
-| `PoolAllocatedTiB` | Sum of every volume's `FootprintOnPool` - i.e. **Real Used** cluster-wide. |
-| `PoolFreeRawTiB` | Physical free space in the pool, before reserving anything for repair. |
-| `CapacityReserveTiB` / `ReserveDrivesUsed` | How much is being held back for in-place repair, and how it was sized. |
-| `PoolFreeAfterReserveTiB` | Physical free space you can actually allocate to new or growing volumes. |
+| `PoolAllocatedTiB` | Physical capacity allocated in the pool, read from `Get-StoragePool.AllocatedSize`, including resiliency overhead. This is pool-level **Real Used**, not application data size. |
+| `PoolUsedPercent` | `AllocatedSize / Size * 100`, calculated from unrounded bytes. |
+| `PoolFreeRawTiB` / `PoolFreeRawPercent` | Measured physical free space: `Size - AllocatedSize`, also expressed as a percentage of pool size. Includes the recommended repair headroom; does not yet account for future writes' resiliency overhead. Percentages are unavailable when pool size is zero or invalid. |
+| `ThinProvisioningAlertThresholdsPercent` | Actual configured pool alert threshold(s), not an assumed default. Multiple values are comma-separated; absent or empty values show `Not reported`. These are alerts, not write limits; related health failures may affect update readiness. |
+| `RecommendedRepairReserveTiB` | Estimated physical capacity recommended to leave unallocated for in-place repair. Not a hard reservation or enforced limit. |
+| `RepairReserveDriveEquivalents` | Drive-equivalents used to size that recommendation: one per node, capped at four. No drives are dedicated, occupied, or removed from the pool by this calculation. |
+| `PhysicalHeadroomAfterRecommendedReserveTiB` | Planning subtraction: physical free space minus recommended repair reserve. A negative value indicates a shortfall against the recommendation, not an enforced write block. |
 | `ResiliencyFactorAssumed` / `ResiliencySource` | The mirror factor used in the final calculation, and whether it was detected, mixed, or defaulted. If you see `MIXED`, treat the bottom-line number as a planning estimate rather than precise. |
-| `NewLogicalDataYouCanWriteTiB` | **"Real" Available Space** - the closest single number to "how much new application data can I deploy onto this cluster". This is a cluster-wide shared budget, not per-volume: any logical data written to any thin volume consumes from this same number. Individual volumes are also bounded by their own thin maximum, whichever is hit first. |
+| `EstimatedAdditionalLogicalDataTiB` | Estimated additional logical data while preserving the recommended repair headroom, after accounting for resiliency overhead. Shared across thin volumes, not a per-volume allocation or guaranteed writable amount. Each volume also has its own logical ceiling. Reported as zero if recommended repair headroom is already exhausted. |
 
-In short: **`PoolAllocatedTiB` is your real used**, **`NewLogicalDataYouCanWriteTiB` is your real available**, and the per-volume **`FootprintOnPoolTiB`** shows the used-space distribution on a per-volume basis (how much space each volume is using).
+In short: **`PoolAllocatedTiB` is measured physical allocation**, **`PoolFreeRawTiB` is measured physical free space**, and **`EstimatedAdditionalLogicalDataTiB` is a planning estimate**. The per-volume **`FootprintOnPoolTiB`** shows each volume's physical footprint, including resiliency overhead.
+
+### Capacity alerts: pool usage versus volume usage
+
+These settings monitor different layers. None dedicates drives, reserves capacity, or sets a hard write limit.
+
+| Control | What it monitors | Documented default |
+|---|---|---|
+| Pool `ThinProvisioningAlertThresholds` | Physical pool capacity usage, comparable to `PoolUsedPercent`. | 70%; the script displays the actual configured threshold(s). |
+| `System.Storage.Volume.CapacityThreshold.Enabled` | Whether Health Service volume capacity threshold checks are enabled. | `True` |
+| `System.Storage.Volume.CapacityThreshold.Warning` | Used percentage of an individual volume's filesystem capacity. | 80% |
+| `System.Storage.Volume.CapacityThreshold.Critical` | Used percentage of an individual volume's filesystem capacity. | 90% |
+| `System.Storage.StoragePool.CheckPoolReserveCapacity.Enabled` | Whether Health Service checks pool repair-reserve capacity. | `True` |
+
+A thin volume can be well below its volume warning threshold while the shared physical pool is running low. Conversely, a volume can approach its logical ceiling while the pool still has free capacity. Monitor both layers; the volume's logical free space is not physical pool headroom.
+
+For example, `ThinProvisioningAlertThresholds = {70}` means the pool is configured for a capacity alert when usage crosses 70%. It does not mean that 30% is reserved or that writes stop at 70%. Microsoft recommends retaining the default thin-provisioning alert threshold. The Health Service values above are documented defaults, not values queried by this script.
+
+**Not a write limit does not mean no operational impact.** Related capacity health failures may block update readiness. Microsoft documents that critical readiness failures must be resolved and warning failures may also prevent lifecycle operations. Check the actual preupdate results, severity, and remediation; do not assume that crossing 70% always blocks every update, or raise/disable thresholds merely to get an update through. This capacity report does not determine update eligibility.
+
+See [Storage thin provisioning - manage the default provisioning alert threshold](https://learn.microsoft.com/azure/azure-local/manage/manage-thin-provisioning-23h2#option-2-manage-default-provisioning-alert-threshold), [Health Service settings](https://learn.microsoft.com/azure/azure-local/manage/health-service-settings), and [Troubleshoot health check failures - severity levels](https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-health-check-failures#health-check-severity-levels). This script reads configuration only; it does not change any threshold.
 
 ## Why the storage numbers don't tally across Portal, WAC and the Azure Local LENS workbook
 
@@ -108,7 +146,7 @@ This means:
 
 - A volume's **"Size"** in the Portal/WAC is its **Thin Maximum** - a logical ceiling set at deployment time, not a physical allocation size.
 - The volume's free space (**"SizeRemaining"**) is **not physical headroom** - it's logical headroom up to that thin maximum.
-- All Thin volumes share the **same physical pool**, so "Real Available" is a **pool-wide** number, not a per-volume one. Any volume can grow until the pool fills to ~100%.
+- All Thin volumes share the **same physical pool**, so additional logical capacity is a **pool-wide planning estimate**, not a per-volume allocation. Recommended repair headroom is not fenced off: thin volumes can consume it, but doing so reduces the capacity available for repairs. Do not treat 100% pool usage as a safe operating target.
 
 This is why the Azure portal (storage paths), WAC's Volumes view, and the Azure Local LENS workbook (Azure Resource Graph data for storage paths) can all look inconsistent or alarming - they're each showing a different layer of an inherently multi-layered picture.
 
@@ -125,13 +163,14 @@ This is why the Azure portal (storage paths), WAC's Volumes view, and the Azure 
 
 - **Real Used per volume** = `FootprintOnPool` from `Get-VirtualDisk` - physical bytes consumed, already inclusive of mirror overhead.
 - **Logical data written per volume** = `FootprintOnPool / NumberOfDataCopies` (so /2 for 2-way mirror, /3 for 3-way).
-- **Real Available cluster-wide** = `Pool Size - Pool Allocated - Capacity Reserve`, then divided by the resiliency factor to express it as "how much new logical data can I deploy". The capacity reserve is roughly one capacity drive's worth per node, capped at four drives, kept aside for in-place repair.
+- **Measured physical free space** = `Pool Size - Pool Allocated`. No repair allowance is automatically deducted from this number.
+- **Estimated additional logical capacity** = `max(0, Pool Size - Pool Allocated - Recommended Repair Reserve) / Resiliency Factor`. The reserve is roughly one capacity drive-equivalent per node, capped at four, recommended to remain unallocated for in-place repair. This is a planning allowance, not a hard reservation. Resiliency overhead is a real cost of future writes, not an optional recommendation or a second deduction from existing allocated capacity. See [Microsoft's reserve-capacity guidance](https://learn.microsoft.com/windows-server/storage/storage-spaces/plan-volumes#reserve-capacity).
 
 ## Cross-referencing the other tools
 
 ### Windows Admin Center (WAC)
 
-In WAC -> cluster -> **Volumes**, treat the `Size` column as the **thin maximum** and the `Used` column as **logical data written** (not the pool footprint). The cluster Dashboard's storage tile is the closest WAC view to pool-level reality, but it doesn't subtract the capacity reserve - so it'll be slightly more optimistic than the PowerShell above.
+In WAC -> cluster -> **Volumes**, treat the `Size` column as the **thin maximum** and the `Used` column as **logical data written** (not the pool footprint). The cluster Dashboard's storage tile is the closest WAC view to pool-level reality. Keep physical free space separate from this script's planning estimate, which allows for recommended repair headroom and future writes' resiliency overhead.
 
 > **Important:** if you're using WAC to administer Azure Local, please make sure you're **using version 5.2.6 or higher of the Cluster manager extension**. There's a known issue that can cause incorrect deletions when deleting volumes via WAC against Windows Server 2025 or Azure Local 24H2 - see [Windows Admin Center known issues](https://learn.microsoft.com/en-us/windows-server/manage/windows-admin-center/support/known-issues#incorrect-deletions-in-volumes-tool) on Microsoft Learn.
 
@@ -142,8 +181,8 @@ Azure Local LENS uses Azure Resource Graph against the ARM-projected properties,
 ## Known limitations
 
 - **First non-primordial pool only.** The script picks the first non-primordial `Get-StoragePool` result. Standard Azure Local clusters have a single S2D pool, so this is correct in nearly all cases - but be aware if you have ever attached additional pools.
-- **Mixed resiliency is best-effort.** When the cluster contains volumes at more than one resiliency tier (e.g. some 2-way and some 3-way mirror), the script flags this as `MIXED` and reports `NewLogicalDataYouCanWriteTiB` against the dominant factor. Treat that bottom-line number as a planning estimate rather than precise in mixed clusters.
-- **Capacity reserve is an approximation.** The reserve is computed as "largest capacity drive size x min(node count, 4)", which matches the Azure Local guidance for in-place repair. Your actual reserve may differ if drive sizes are heterogeneous.
+- **Mixed resiliency is best-effort.** When the cluster contains volumes at more than one resiliency tier (e.g. some 2-way and some 3-way mirror), the script flags this as `MIXED` and reports `EstimatedAdditionalLogicalDataTiB` against the dominant factor. Treat that bottom-line number as a planning estimate rather than precise in mixed clusters.
+- **Recommended repair reserve is an approximation, not an enforced limit.** The script uses "largest capacity drive size x min(node count, 4)". Review the allowance for heterogeneous drives or media tiers; Microsoft's guidance for NVMe + SSD + HDD clusters calls for separate SSD and HDD allowances. No drives or capacity are reserved by this script.
 - **`LogicalWrittenTiB` is approximate.** Deduplication, ReFS block cloning, and Storage Spaces metadata mean `FootprintOnPool / DataCopies` is a close estimate, not an exact byte count of application data.
 
 ## License
